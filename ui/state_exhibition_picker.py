@@ -27,11 +27,11 @@ class ExhibitionPickerState:
     Pick Home/Away teams and start a one-off match.
 
     Controls:
-      - Left/Right: move which side you're editing (Home vs Away)
-      - Up/Down   : change the team on the active side
-      - Enter     : start match
+      - LEFT/RIGHT: choose which side (Home/Away) you're editing
+      - UP/DOWN   : change the team for that side
+      - ENTER     : start match
       - R         : randomize both sides
-      - Esc       : back
+      - ESC       : back
     """
 
     def __init__(self, app) -> None:
@@ -41,8 +41,6 @@ class ExhibitionPickerState:
         self.home_idx: int = 0
         self.away_idx: int = 1
         self.edit_side: int = 0  # 0 = Home, 1 = Away
-
-    # ------- lifecycle -------
 
     def enter(self) -> None:
         if pygame is None:
@@ -57,11 +55,6 @@ class ExhibitionPickerState:
                 self.away_idx = (self.home_idx + 1) % len(self.team_names)
         except Exception as e:
             self._push_msg(f"Couldn't build team list:\n{e}")
-
-    def exit(self) -> None:
-        pass
-
-    # ------- events / update / draw -------
 
     def handle_event(self, event) -> bool:
         if pygame is None:
@@ -140,7 +133,7 @@ class ExhibitionPickerState:
         hint = self._text("LEFT/RIGHT choose side • UP/DOWN change team • ENTER start • R randomize • ESC back", 18)
         surface.blit(hint, (24, h - 36))
 
-    # ------- internal helpers -------
+    # ------- helpers -------
 
     def _text(self, s: str, size: int, bold: bool = False):
         ft = pygame.font.SysFont("consolas", size, bold=bold)  # type: ignore
@@ -168,12 +161,10 @@ class ExhibitionPickerState:
 
             seed = _rand_seed()
 
-            # Build two quick teams with 4 fighters each from the creator-like shape.
-            # We'll reuse the test-style format to keep it simple and deterministic.
+            # Build two tiny teams with 4 fighters each (simple + deterministic)
             def _make_team_dict(name: str, tid: int):
                 color = (80 + 40 * tid, 100, 180)
                 fighters = []
-                # simple, small roster
                 for i in range(4):
                     fighters.append({
                         "fighter_id": tid * 100 + i,
@@ -199,7 +190,6 @@ class ExhibitionPickerState:
             layout_teams_tiles(fighters, GRID_W, GRID_H)
             tb = TBCombat(teamH, teamA, fighters, GRID_W, GRID_H, seed=seed)
 
-            # hand off to your match viewer state
             if hasattr(self.app, "safe_push"):
                 self.app.safe_push(MatchState, app=self.app, tbcombat=tb)
             else:
