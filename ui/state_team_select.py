@@ -18,8 +18,9 @@ class TeamSelectState(UIState):
 
         # layout rects
         W, H = app.WIDTH, app.HEIGHT
-        self.col_left = pygame.Rect(24, 80, int(W*0.35), H-120)
-        self.col_right = pygame.Rect(self.col_left.right+16, 80, W - (self.col_left.right+16) - 24, H-120)
+        TOP_OFFSET = 140
+        left_rect = pygame.Rect(20, TOP_OFFSET, W//2 - 40, H - TOP_OFFSET - 40)
+        right_rect = pygame.Rect(W//2 + 20, TOP_OFFSET, W//2 - 40, H - TOP_OFFSET - 40)
 
         # buttons
         btn_w, btn_h = 160, 40
