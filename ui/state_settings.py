@@ -1,137 +1,163 @@
 # ui/state_settings.py
-import pygame
-from typing import Optional, List
-from .app import UIState
-from .uiutil import draw_text, BIG, FONT, Button, Checkbox, Slider, Dropdown
-from core.config import load_settings, save_settings, apply_settings, DEFAULT_SETTINGS
+from __future__ import annotations
 
-RES_PRESETS = [
-    "1280 x 720",
-    "1366 x 768",
-    "1600 x 900",
-    "1920 x 1080",
-    "2560 x 1440",
-    "3840 x 2160",
-]
+import json, os
 
-def _parse_res(s: str) -> tuple[int,int]:
-    w, h = s.split("x")
-    return int(w.strip()), int(h.strip())
+try:
+    import pygame
+except Exception:
+    pygame = None  # type: ignore
 
-class SettingsState(UIState):
-    def __init__(self):
-        self.buttons: List[Button] = []
-        self.widgets: List[object] = []  # Checkbox/Slider/Dropdown
-        self.settings = load_settings()
-        self._res_dropdown: Optional[Dropdown] = None
-        self._fs_checkbox: Optional[Checkbox] = None
-        self._fps_slider: Optional[Slider] = None
-        self._mvol: Optional[Slider] = None
-        self._uvol: Optional[Slider] = None
-        self._svol: Optional[Slider] = None
-        self._mute: Optional[Checkbox] = None
+try:
+    from .uiutil import Button
+except Exception:
+    Button = None  # type: ignore
 
-    def on_enter(self) -> None:
-        W = pygame._app_ref.WIDTH  # type: ignore[attr-defined]
-        # buttons
-        self.buttons = [
-            Button(pygame.Rect(24, 24, 120, 40), "Back", on_click=self._back),
-            Button(pygame.Rect(24+140, 24, 140, 40), "Apply", on_click=self._apply),
-            Button(pygame.Rect(24+300, 24, 180, 40), "Reset Defaults", on_click=self._reset_defaults),
-            Button(pygame.Rect(24+500, 24, 160, 40), "Save", on_click=self._save),
-        ]
+from .state_message import MessageState
 
-        # --- Video group ---
-        y = 100
-        draw_anchor = y  # visual alignment only
-        fs = bool(self.settings["video"]["fullscreen"])
-        res = self.settings["video"]["resolution"]
-        fps_cap = int(self.settings["video"]["fps_cap"])
-        init_res_label = f"{res[0]} x {res[1]}"
-        if init_res_label not in RES_PRESETS:
-            RES_PRESETS.insert(0, init_res_label)
 
-        self._fs_checkbox = Checkbox(pygame.Rect(24, y, 26, 26), "Fullscreen", checked=fs,
-                                     on_toggle=lambda val: self._set("video.fullscreen", val))
-        self._res_dropdown = Dropdown(pygame.Rect(24+220, y-6, 220, 34), RES_PRESETS,
-                                      index=RES_PRESETS.index(init_res_label),
-                                      on_select=lambda v: self._set("video.resolution", list(_parse_res(v))))
-        self._fps_slider = Slider(pygame.Rect(24+480, y-4, 220, 28), value=max(10, min(240, fps_cap))/240.0,
-                                  on_change=lambda t: self._set("video.fps_cap", int(10 + t*230)))
+SETTINGS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "saves", "settings.json")
 
-        # --- Audio group ---
-        y = draw_anchor + 80
-        mute = bool(self.settings["audio"]["mute"])
-        m = float(self.settings["audio"]["master"])
-        mu = float(self.settings["audio"]["music"])
-        sx = float(self.settings["audio"]["sfx"])
-        self._mute = Checkbox(pygame.Rect(24, y, 26, 26), "Mute All", checked=mute,
-                              on_toggle=lambda val: self._set("audio.mute", val))
-        self._mvol = Slider(pygame.Rect(24+220, y-4, 220, 28), value=m, on_change=lambda t: self._set("audio.master", round(t,2)))
-        self._uvol = Slider(pygame.Rect(24+480, y-4, 220, 28), value=mu, on_change=lambda t: self._set("audio.music", round(t,2)))
-        self._svol = Slider(pygame.Rect(24+740, y-4, 220, 28), value=sx, on_change=lambda t: self._set("audio.sfx", round(t,2)))
 
-        self.widgets = [self._fs_checkbox, self._res_dropdown, self._fps_slider,
-                        self._mute, self._mvol, self._uvol, self._svol]
+class SettingsState:
+    def __init__(self, app):
+        self.app = app
+        self._title_font = None
+        self._font = None
+        self._small = None
 
-    def on_exit(self) -> None:
-        self.buttons.clear()
-        self.widgets.clear()
+        self.resolutions = [(1280, 720), (1366, 768), (1600, 900), (1920, 1080)]
+        self.res_index = 0
+        self.volume = 0.7
 
-    # ----- helpers -----
-    def _set(self, dotted_key: str, value):
-        # dotted path update
-        cur = self.settings
-        parts = dotted_key.split(".")
-        for p in parts[:-1]:
-            cur = cur[p]
-        cur[parts[-1]] = value
+        self._btn_apply = self._btn_back = self._btn_res_prev = self._btn_res_next = None
+
+    def enter(self):
+        if pygame is None: return
+        pygame.font.init()
+        self._title_font = pygame.font.SysFont("consolas", 26)
+        self._font = pygame.font.SysFont("consolas", 18)
+        self._small = pygame.font.SysFont("consolas", 14)
+        self._load_settings()
+        self._layout()
+
+    def _layout(self):
+        w, h = self.app.width, self.app.height
+        btn_w, btn_h, gap = 150, 40, 10
+        by = h - 64
+        bx = w - 24 - btn_w
+        mk = lambda label, fn, x: (Button(pygame.Rect(x, by, btn_w, btn_h), label, on_click=fn)
+                                   if Button else _SimpleButton(pygame.Rect(x, by, btn_w, btn_h), label, fn))
+        self._btn_back = mk("Back", self._back, bx); bx -= (btn_w + gap)
+        self._btn_apply = mk("Apply", self._apply, bx); bx -= (btn_w + gap)
+        self._btn_res_next = mk("Res Next", self._res_next, bx); bx -= (btn_w + gap)
+        self._btn_res_prev = mk("Res Prev", self._res_prev, bx)
+
+    def handle_event(self, e):
+        if pygame is None: return False
+        for b in (self._btn_res_prev, self._btn_res_next, self._btn_apply, self._btn_back):
+            if b and b.handle_event(e): return True
+        # mouse wheel to adjust volume if over volume bar
+        if e.type == pygame.MOUSEWHEEL:
+            self.volume = min(1.0, max(0.0, self.volume + e.y * 0.05))
+            return True
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+            if self._vol_rect.collidepoint(e.pos):
+                rel = (e.pos[0] - self._vol_rect.x) / self._vol_rect.w
+                self.volume = min(1.0, max(0.0, rel))
+                return True
+        return False
+
+    def update(self, dt): pass
+
+    def draw(self, surf):
+        if pygame is None: return
+        w, h = surf.get_size()
+        title = self._title_font.render("Settings", True, (255,255,255))
+        surf.blit(title, (24, 24))
+
+        # Resolution
+        res = self.resolutions[self.res_index]
+        surf.blit(self._font.render(f"Resolution: {res[0]} x {res[1]} (use Res Prev/Next)", True, (230,230,230)), (40, 100))
+
+        # Volume bar
+        surf.blit(self._font.render("Master Volume (scroll or click):", True, (230,230,230)), (40, 150))
+        self._vol_rect = pygame.Rect(40, 180, 320, 18)
+        pygame.draw.rect(surf, (60,60,60), self._vol_rect, border_radius=8)
+        fill_w = int(self._vol_rect.w * self.volume)
+        pygame.draw.rect(surf, (80,200,80), (self._vol_rect.x, self._vol_rect.y, fill_w, self._vol_rect.h), border_radius=8)
+
+        for b in (self._btn_res_prev, self._btn_res_next, self._btn_apply, self._btn_back):
+            if b: b.draw(surf)
+
+    # actions
 
     def _apply(self):
-        from core.config import apply_settings
-        apply_settings(pygame._app_ref, self.settings)  # type: ignore[attr-defined]
+        # apply resolution
+        res = self.resolutions[self.res_index]
+        try:
+            if hasattr(self.app, "apply_resolution"):
+                self.app.apply_resolution(res)
+            else:
+                pygame.display.set_mode(res)  # type: ignore
+                self.app.width, self.app.height = res
+        except Exception as e:
+            self._msg(f"Resolution apply failed:\n{e}")
 
-    def _save(self):
-        save_settings(self.settings)
+        # apply volume
+        try:
+            pygame.mixer.init()  # safe if already inited
+            pygame.mixer.music.set_volume(self.volume)
+        except Exception:
+            pass
 
-    def _reset_defaults(self):
-        self.settings = json_clone(DEFAULT_SETTINGS)
-        self.on_enter()  # rebuild widgets with fresh values
+        self._save_settings()
+        self._msg("Settings applied and saved.")
 
-    def _back(self):
-        # apply before leaving? up to you; here we just go back
-        pygame._app_ref.pop_state()  # type: ignore[attr-defined]
+    def _res_prev(self):
+        self.res_index = (self.res_index - 1) % len(self.resolutions)
 
-    # ----- UIState impl -----
-    def handle_event(self, event: pygame.event.Event):
-        for b in self.buttons: b.handle_event(event)
-        for w in self.widgets:
-            w.handle_event(event)  # type: ignore[attr-defined]
+    def _res_next(self):
+        self.res_index = (self.res_index + 1) % len(self.resolutions)
 
-    def update(self, dt: float): pass
+    def _back(self): self.app.pop_state()
 
-    def draw(self, surface: pygame.Surface) -> None:
-        surface.fill((18,18,22))
-        draw_text(surface, "Settings", (24, 24), font=BIG)
-        for b in self.buttons: b.draw(surface)
+    def _msg(self, text:str):
+        self.app.push_state(MessageState(app=self.app, text=text))
 
-        # labels
-        draw_text(surface, "Video", (24, 80), font=BIG)
-        draw_text(surface, "Resolution", (24+220, 80), font=FONT)
-        fps_cap = int(self.settings["video"]["fps_cap"])
-        draw_text(surface, f"FPS Cap: {fps_cap}", (24+480, 80), font=FONT)
+    # persistence
+    def _load_settings(self):
+        try:
+            os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+            if os.path.exists(SETTINGS_PATH):
+                with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.res_index = int(data.get("res_index", self.res_index))
+                self.volume = float(data.get("volume", self.volume))
+        except Exception:
+            pass
 
-        draw_text(surface, "Audio", (24, 160), font=BIG)
-        mv = int(self.settings["audio"]["master"]*100)
-        muv = int(self.settings["audio"]["music"]*100)
-        sv = int(self.settings["audio"]["sfx"]*100)
-        draw_text(surface, f"Master {mv}%", (24+220, 160), font=FONT)
-        draw_text(surface, f"Music {muv}%", (24+480, 160), font=FONT)
-        draw_text(surface, f"SFX {sv}%", (24+740, 160), font=FONT)
+    def _save_settings(self):
+        try:
+            os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+            with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump({"res_index": self.res_index, "volume": self.volume}, f)
+        except Exception:
+            pass
 
-        for w in self.widgets:
-            w.draw(surface)  # type: ignore[attr-defined]
 
-def json_clone(obj: dict) -> dict:
-    import json
-    return json.loads(json.dumps(obj))
+class _SimpleButton:
+    def __init__(self, rect, label, on_click):
+        self.rect, self.label, self.on_click = rect, label, on_click
+        self.hover=False; self._font=pygame.font.SysFont("consolas",18) if pygame else None
+    def handle_event(self,e):
+        if e.type==pygame.MOUSEMOTION: self.hover=self.rect.collidepoint(e.pos)
+        elif e.type==pygame.MOUSEBUTTONDOWN and e.button==1 and self.rect.collidepoint(e.pos):
+            self.on_click(); return True
+        return False
+    def draw(self,surf):
+        bg=(120,120,120) if self.hover else (98,98,98)
+        pygame.draw.rect(surf,bg,self.rect,border_radius=6)
+        pygame.draw.rect(surf,(50,50,50),self.rect,2,border_radius=6)
+        t=self._font.render(self.label,True,(20,20,20))
+        surf.blit(t,(self.rect.x+(self.rect.w-t.get_width())//2,self.rect.y+(self.rect.h-t.get_height())//2))
