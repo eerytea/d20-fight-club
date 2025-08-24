@@ -1,181 +1,156 @@
 # ui/app.py
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, List
+import os
+from typing import Any, List, Optional, Type
 
-# Import pygame lazily-friendly: tests can import App without pygame installed,
-# but actually running the app requires pygame.
 try:
     import pygame
-except Exception:
+except Exception:  # pragma: no cover
     pygame = None  # type: ignore
-
-
-def _try_import(cls_path: str):
-    """Best-effort dynamic import: 'ui.state_menu.MenuState' -> class or None"""
-    try:
-        mod_path, cls_name = cls_path.rsplit(".", 1)
-        mod = __import__(mod_path, fromlist=[cls_name])
-        return getattr(mod, cls_name, None)
-    except Exception:
-        return None
 
 
 class App:
     """
-    Minimal app wrapper:
-      - state stack with push/replace/pop
-      - safe transitions (show popup instead of crashing)
-      - simple pygame loop with FPS cap
+    Minimal app shell:
+      - Initializes pygame (with safe fallback to headless 'dummy' driver if needed)
+      - Owns the window/screen, clock, state stack
+      - Provides push_state/pop_state/replace helpers used by UI states
     """
 
-    def __init__(
-        self,
-        width: int = 1280,
-        height: int = 720,
-        title: str = "D20 Fight Club",
-        fps_cap: int = 60,
-        seed: Optional[int] = None,
-    ) -> None:
+    def __init__(self, width: int = 1280, height: int = 720, title: str = "D20 Fight Club") -> None:
         self.width = width
         self.height = height
         self.title = title
-        self.fps_cap = max(15, int(fps_cap))
-        self.seed = seed
-
-        # Free bucket to share things between states (career, settings, etc.)
         self.data: dict[str, Any] = {}
-
-        # State stack: last element is current state
+        self.running: bool = True
         self._stack: List[Any] = []
 
-        # pygame bits
-        self._screen: Optional["pygame.Surface"] = None
-        self._clock: Optional["pygame.time.Clock"] = None
-        self.running: bool = False
+        self.screen = None
+        self.clock = None
 
-    # ---------------- State stack ----------------
+        self._init_pygame()
 
-    @property
-    def current(self) -> Optional[Any]:
-        return self._stack[-1] if self._stack else None
+    # --------------- init / teardown ---------------
 
-    def push_state(self, state_obj: Any) -> None:
-        self._stack.append(state_obj)
-        _call_if(state_obj, "enter")
+    def _init_pygame(self) -> None:
+        """Initialize pygame and a display surface. Fall back to 'dummy' if a video driver is unavailable."""
+        if pygame is None:
+            return
+        try:
+            pygame.init()
+            pygame.display.set_caption(self.title)
+            self.screen = pygame.display.set_mode((self.width, self.height))
+        except Exception:
+            # Headless fallback for test environments / CI
+            try:
+                pygame.quit()
+            except Exception:
+                pass
+            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+            pygame.init()
+            try:
+                pygame.display.set_caption(self.title)
+                self.screen = pygame.display.set_mode((self.width, self.height))
+            except Exception:
+                # As a last resort, ensure event module is initialized to satisfy tests calling pygame.event.get()
+                pygame.display.init()
+                self.screen = None  # no window, but event queue works
 
-    def replace_state(self, state_obj: Any) -> None:
-        if self._stack:
-            _call_if(self._stack[-1], "exit")
-            self._stack.pop()
-        self._stack.append(state_obj)
-        _call_if(state_obj, "enter")
+        self.clock = pygame.time.Clock()
+
+    def quit(self) -> None:
+        self.running = False
+        # Do not pygame.quit() here; tests may still call pygame.event.get()
+
+    # --------------- state management ---------------
+
+    def push_state(self, state: Any) -> None:
+        """Push an already-constructed state; inject app and call enter()."""
+        if hasattr(state, "app") and getattr(state, "app") is None:
+            state.app = self  # type: ignore
+        elif not hasattr(state, "app"):
+            try:
+                state.app = self  # type: ignore
+            except Exception:
+                pass
+
+        self._stack.append(state)
+        if hasattr(state, "enter"):
+            state.enter()
 
     def pop_state(self) -> None:
+        if not self._stack:
+            return
+        st = self._stack.pop()
+        if hasattr(st, "exit"):
+            try:
+                st.exit()
+            except Exception:
+                pass
+
+    def replace_state(self, state: Any) -> None:
         if self._stack:
-            _call_if(self._stack[-1], "exit")
-            self._stack.pop()
+            self.pop_state()
+        self.push_state(state)
 
-    # ------------- Safe transitions -------------
+    # Safer helpers that construct the state for you (avoid import cycles at callsite)
+    def safe_push(self, cls: Type[Any], **kwargs) -> None:
+        st = cls(**kwargs)
+        self.push_state(st)
 
-    def safe_push(self, ctor: Callable[..., Any], *args, **kwargs) -> None:
-        try:
-            self.push_state(ctor(*args, **kwargs))
-        except Exception as e:  # pragma: no cover
-            self._show_error(f"Couldn't open screen:\n{e}")
+    def safe_replace(self, cls: Type[Any], **kwargs) -> None:
+        st = cls(**kwargs)
+        self.replace_state(st)
 
-    def safe_replace(self, ctor: Callable[..., Any], *args, **kwargs) -> None:
-        try:
-            self.replace_state(ctor(*args, **kwargs))
-        except Exception as e:  # pragma: no cover
-            self._show_error(f"Couldn't switch screen:\n{e}")
-
-    # ----------------- Run loop -----------------
+    # --------------- main loop utilities ---------------
 
     def run(self) -> None:
-        if pygame is None:  # pragma: no cover
-            raise RuntimeError("pygame is not installed. Install with: pip install pygame")
-
-        pygame.init()
-        pygame.display.set_caption(self.title)
-        self._screen = pygame.display.set_mode((self.width, self.height))
-        self._clock = pygame.time.Clock()
-        self.running = True
-
-        # If there's no state yet, push MenuState if present
-        if not self._stack:
-            MenuState = _try_import("ui.state_menu.MenuState")
-            if MenuState is not None:
-                self.safe_push(MenuState, app=self)
-            else:
-                self._show_error("MenuState not found (ui/state_menu.py).")
-
-        last_ticks = pygame.time.get_ticks()
+        """Simple loop; states are expected to implement handle_event/update/draw."""
+        if pygame is None:
+            return
         while self.running:
-            # --- events ---
+            dt = self.clock.tick(60) / 1000.0 if self.clock else 0.016
+
+            # Events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.quit()
                     break
-                cur = self.current
-                if cur:
+                if self._stack and hasattr(self._stack[-1], "handle_event"):
                     try:
-                        consumed = _call_if(cur, "handle_event", event) is True
-                        if consumed:
+                        if self._stack[-1].handle_event(event):
                             continue
-                    except Exception as e:  # pragma: no cover
-                        self._show_error(f"Event error:\n{e}")
+                    except Exception:
+                        pass
 
-            # --- update ---
-            now = pygame.time.get_ticks()
-            dt = (now - last_ticks) / 1000.0
-            last_ticks = now
+            # Update / Draw
+            if not self._stack:
+                continue
 
-            cur = self.current
-            if cur:
-                try:
-                    _call_if(cur, "update", dt)
-                except Exception as e:  # pragma: no cover
-                    self._show_error(f"Update error:\n{e}")
-
-            # --- draw ---
-            if self._screen is not None:
-                try:
-                    self._screen.fill((12, 12, 16))
-                    cur = self.current
-                    if cur:
-                        _call_if(cur, "draw", self._screen)
-                    pygame.display.flip()
-                except Exception as e:  # pragma: no cover
-                    self._show_error(f"Draw error:\n{e}")
-
-            # FPS cap
-            if self._clock is not None:
-                self._clock.tick(self.fps_cap)
-
-        try:
-            pygame.quit()
-        except Exception:
-            pass
-
-    # ---------------- Utilities ----------------
-
-    def quit(self) -> None:
-        self.running = False
-
-    def _show_error(self, text: str) -> None:
-        MessageState = _try_import("ui.state_message.MessageState")
-        if MessageState is not None and self._screen is not None:
+            st = self._stack[-1]
             try:
-                self.push_state(MessageState(app=self, text=text))
-                return
+                if hasattr(st, "update"):
+                    st.update(dt)
+                if self.screen is not None and hasattr(st, "draw"):
+                    self.screen.fill((22, 24, 28))
+                    st.draw(self.screen)
+                    pygame.display.flip()
             except Exception:
+                # Keep loop alive even if a state draw/update errors; useful during dev
                 pass
-        print(text)
 
+    # --------------- misc helpers ---------------
 
-def _call_if(obj: Any, name: str, *args, **kwargs) -> Any:
-    fn = getattr(obj, name, None)
-    if callable(fn):
-        return fn(*args, **kwargs)
-    return None
+    def apply_resolution(self, res: tuple[int, int]) -> None:
+        """Change resolution at runtime and update the surface."""
+        if pygame is None:
+            return
+        self.width, self.height = res
+        try:
+            self.screen = pygame.display.set_mode(res)
+        except Exception:
+            # If display is headless dummy, ensure display module stays initialized
+            if not pygame.display.get_init():
+                pygame.display.init()
+            self.screen = None
