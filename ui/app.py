@@ -59,4 +59,36 @@ class App:
         return self._stack[-1] if self._stack else None
 
     def run(self) -> None:
-        self
+    self._running = True
+
+    # Fallback: if no state was pushed yet, boot into the main menu.
+    if not self._stack:
+        try:
+            from .state_menu import MenuState
+            self.push_state(MenuState())
+        except Exception as e:
+            # If even that fails, stop gracefully so you see the traceback
+            print("Failed to boot MenuState:", e)
+            self._running = False
+
+    try:
+        while self._running and self.state is not None:
+            dt = self.clock.tick(self.FPS) / 1000.0
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self._running = False
+                    break
+                nxt = self.state.handle_event(event)
+                if nxt is not None:
+                    self.push_state(nxt)
+
+            nxt = self.state.update(dt)
+            if nxt is not None:
+                self.push_state(nxt)
+
+            self.screen.fill((18, 18, 22))
+            self.state.draw(self.screen)
+            pygame.display.flip()
+    finally:
+        pygame.quit()
