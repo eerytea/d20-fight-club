@@ -1,0 +1,2181 @@
+{
+  "schema_version": 1,
+  "career_id": "CID_42f3e30e",
+  "created_at": 1755994910.5394573,
+  "date": {
+    "season": 1,
+    "week": 4
+  },
+  "world_seed": 1755994910,
+  "schedule_seed": 1745878715,
+  "team_ids": [
+    "TID_1126bedc",
+    "TID_44e3c5a8",
+    "TID_31ba28ab",
+    "TID_26e62943",
+    "TID_d3b586c5",
+    "TID_177afa05",
+    "TID_ea080351",
+    "TID_316a3858",
+    "TID_464fb5c0",
+    "TID_d0da15e9",
+    "TID_4d973de8",
+    "TID_bf845d71",
+    "TID_9bfc233a",
+    "TID_4a838f63",
+    "TID_81f6066d",
+    "TID_8d918c2d",
+    "TID_47a0e197",
+    "TID_dfbbc76a",
+    "TID_eddaaaf8",
+    "TID_f7d75836"
+  ],
+  "teams": {
+    "TID_1126bedc": {
+      "tid": "TID_1126bedc",
+      "name": "Scarlet Giants",
+      "color": [
+        191,
+        76,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_fe5758d3",
+          "name": "Quinn Sloane",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_f457c808",
+          "name": "Rina Iverson",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_7652f67f",
+          "name": "Lena Fen",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_9dc37074",
+          "name": "Greta Keane",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_44e3c5a8": {
+      "tid": "TID_44e3c5a8",
+      "name": "Umber Wardens",
+      "color": [
+        191,
+        110,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_aed8f2fc",
+          "name": "Mira Locke",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_6e3bf763",
+          "name": "Brina Vale",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_ee822e3a",
+          "name": "Garruk Ash",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_26adc2ff",
+          "name": "Cora Marin",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_31ba28ab": {
+      "tid": "TID_31ba28ab",
+      "name": "Viridian Pilgrims",
+      "color": [
+        191,
+        145,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_341269cf",
+          "name": "Lyra Rhodes",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_adb46d66",
+          "name": "Elric Ironwall",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_236c3f13",
+          "name": "Nia Briar",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_c159d936",
+          "name": "Rowan Voss",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_26e62943": {
+      "tid": "TID_26e62943",
+      "name": "Ivory Arrows",
+      "color": [
+        191,
+        179,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_b89c04dc",
+          "name": "Sylvie Vale",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_744fb01f",
+          "name": "Sylvie Ironwall",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_bcef8592",
+          "name": "Thane Briar",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_0bc21e48",
+          "name": "Rowan Drake",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_d3b586c5": {
+      "tid": "TID_d3b586c5",
+      "name": "Topaz Marauders",
+      "color": [
+        168,
+        191,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_6578cc19",
+          "name": "Iris Rhodes",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_ff2a5a75",
+          "name": "Seren Fen",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_c2ce8983",
+          "name": "Ronan Marin",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_acd37f89",
+          "name": "Lena Swift",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_177afa05": {
+      "tid": "TID_177afa05",
+      "name": "Pearl Blades",
+      "color": [
+        133,
+        191,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_3c77f9c0",
+          "name": "Kira Dane",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_e61020ab",
+          "name": "Garruk Quickwind",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_2e8e2660",
+          "name": "Jace Frost",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_3438f8ce",
+          "name": "Alden Rhodes",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_ea080351": {
+      "tid": "TID_ea080351",
+      "name": "Golden Guardians",
+      "color": [
+        99,
+        191,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_aa2a3729",
+          "name": "Iris Quickwind",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_9f38916f",
+          "name": "Elena Keane",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_15d49e1c",
+          "name": "Ronan Thorne",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_04a1b92c",
+          "name": "Elena Sloane",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_316a3858": {
+      "tid": "TID_316a3858",
+      "name": "Cobalt Knights",
+      "color": [
+        76,
+        191,
+        87
+      ],
+      "fighters": [
+        {
+          "pid": "PID_280ac76a",
+          "name": "Brina Pryce",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_b72d4646",
+          "name": "Mina Ash",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_ab645510",
+          "name": "Bren Gale",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_6adf2f66",
+          "name": "Rhea Cross",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_464fb5c0": {
+      "tid": "TID_464fb5c0",
+      "name": "Maroon Titans",
+      "color": [
+        76,
+        191,
+        122
+      ],
+      "fighters": [
+        {
+          "pid": "PID_0c1ade29",
+          "name": "Tomas Locke",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_c6196f77",
+          "name": "Marcus Gale",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_da8b544b",
+          "name": "Greta Vale",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_0885b1ab",
+          "name": "Quinn North",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_d0da15e9": {
+      "tid": "TID_d0da15e9",
+      "name": "Viridian Dragons",
+      "color": [
+        76,
+        191,
+        156
+      ],
+      "fighters": [
+        {
+          "pid": "PID_7a24d89d",
+          "name": "Luther Thorne",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_5ebf9379",
+          "name": "Cora Jett",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_4f12fcda",
+          "name": "Talia Orrin",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_bea046af",
+          "name": "Kira Cole",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_4d973de8": {
+      "tid": "TID_4d973de8",
+      "name": "Pearl Sentinels",
+      "color": [
+        76,
+        191,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_c91765f8",
+          "name": "Mina Easton",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_799b9d88",
+          "name": "Marcus Thorne",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_235c07c6",
+          "name": "Lena Quickwind",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_b2053922",
+          "name": "Tomas Ironwall",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_bf845d71": {
+      "tid": "TID_bf845d71",
+      "name": "Indigo Raiders",
+      "color": [
+        76,
+        156,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_44aa931d",
+          "name": "Evan Rhodes",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_2bfa2bf9",
+          "name": "Talia Crowe",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_3b28f959",
+          "name": "Iris Fen",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_408999f0",
+          "name": "Marcus Falk",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_9bfc233a": {
+      "tid": "TID_9bfc233a",
+      "name": "Iron Wolves",
+      "color": [
+        76,
+        122,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_285897b7",
+          "name": "Cora Keane",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_b55a32d7",
+          "name": "Thane Quickwind",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_bd931328",
+          "name": "Lena Briar",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_c4f55777",
+          "name": "Nia Hart",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_4a838f63": {
+      "tid": "TID_4a838f63",
+      "name": "Slate Wolves",
+      "color": [
+        76,
+        87,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_795b74c5",
+          "name": "Thane Jett",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_666c208b",
+          "name": "Noah Swift",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_775b14cd",
+          "name": "Darius Alder",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_c4732460",
+          "name": "Corin Ash",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_81f6066d": {
+      "tid": "TID_81f6066d",
+      "name": "Silver Marauders",
+      "color": [
+        99,
+        76,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_4b301337",
+          "name": "Nia Frost",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_627de0e0",
+          "name": "Mira Voss",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_6031de13",
+          "name": "Nia Ironwall",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_2a80191c",
+          "name": "Marcus Ash",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_8d918c2d": {
+      "tid": "TID_8d918c2d",
+      "name": "Cobalt Titans",
+      "color": [
+        133,
+        76,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_e80d5eda",
+          "name": "Cora Frost",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_7d13c498",
+          "name": "Bren Moss",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_2e3a3aef",
+          "name": "Quinn Fen",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_7b8ac88b",
+          "name": "Brina Fen",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_47a0e197": {
+      "tid": "TID_47a0e197",
+      "name": "Scarlet Raiders",
+      "color": [
+        168,
+        76,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_1ef7e188",
+          "name": "Cora Locke",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_faf44e1b",
+          "name": "Garruk Briar",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_c635ea33",
+          "name": "Cora Easton",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_c2ef2fd7",
+          "name": "Piper Swift",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_dfbbc76a": {
+      "tid": "TID_dfbbc76a",
+      "name": "Golden Comets",
+      "color": [
+        191,
+        76,
+        179
+      ],
+      "fighters": [
+        {
+          "pid": "PID_d9657140",
+          "name": "Rowan Hart",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_210c5d48",
+          "name": "Tomas Orrin",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_ae913278",
+          "name": "Darius Pryce",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_ee85b6d7",
+          "name": "Luther Iverson",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_eddaaaf8": {
+      "tid": "TID_eddaaaf8",
+      "name": "Onyx Dragons",
+      "color": [
+        191,
+        76,
+        145
+      ],
+      "fighters": [
+        {
+          "pid": "PID_fc34dc0b",
+          "name": "Evan Stone",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_f3774607",
+          "name": "Kara Keane",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_430fb624",
+          "name": "Noah Drake",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_a34ad89a",
+          "name": "Marcus Locke",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_f7d75836": {
+      "tid": "TID_f7d75836",
+      "name": "Pearl Raiders",
+      "color": [
+        191,
+        76,
+        110
+      ],
+      "fighters": [
+        {
+          "pid": "PID_918c0134",
+          "name": "Hale Vale",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_c040ff34",
+          "name": "Iris Dane",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_82e1ed6f",
+          "name": "Alden Quill",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_05648048",
+          "name": "Elric Alder",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    }
+  },
+  "transfers": [],
+  "economy": {
+    "inflation": 1.0,
+    "prize_table": {}
+  },
+  "fixtures": {}
+}

@@ -1,0 +1,3747 @@
+{
+  "team_ids": [
+    "T01",
+    "T02",
+    "T03",
+    "T04",
+    "T05",
+    "T06",
+    "T07",
+    "T08",
+    "T09",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15",
+    "T16",
+    "T17",
+    "T18",
+    "T19",
+    "T20"
+  ],
+  "teams": {
+    "T01": {
+      "tid": "T01",
+      "name": "Club 1",
+      "color": [
+        120,
+        80,
+        140
+      ],
+      "fighters": [
+        {
+          "pid": "PT0101",
+          "name": "Riley Vance",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 27,
+          "potential": 66,
+          "str": 16,
+          "dex": 8,
+          "con": 13,
+          "int": 12,
+          "wis": 10,
+          "cha": 14,
+          "hp": 19,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": -1,
+          "ovr": 60,
+          "value": 71563,
+          "wage": 216
+        },
+        {
+          "pid": "PT0102",
+          "name": "Shawn Miller",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 26,
+          "potential": 86,
+          "str": 10,
+          "dex": 14,
+          "con": 13,
+          "int": 8,
+          "wis": 12,
+          "cha": 16,
+          "hp": 19,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 2,
+          "eva_mod": 2,
+          "ovr": 49,
+          "value": 90461,
+          "wage": 303
+        },
+        {
+          "pid": "PT0103",
+          "name": "Rowan Brooks",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 34,
+          "potential": 75,
+          "str": 16,
+          "dex": 13,
+          "con": 8,
+          "int": 12,
+          "wis": 14,
+          "cha": 10,
+          "hp": 14,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 53,
+          "value": 61261,
+          "wage": 200
+        },
+        {
+          "pid": "PT0104",
+          "name": "Skyler Reeves",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 32,
+          "potential": 71,
+          "str": 13,
+          "dex": 8,
+          "con": 16,
+          "int": 12,
+          "wis": 14,
+          "cha": 10,
+          "hp": 22,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": -1,
+          "ovr": 52,
+          "value": 52717,
+          "wage": 200
+        }
+      ],
+      "budget": 799020,
+      "wage_bill": 919
+    },
+    "T02": {
+      "tid": "T02",
+      "name": "Club 2",
+      "color": [
+        157,
+        133,
+        163
+      ],
+      "fighters": [
+        {
+          "pid": "PT0201",
+          "name": "Elliot Stone",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 33,
+          "potential": 63,
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "int": 10,
+          "wis": 8,
+          "cha": 12,
+          "hp": 20,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 3,
+          "ovr": 52,
+          "value": 40433,
+          "wage": 200
+        },
+        {
+          "pid": "PT0202",
+          "name": "Shawn Stone",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 27,
+          "potential": 65,
+          "str": 10,
+          "dex": 8,
+          "con": 12,
+          "int": 16,
+          "wis": 14,
+          "cha": 13,
+          "hp": 18,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": -1,
+          "ovr": 53,
+          "value": 53270,
+          "wage": 200
+        },
+        {
+          "pid": "PT0203",
+          "name": "Alex Wells",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 27,
+          "potential": 78,
+          "str": 12,
+          "dex": 10,
+          "con": 14,
+          "int": 16,
+          "wis": 8,
+          "cha": 13,
+          "hp": 20,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 0,
+          "ovr": 51,
+          "value": 71682,
+          "wage": 248
+        },
+        {
+          "pid": "PT0204",
+          "name": "Parker Cole",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 30,
+          "potential": 80,
+          "str": 10,
+          "dex": 8,
+          "con": 13,
+          "int": 14,
+          "wis": 16,
+          "cha": 12,
+          "hp": 19,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": -1,
+          "ovr": 58,
+          "value": 98454,
+          "wage": 298
+        }
+      ],
+      "budget": 1802846,
+      "wage_bill": 946
+    },
+    "T03": {
+      "tid": "T03",
+      "name": "Club 3",
+      "color": [
+        194,
+        186,
+        186
+      ],
+      "fighters": [
+        {
+          "pid": "PT0301",
+          "name": "Sage Lane",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 25,
+          "potential": 83,
+          "str": 13,
+          "dex": 14,
+          "con": 10,
+          "int": 12,
+          "wis": 16,
+          "cha": 8,
+          "hp": 16,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 2,
+          "ovr": 55,
+          "value": 108284,
+          "wage": 322
+        },
+        {
+          "pid": "PT0302",
+          "name": "Taylor Brooks",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 26,
+          "potential": 77,
+          "str": 16,
+          "dex": 10,
+          "con": 12,
+          "int": 13,
+          "wis": 14,
+          "cha": 8,
+          "hp": 18,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 0,
+          "ovr": 54,
+          "value": 90698,
+          "wage": 277
+        },
+        {
+          "pid": "PT0303",
+          "name": "Riley Lane",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 19,
+          "potential": 64,
+          "str": 8,
+          "dex": 13,
+          "con": 14,
+          "int": 10,
+          "wis": 12,
+          "cha": 16,
+          "hp": 20,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 1,
+          "ovr": 45,
+          "value": 36446,
+          "wage": 200
+        },
+        {
+          "pid": "PT0304",
+          "name": "Jamie Kerr",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 30,
+          "potential": 68,
+          "str": 10,
+          "dex": 13,
+          "con": 12,
+          "int": 16,
+          "wis": 8,
+          "cha": 14,
+          "hp": 18,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 2,
+          "eva_mod": 1,
+          "ovr": 48,
+          "value": 47843,
+          "wage": 200
+        }
+      ],
+      "budget": 1884153,
+      "wage_bill": 999
+    },
+    "T04": {
+      "tid": "T04",
+      "name": "Club 4",
+      "color": [
+        231,
+        119,
+        209
+      ],
+      "fighters": [
+        {
+          "pid": "PT0401",
+          "name": "Sam Lowe",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 33,
+          "potential": 84,
+          "str": 12,
+          "dex": 14,
+          "con": 16,
+          "int": 10,
+          "wis": 8,
+          "cha": 13,
+          "hp": 22,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 2,
+          "ovr": 51,
+          "value": 69774,
+          "wage": 235
+        },
+        {
+          "pid": "PT0402",
+          "name": "Skyler Hale",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 27,
+          "potential": 73,
+          "str": 16,
+          "dex": 14,
+          "con": 8,
+          "int": 12,
+          "wis": 13,
+          "cha": 10,
+          "hp": 14,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 2,
+          "ovr": 55,
+          "value": 73837,
+          "wage": 239
+        },
+        {
+          "pid": "PT0403",
+          "name": "Alex Cole",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 32,
+          "potential": 95,
+          "str": 13,
+          "dex": 8,
+          "con": 10,
+          "int": 16,
+          "wis": 12,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": -1,
+          "ovr": 45,
+          "value": 66114,
+          "wage": 254
+        },
+        {
+          "pid": "PT0404",
+          "name": "Jess Bishop",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 24,
+          "potential": 94,
+          "str": 16,
+          "dex": 10,
+          "con": 8,
+          "int": 12,
+          "wis": 13,
+          "cha": 14,
+          "hp": 14,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 0,
+          "ovr": 55,
+          "value": 133992,
+          "wage": 398
+        }
+      ],
+      "budget": 820751,
+      "wage_bill": 1126
+    },
+    "T05": {
+      "tid": "T05",
+      "name": "Club 5",
+      "color": [
+        148,
+        172,
+        232
+      ],
+      "fighters": [
+        {
+          "pid": "PT0501",
+          "name": "Casey Miller",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 24,
+          "potential": 75,
+          "str": 14,
+          "dex": 10,
+          "con": 16,
+          "int": 13,
+          "wis": 8,
+          "cha": 12,
+          "hp": 22,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 0,
+          "ovr": 58,
+          "value": 100158,
+          "wage": 284
+        },
+        {
+          "pid": "PT0502",
+          "name": "Morgan Cole",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 29,
+          "potential": 91,
+          "str": 16,
+          "dex": 12,
+          "con": 8,
+          "int": 10,
+          "wis": 13,
+          "cha": 14,
+          "hp": 14,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 55,
+          "value": 110418,
+          "wage": 352
+        },
+        {
+          "pid": "PT0503",
+          "name": "Cameron Shaw",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 32,
+          "potential": 84,
+          "str": 12,
+          "dex": 16,
+          "con": 13,
+          "int": 8,
+          "wis": 14,
+          "cha": 10,
+          "hp": 19,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 3,
+          "ovr": 51,
+          "value": 69774,
+          "wage": 235
+        },
+        {
+          "pid": "PT0504",
+          "name": "Avery Lowe",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 28,
+          "potential": 70,
+          "str": 10,
+          "dex": 13,
+          "con": 8,
+          "int": 16,
+          "wis": 14,
+          "cha": 12,
+          "hp": 14,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 48,
+          "value": 50897,
+          "wage": 200
+        }
+      ],
+      "budget": 1723438,
+      "wage_bill": 1071
+    },
+    "T06": {
+      "tid": "T06",
+      "name": "Club 6",
+      "color": [
+        185,
+        105,
+        155
+      ],
+      "fighters": [
+        {
+          "pid": "PT0601",
+          "name": "Riley Blake",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 28,
+          "potential": 93,
+          "str": 10,
+          "dex": 13,
+          "con": 14,
+          "int": 12,
+          "wis": 16,
+          "cha": 8,
+          "hp": 20,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 57,
+          "value": 123400,
+          "wage": 379
+        },
+        {
+          "pid": "PT0602",
+          "name": "Skyler Pryce",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 22,
+          "potential": 88,
+          "str": 10,
+          "dex": 12,
+          "con": 8,
+          "int": 13,
+          "wis": 14,
+          "cha": 16,
+          "hp": 14,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 48,
+          "value": 90139,
+          "wage": 309
+        },
+        {
+          "pid": "PT0603",
+          "name": "Shawn Cole",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 27,
+          "potential": 96,
+          "str": 13,
+          "dex": 10,
+          "con": 12,
+          "int": 8,
+          "wis": 16,
+          "cha": 14,
+          "hp": 18,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 0,
+          "ovr": 54,
+          "value": 116021,
+          "wage": 378
+        },
+        {
+          "pid": "PT0604",
+          "name": "Charlie Blake",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 30,
+          "potential": 79,
+          "str": 8,
+          "dex": 14,
+          "con": 13,
+          "int": 12,
+          "wis": 16,
+          "cha": 10,
+          "hp": 19,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 2,
+          "ovr": 57,
+          "value": 92732,
+          "wage": 286
+        }
+      ],
+      "budget": 1206347,
+      "wage_bill": 1352
+    },
+    "T07": {
+      "tid": "T07",
+      "name": "Club 7",
+      "color": [
+        222,
+        158,
+        178
+      ],
+      "fighters": [
+        {
+          "pid": "PT0701",
+          "name": "Drew Lane",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 24,
+          "potential": 77,
+          "str": 8,
+          "dex": 13,
+          "con": 12,
+          "int": 10,
+          "wis": 16,
+          "cha": 14,
+          "hp": 18,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 55,
+          "value": 94261,
+          "wage": 282
+        },
+        {
+          "pid": "PT0702",
+          "name": "Drew Pryce",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 27,
+          "potential": 96,
+          "str": 12,
+          "dex": 8,
+          "con": 14,
+          "int": 13,
+          "wis": 10,
+          "cha": 16,
+          "hp": 20,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": -1,
+          "ovr": 52,
+          "value": 107181,
+          "wage": 363
+        },
+        {
+          "pid": "PT0703",
+          "name": "Parker Sloan",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 30,
+          "potential": 91,
+          "str": 10,
+          "dex": 13,
+          "con": 16,
+          "int": 12,
+          "wis": 14,
+          "cha": 8,
+          "hp": 22,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 57,
+          "value": 119018,
+          "wage": 365
+        },
+        {
+          "pid": "PT0704",
+          "name": "Jordan Lowe",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 32,
+          "potential": 94,
+          "str": 13,
+          "dex": 12,
+          "con": 8,
+          "int": 10,
+          "wis": 16,
+          "cha": 14,
+          "hp": 14,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 50,
+          "value": 81072,
+          "wage": 279
+        }
+      ],
+      "budget": 329231,
+      "wage_bill": 1289
+    },
+    "T08": {
+      "tid": "T08",
+      "name": "Club 8",
+      "color": [
+        139,
+        91,
+        201
+      ],
+      "fighters": [
+        {
+          "pid": "PT0801",
+          "name": "Sam Hale",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 32,
+          "potential": 64,
+          "str": 10,
+          "dex": 16,
+          "con": 13,
+          "int": 14,
+          "wis": 12,
+          "cha": 8,
+          "hp": 19,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 2,
+          "eva_mod": 3,
+          "ovr": 50,
+          "value": 38651,
+          "wage": 200
+        },
+        {
+          "pid": "PT0802",
+          "name": "Jess Pryce",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 32,
+          "potential": 86,
+          "str": 8,
+          "dex": 16,
+          "con": 10,
+          "int": 14,
+          "wis": 12,
+          "cha": 13,
+          "hp": 16,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 1,
+          "eva_mod": 3,
+          "ovr": 44,
+          "value": 53336,
+          "wage": 209
+        },
+        {
+          "pid": "PT0803",
+          "name": "Jess Sloan",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 33,
+          "potential": 79,
+          "str": 10,
+          "dex": 13,
+          "con": 12,
+          "int": 8,
+          "wis": 16,
+          "cha": 14,
+          "hp": 18,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 55,
+          "value": 73126,
+          "wage": 228
+        },
+        {
+          "pid": "PT0804",
+          "name": "Jamie Cole",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 31,
+          "potential": 82,
+          "str": 14,
+          "dex": 12,
+          "con": 13,
+          "int": 16,
+          "wis": 10,
+          "cha": 8,
+          "hp": 19,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 54,
+          "value": 75348,
+          "wage": 239
+        }
+      ],
+      "budget": 691116,
+      "wage_bill": 876
+    },
+    "T09": {
+      "tid": "T09",
+      "name": "Club 9",
+      "color": [
+        176,
+        144,
+        224
+      ],
+      "fighters": [
+        {
+          "pid": "PT0901",
+          "name": "Shawn Miller",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 31,
+          "potential": 96,
+          "str": 13,
+          "dex": 16,
+          "con": 10,
+          "int": 12,
+          "wis": 14,
+          "cha": 8,
+          "hp": 16,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 3,
+          "ovr": 50,
+          "value": 83901,
+          "wage": 289
+        },
+        {
+          "pid": "PT0902",
+          "name": "Morgan Blake",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 21,
+          "potential": 82,
+          "str": 8,
+          "dex": 13,
+          "con": 14,
+          "int": 10,
+          "wis": 16,
+          "cha": 12,
+          "hp": 20,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 55,
+          "value": 105947,
+          "wage": 284
+        },
+        {
+          "pid": "PT0903",
+          "name": "Rowan Kerr",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 18,
+          "potential": 74,
+          "str": 10,
+          "dex": 8,
+          "con": 13,
+          "int": 16,
+          "wis": 14,
+          "cha": 12,
+          "hp": 19,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": -1,
+          "ovr": 47,
+          "value": 54539,
+          "wage": 200
+        },
+        {
+          "pid": "PT0904",
+          "name": "Sage Sloan",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 24,
+          "potential": 68,
+          "str": 14,
+          "dex": 16,
+          "con": 12,
+          "int": 13,
+          "wis": 8,
+          "cha": 10,
+          "hp": 18,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 3,
+          "ovr": 54,
+          "value": 70460,
+          "wage": 220
+        }
+      ],
+      "budget": 1434905,
+      "wage_bill": 993
+    },
+    "T10": {
+      "tid": "T10",
+      "name": "Club 10",
+      "color": [
+        213,
+        197,
+        147
+      ],
+      "fighters": [
+        {
+          "pid": "PT1001",
+          "name": "Drew Lowe",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 30,
+          "potential": 79,
+          "str": 12,
+          "dex": 13,
+          "con": 10,
+          "int": 14,
+          "wis": 8,
+          "cha": 16,
+          "hp": 16,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 1,
+          "ovr": 48,
+          "value": 64640,
+          "wage": 238
+        },
+        {
+          "pid": "PT1002",
+          "name": "Jess Wells",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 33,
+          "potential": 62,
+          "str": 14,
+          "dex": 13,
+          "con": 16,
+          "int": 10,
+          "wis": 12,
+          "cha": 8,
+          "hp": 22,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 56,
+          "value": 45448,
+          "wage": 200
+        },
+        {
+          "pid": "PT1003",
+          "name": "Skyler Brooks",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 30,
+          "potential": 64,
+          "str": 16,
+          "dex": 8,
+          "con": 10,
+          "int": 14,
+          "wis": 12,
+          "cha": 13,
+          "hp": 16,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": -1,
+          "ovr": 55,
+          "value": 55547,
+          "wage": 200
+        },
+        {
+          "pid": "PT1004",
+          "name": "Jordan Cole",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 25,
+          "potential": 83,
+          "str": 8,
+          "dex": 14,
+          "con": 16,
+          "int": 12,
+          "wis": 13,
+          "cha": 10,
+          "hp": 22,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 2,
+          "ovr": 50,
+          "value": 88642,
+          "wage": 291
+        }
+      ],
+      "budget": 1345890,
+      "wage_bill": 929
+    },
+    "T11": {
+      "tid": "T11",
+      "name": "Club 11",
+      "color": [
+        130,
+        130,
+        170
+      ],
+      "fighters": [
+        {
+          "pid": "PT1101",
+          "name": "Charlie Rhodes",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 26,
+          "potential": 65,
+          "str": 10,
+          "dex": 8,
+          "con": 13,
+          "int": 16,
+          "wis": 12,
+          "cha": 14,
+          "hp": 19,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": -1,
+          "ovr": 52,
+          "value": 58859,
+          "wage": 200
+        },
+        {
+          "pid": "PT1102",
+          "name": "Jess Ford",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 31,
+          "potential": 95,
+          "str": 12,
+          "dex": 10,
+          "con": 14,
+          "int": 13,
+          "wis": 8,
+          "cha": 16,
+          "hp": 20,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 0,
+          "ovr": 51,
+          "value": 85989,
+          "wage": 290
+        },
+        {
+          "pid": "PT1103",
+          "name": "Rowan Ford",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 23,
+          "potential": 66,
+          "str": 8,
+          "dex": 14,
+          "con": 12,
+          "int": 13,
+          "wis": 10,
+          "cha": 16,
+          "hp": 18,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 1,
+          "eva_mod": 2,
+          "ovr": 45,
+          "value": 44979,
+          "wage": 200
+        },
+        {
+          "pid": "PT1104",
+          "name": "Casey Bishop",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 22,
+          "potential": 81,
+          "str": 10,
+          "dex": 8,
+          "con": 13,
+          "int": 14,
+          "wis": 16,
+          "cha": 12,
+          "hp": 19,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": -1,
+          "ovr": 52,
+          "value": 92097,
+          "wage": 291
+        }
+      ],
+      "budget": 590622,
+      "wage_bill": 981
+    },
+    "T12": {
+      "tid": "T12",
+      "name": "Club 12",
+      "color": [
+        167,
+        183,
+        193
+      ],
+      "fighters": [
+        {
+          "pid": "PT1201",
+          "name": "Jordan Sloan",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 33,
+          "potential": 78,
+          "str": 14,
+          "dex": 10,
+          "con": 16,
+          "int": 13,
+          "wis": 12,
+          "cha": 8,
+          "hp": 22,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 0,
+          "ovr": 55,
+          "value": 71399,
+          "wage": 223
+        },
+        {
+          "pid": "PT1202",
+          "name": "Parker Brooks",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 27,
+          "potential": 76,
+          "str": 12,
+          "dex": 8,
+          "con": 14,
+          "int": 16,
+          "wis": 13,
+          "cha": 10,
+          "hp": 20,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": -1,
+          "ovr": 50,
+          "value": 65435,
+          "wage": 232
+        },
+        {
+          "pid": "PT1203",
+          "name": "Taylor Miller",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 26,
+          "potential": 67,
+          "str": 14,
+          "dex": 8,
+          "con": 16,
+          "int": 13,
+          "wis": 10,
+          "cha": 12,
+          "hp": 22,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": -1,
+          "ovr": 58,
+          "value": 79255,
+          "wage": 230
+        },
+        {
+          "pid": "PT1204",
+          "name": "Cameron Bishop",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 21,
+          "potential": 70,
+          "str": 13,
+          "dex": 14,
+          "con": 16,
+          "int": 10,
+          "wis": 12,
+          "cha": 8,
+          "hp": 22,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 2,
+          "ovr": 51,
+          "value": 66479,
+          "wage": 200
+        }
+      ],
+      "budget": 1624009,
+      "wage_bill": 885
+    },
+    "T13": {
+      "tid": "T13",
+      "name": "Club 13",
+      "color": [
+        204,
+        116,
+        216
+      ],
+      "fighters": [
+        {
+          "pid": "PT1301",
+          "name": "Elliot Hayes",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 32,
+          "potential": 85,
+          "str": 8,
+          "dex": 16,
+          "con": 10,
+          "int": 13,
+          "wis": 12,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 1,
+          "eva_mod": 3,
+          "ovr": 46,
+          "value": 57367,
+          "wage": 215
+        },
+        {
+          "pid": "PT1302",
+          "name": "Riley Ford",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 26,
+          "potential": 68,
+          "str": 14,
+          "dex": 12,
+          "con": 16,
+          "int": 10,
+          "wis": 8,
+          "cha": 13,
+          "hp": 22,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 59,
+          "value": 84860,
+          "wage": 241
+        },
+        {
+          "pid": "PT1303",
+          "name": "Parker Rhodes",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 21,
+          "potential": 80,
+          "str": 12,
+          "dex": 16,
+          "con": 14,
+          "int": 10,
+          "wis": 13,
+          "cha": 8,
+          "hp": 20,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 3,
+          "ovr": 52,
+          "value": 90020,
+          "wage": 256
+        },
+        {
+          "pid": "PT1304",
+          "name": "Quinn Shaw",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 28,
+          "potential": 87,
+          "str": 8,
+          "dex": 10,
+          "con": 12,
+          "int": 14,
+          "wis": 16,
+          "cha": 13,
+          "hp": 18,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 0,
+          "ovr": 57,
+          "value": 110256,
+          "wage": 338
+        }
+      ],
+      "budget": 1787627,
+      "wage_bill": 1050
+    },
+    "T14": {
+      "tid": "T14",
+      "name": "Club 14",
+      "color": [
+        121,
+        169,
+        239
+      ],
+      "fighters": [
+        {
+          "pid": "PT1401",
+          "name": "Casey Kerr",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 31,
+          "potential": 66,
+          "str": 16,
+          "dex": 13,
+          "con": 10,
+          "int": 12,
+          "wis": 8,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 56,
+          "value": 52624,
+          "wage": 200
+        },
+        {
+          "pid": "PT1402",
+          "name": "Elliot Brooks",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 19,
+          "potential": 69,
+          "str": 12,
+          "dex": 13,
+          "con": 16,
+          "int": 10,
+          "wis": 14,
+          "cha": 8,
+          "hp": 22,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 52,
+          "value": 58407,
+          "wage": 200
+        },
+        {
+          "pid": "PT1403",
+          "name": "Elliot Sloan",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 24,
+          "potential": 78,
+          "str": 14,
+          "dex": 10,
+          "con": 8,
+          "int": 12,
+          "wis": 16,
+          "cha": 13,
+          "hp": 14,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 0,
+          "ovr": 52,
+          "value": 85865,
+          "wage": 272
+        },
+        {
+          "pid": "PT1404",
+          "name": "Sam Brooks",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 28,
+          "potential": 62,
+          "str": 16,
+          "dex": 12,
+          "con": 14,
+          "int": 8,
+          "wis": 10,
+          "cha": 13,
+          "hp": 20,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 59,
+          "value": 59661,
+          "wage": 200
+        }
+      ],
+      "budget": 890433,
+      "wage_bill": 872
+    },
+    "T15": {
+      "tid": "T15",
+      "name": "Club 15",
+      "color": [
+        158,
+        102,
+        162
+      ],
+      "fighters": [
+        {
+          "pid": "PT1501",
+          "name": "Alex Stone",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 22,
+          "potential": 93,
+          "str": 8,
+          "dex": 10,
+          "con": 14,
+          "int": 13,
+          "wis": 12,
+          "cha": 16,
+          "hp": 20,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 0,
+          "ovr": 47,
+          "value": 94641,
+          "wage": 332
+        },
+        {
+          "pid": "PT1502",
+          "name": "Casey Ford",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 23,
+          "potential": 83,
+          "str": 12,
+          "dex": 16,
+          "con": 13,
+          "int": 14,
+          "wis": 10,
+          "cha": 8,
+          "hp": 19,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 3,
+          "ovr": 52,
+          "value": 96252,
+          "wage": 304
+        },
+        {
+          "pid": "PT1503",
+          "name": "Charlie Blake",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 20,
+          "potential": 76,
+          "str": 16,
+          "dex": 8,
+          "con": 10,
+          "int": 12,
+          "wis": 13,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": -1,
+          "ovr": 44,
+          "value": 50029,
+          "wage": 200
+        },
+        {
+          "pid": "PT1504",
+          "name": "Parker Lane",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 27,
+          "potential": 81,
+          "str": 13,
+          "dex": 12,
+          "con": 10,
+          "int": 16,
+          "wis": 8,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 1,
+          "ovr": 51,
+          "value": 76884,
+          "wage": 266
+        }
+      ],
+      "budget": 1042112,
+      "wage_bill": 1102
+    },
+    "T16": {
+      "tid": "T16",
+      "name": "Club 16",
+      "color": [
+        195,
+        155,
+        185
+      ],
+      "fighters": [
+        {
+          "pid": "PT1601",
+          "name": "Alex Stone",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 31,
+          "potential": 69,
+          "str": 12,
+          "dex": 14,
+          "con": 10,
+          "int": 13,
+          "wis": 16,
+          "cha": 8,
+          "hp": 16,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 2,
+          "ovr": 52,
+          "value": 49646,
+          "wage": 200
+        },
+        {
+          "pid": "PT1602",
+          "name": "Skyler Cole",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 21,
+          "potential": 68,
+          "str": 8,
+          "dex": 13,
+          "con": 16,
+          "int": 10,
+          "wis": 14,
+          "cha": 12,
+          "hp": 22,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 1,
+          "ovr": 51,
+          "value": 62490,
+          "wage": 200
+        },
+        {
+          "pid": "PT1603",
+          "name": "Elliot Shaw",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 25,
+          "potential": 93,
+          "str": 14,
+          "dex": 10,
+          "con": 8,
+          "int": 12,
+          "wis": 16,
+          "cha": 13,
+          "hp": 14,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 0,
+          "ovr": 52,
+          "value": 117026,
+          "wage": 369
+        },
+        {
+          "pid": "PT1604",
+          "name": "Morgan Hayes",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 27,
+          "potential": 92,
+          "str": 14,
+          "dex": 16,
+          "con": 10,
+          "int": 12,
+          "wis": 8,
+          "cha": 13,
+          "hp": 16,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 3,
+          "ovr": 56,
+          "value": 116786,
+          "wage": 365
+        }
+      ],
+      "budget": 871656,
+      "wage_bill": 1134
+    },
+    "T17": {
+      "tid": "T17",
+      "name": "Club 17",
+      "color": [
+        232,
+        88,
+        208
+      ],
+      "fighters": [
+        {
+          "pid": "PT1701",
+          "name": "Charlie Miller",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 30,
+          "potential": 75,
+          "str": 13,
+          "dex": 16,
+          "con": 10,
+          "int": 8,
+          "wis": 12,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 3,
+          "ovr": 49,
+          "value": 61122,
+          "wage": 222
+        },
+        {
+          "pid": "PT1702",
+          "name": "Avery Stone",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 18,
+          "potential": 90,
+          "str": 10,
+          "dex": 16,
+          "con": 13,
+          "int": 14,
+          "wis": 12,
+          "cha": 8,
+          "hp": 19,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 2,
+          "eva_mod": 3,
+          "ovr": 48,
+          "value": 81436,
+          "wage": 269
+        },
+        {
+          "pid": "PT1703",
+          "name": "Morgan Shaw",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 22,
+          "potential": 71,
+          "str": 10,
+          "dex": 16,
+          "con": 14,
+          "int": 12,
+          "wis": 13,
+          "cha": 8,
+          "hp": 20,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 2,
+          "eva_mod": 3,
+          "ovr": 49,
+          "value": 62956,
+          "wage": 215
+        },
+        {
+          "pid": "PT1704",
+          "name": "Drew Vance",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 30,
+          "potential": 91,
+          "str": 16,
+          "dex": 8,
+          "con": 10,
+          "int": 13,
+          "wis": 12,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": -1,
+          "ovr": 56,
+          "value": 114676,
+          "wage": 358
+        }
+      ],
+      "budget": 1450258,
+      "wage_bill": 1064
+    },
+    "T18": {
+      "tid": "T18",
+      "name": "Club 18",
+      "color": [
+        149,
+        141,
+        231
+      ],
+      "fighters": [
+        {
+          "pid": "PT1801",
+          "name": "Jordan Pryce",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 19,
+          "potential": 92,
+          "str": 13,
+          "dex": 14,
+          "con": 10,
+          "int": 8,
+          "wis": 12,
+          "cha": 16,
+          "hp": 16,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 2,
+          "ovr": 48,
+          "value": 84490,
+          "wage": 279
+        },
+        {
+          "pid": "PT1802",
+          "name": "Morgan Stone",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 22,
+          "potential": 81,
+          "str": 10,
+          "dex": 12,
+          "con": 13,
+          "int": 16,
+          "wis": 8,
+          "cha": 14,
+          "hp": 19,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 2,
+          "eva_mod": 1,
+          "ovr": 45,
+          "value": 67980,
+          "wage": 250
+        },
+        {
+          "pid": "PT1803",
+          "name": "Casey Hayes",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 25,
+          "potential": 60,
+          "str": 12,
+          "dex": 8,
+          "con": 13,
+          "int": 16,
+          "wis": 14,
+          "cha": 10,
+          "hp": 19,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": -1,
+          "ovr": 53,
+          "value": 50450,
+          "wage": 200
+        },
+        {
+          "pid": "PT1804",
+          "name": "Charlie Pryce",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 19,
+          "potential": 87,
+          "str": 8,
+          "dex": 14,
+          "con": 13,
+          "int": 16,
+          "wis": 10,
+          "cha": 12,
+          "hp": 19,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 1,
+          "eva_mod": 2,
+          "ovr": 44,
+          "value": 64020,
+          "wage": 232
+        }
+      ],
+      "budget": 1781469,
+      "wage_bill": 961
+    },
+    "T19": {
+      "tid": "T19",
+      "name": "Club 19",
+      "color": [
+        186,
+        194,
+        154
+      ],
+      "fighters": [
+        {
+          "pid": "PT1901",
+          "name": "Shawn Vance",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 22,
+          "potential": 67,
+          "str": 16,
+          "dex": 13,
+          "con": 8,
+          "int": 10,
+          "wis": 14,
+          "cha": 12,
+          "hp": 14,
+          "ac": 16,
+          "speed": 8,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 55,
+          "value": 70891,
+          "wage": 218
+        },
+        {
+          "pid": "PT1902",
+          "name": "Jess Ford",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 27,
+          "potential": 63,
+          "str": 10,
+          "dex": 14,
+          "con": 12,
+          "int": 16,
+          "wis": 13,
+          "cha": 8,
+          "hp": 18,
+          "ac": 16,
+          "speed": 5,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 2,
+          "ovr": 49,
+          "value": 41988,
+          "wage": 200
+        },
+        {
+          "pid": "PT1903",
+          "name": "Casey Lane",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 25,
+          "potential": 85,
+          "str": 13,
+          "dex": 12,
+          "con": 14,
+          "int": 16,
+          "wis": 10,
+          "cha": 8,
+          "hp": 20,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 3,
+          "eva_mod": 1,
+          "ovr": 52,
+          "value": 100407,
+          "wage": 316
+        },
+        {
+          "pid": "PT1904",
+          "name": "Jordan Lane",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 25,
+          "potential": 87,
+          "str": 12,
+          "dex": 13,
+          "con": 8,
+          "int": 14,
+          "wis": 16,
+          "cha": 10,
+          "hp": 14,
+          "ac": 16,
+          "speed": 6,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 51,
+          "value": 100383,
+          "wage": 323
+        }
+      ],
+      "budget": 1477358,
+      "wage_bill": 1057
+    },
+    "T20": {
+      "tid": "T20",
+      "name": "Club 20",
+      "color": [
+        223,
+        127,
+        177
+      ],
+      "fighters": [
+        {
+          "pid": "PT2001",
+          "name": "Rowan Cole",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 32,
+          "potential": 68,
+          "str": 10,
+          "dex": 13,
+          "con": 12,
+          "int": 14,
+          "wis": 8,
+          "cha": 16,
+          "hp": 18,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 2,
+          "eva_mod": 1,
+          "ovr": 47,
+          "value": 38908,
+          "wage": 200
+        },
+        {
+          "pid": "PT2002",
+          "name": "Charlie Wells",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 31,
+          "potential": 69,
+          "str": 13,
+          "dex": 8,
+          "con": 10,
+          "int": 12,
+          "wis": 16,
+          "cha": 14,
+          "hp": 16,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": -1,
+          "ovr": 53,
+          "value": 51672,
+          "wage": 200
+        },
+        {
+          "pid": "PT2003",
+          "name": "Taylor Reeves",
+          "race": "Human",
+          "class": "Fighter",
+          "level": 1,
+          "age": 26,
+          "potential": 84,
+          "str": 14,
+          "dex": 16,
+          "con": 8,
+          "int": 10,
+          "wis": 13,
+          "cha": 12,
+          "hp": 14,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Longsword",
+            "damage": "1d8"
+          },
+          "prof": 2,
+          "atk_mod": 4,
+          "eva_mod": 3,
+          "ovr": 54,
+          "value": 106439,
+          "wage": 322
+        },
+        {
+          "pid": "PT2004",
+          "name": "Morgan Rhodes",
+          "race": "Human",
+          "class": "Cleric",
+          "level": 1,
+          "age": 30,
+          "potential": 74,
+          "str": 12,
+          "dex": 13,
+          "con": 14,
+          "int": 8,
+          "wis": 16,
+          "cha": 10,
+          "hp": 20,
+          "ac": 16,
+          "speed": 7,
+          "weapon": {
+            "name": "Mace",
+            "damage": "1d6"
+          },
+          "prof": 2,
+          "atk_mod": 5,
+          "eva_mod": 1,
+          "ovr": 58,
+          "value": 84821,
+          "wage": 259
+        }
+      ],
+      "budget": 798519,
+      "wage_bill": 981
+    }
+  },
+  "table": {
+    "T01": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 46,
+      "PA": 14,
+      "PTS": 3
+    },
+    "T02": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 1,
+      "PA": 44,
+      "PTS": 0
+    },
+    "T03": {
+      "P": 1,
+      "W": 0,
+      "D": 1,
+      "L": 0,
+      "PF": 16,
+      "PA": 16,
+      "PTS": 1
+    },
+    "T04": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 13,
+      "PA": 44,
+      "PTS": 0
+    },
+    "T05": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 19,
+      "PA": 42,
+      "PTS": 0
+    },
+    "T06": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 18,
+      "PA": 48,
+      "PTS": 0
+    },
+    "T07": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 45,
+      "PA": 19,
+      "PTS": 3
+    },
+    "T08": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 8,
+      "PA": 42,
+      "PTS": 0
+    },
+    "T09": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 0,
+      "PA": 61,
+      "PTS": 0
+    },
+    "T10": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 42,
+      "PA": 3,
+      "PTS": 3
+    },
+    "T11": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 3,
+      "PA": 42,
+      "PTS": 0
+    },
+    "T12": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 61,
+      "PA": 0,
+      "PTS": 3
+    },
+    "T13": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 42,
+      "PA": 8,
+      "PTS": 3
+    },
+    "T14": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 19,
+      "PA": 45,
+      "PTS": 0
+    },
+    "T15": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 48,
+      "PA": 18,
+      "PTS": 3
+    },
+    "T16": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 42,
+      "PA": 19,
+      "PTS": 3
+    },
+    "T17": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 44,
+      "PA": 13,
+      "PTS": 3
+    },
+    "T18": {
+      "P": 1,
+      "W": 0,
+      "D": 1,
+      "L": 0,
+      "PF": 16,
+      "PA": 16,
+      "PTS": 1
+    },
+    "T19": {
+      "P": 1,
+      "W": 1,
+      "D": 0,
+      "L": 0,
+      "PF": 44,
+      "PA": 1,
+      "PTS": 3
+    },
+    "T20": {
+      "P": 1,
+      "W": 0,
+      "D": 0,
+      "L": 1,
+      "PF": 14,
+      "PA": 46,
+      "PTS": 0
+    }
+  },
+  "fixtures": {
+    "S1W1": [
+      {
+        "home": "T01",
+        "away": "T20",
+        "result": {
+          "winner": "home",
+          "home_hp": 46,
+          "away_hp": 14
+        }
+      },
+      {
+        "home": "T02",
+        "away": "T19",
+        "result": {
+          "winner": "away",
+          "home_hp": 1,
+          "away_hp": 44
+        }
+      },
+      {
+        "home": "T03",
+        "away": "T18",
+        "result": {
+          "winner": "draw",
+          "home_hp": 16,
+          "away_hp": 16
+        }
+      },
+      {
+        "home": "T04",
+        "away": "T17",
+        "result": {
+          "winner": "away",
+          "home_hp": 13,
+          "away_hp": 44
+        }
+      },
+      {
+        "home": "T05",
+        "away": "T16",
+        "result": {
+          "winner": "away",
+          "home_hp": 19,
+          "away_hp": 42
+        }
+      },
+      {
+        "home": "T06",
+        "away": "T15",
+        "result": {
+          "winner": "away",
+          "home_hp": 18,
+          "away_hp": 48
+        }
+      },
+      {
+        "home": "T07",
+        "away": "T14",
+        "result": {
+          "winner": "home",
+          "home_hp": 45,
+          "away_hp": 19
+        }
+      },
+      {
+        "home": "T08",
+        "away": "T13",
+        "result": {
+          "winner": "away",
+          "home_hp": 8,
+          "away_hp": 42
+        }
+      },
+      {
+        "home": "T09",
+        "away": "T12",
+        "result": {
+          "winner": "away",
+          "home_hp": 0,
+          "away_hp": 61
+        }
+      },
+      {
+        "home": "T10",
+        "away": "T11",
+        "result": {
+          "winner": "home",
+          "home_hp": 42,
+          "away_hp": 3
+        }
+      }
+    ],
+    "S1W2": [
+      {
+        "home": "T01",
+        "away": "T19",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T18",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T17",
+        "result": null
+      },
+      {
+        "home": "T03",
+        "away": "T16",
+        "result": null
+      },
+      {
+        "home": "T04",
+        "away": "T15",
+        "result": null
+      },
+      {
+        "home": "T05",
+        "away": "T14",
+        "result": null
+      },
+      {
+        "home": "T06",
+        "away": "T13",
+        "result": null
+      },
+      {
+        "home": "T07",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T08",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T09",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W3": [
+      {
+        "home": "T01",
+        "away": "T18",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T17",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T16",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T15",
+        "result": null
+      },
+      {
+        "home": "T03",
+        "away": "T14",
+        "result": null
+      },
+      {
+        "home": "T04",
+        "away": "T13",
+        "result": null
+      },
+      {
+        "home": "T05",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T06",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T07",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T08",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W4": [
+      {
+        "home": "T01",
+        "away": "T17",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T16",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T15",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T14",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T13",
+        "result": null
+      },
+      {
+        "home": "T03",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T04",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T05",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T06",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T07",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W5": [
+      {
+        "home": "T01",
+        "away": "T16",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T15",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T14",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T13",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T03",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T04",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T05",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T06",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W6": [
+      {
+        "home": "T01",
+        "away": "T15",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T14",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T13",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T03",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T04",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T05",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W7": [
+      {
+        "home": "T01",
+        "away": "T14",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T13",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T03",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T04",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W8": [
+      {
+        "home": "T01",
+        "away": "T13",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T03",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W9": [
+      {
+        "home": "T01",
+        "away": "T12",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T02",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W10": [
+      {
+        "home": "T01",
+        "away": "T11",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T20",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W11": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T19",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W12": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T18",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W13": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T17",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W14": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T16",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W15": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T15",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W16": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T14",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W17": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T13",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W18": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T12",
+        "away": "T10",
+        "result": null
+      }
+    ],
+    "S1W19": [
+      {
+        "home": "T01",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T10",
+        "away": "T10",
+        "result": null
+      },
+      {
+        "home": "T11",
+        "away": "T10",
+        "result": null
+      }
+    ]
+  },
+  "date": {
+    "season": 1,
+    "week": 2
+  },
+  "season_meta": {
+    "total_weeks": 19
+  },
+  "random_seed": 8889711,
+  "league_economy": 1.0
+}

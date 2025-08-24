@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "career_id": "CID_69c0cc13",
+  "created_at": 1755993048.7653685,
+  "date": {
+    "season": 1,
+    "week": 1
+  },
+  "world_seed": 1755993048,
+  "schedule_seed": 1745876605,
+  "team_ids": [
+    "TID_80deddd3",
+    "TID_c90d53e6"
+  ],
+  "teams": {
+    "TID_80deddd3": {
+      "tid": "TID_80deddd3",
+      "name": "Bronze Lions",
+      "color": [
+        120,
+        180,
+        255
+      ],
+      "fighters": [
+        {
+          "name": "Marcus Hale",
+          "str": 16,
+          "dex": 13,
+          "con": 15,
+          "hp": 12,
+          "ac": 11,
+          "speed": 25,
+          "weapon": {
+            "name": "Longsword",
+            "kind": "melee",
+            "damage": "1d8",
+            "attr": "str",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest",
+          "pid": "PID_c5e76d04"
+        },
+        {
+          "name": "Seren Vale",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 10,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Daggers",
+            "kind": "melee",
+            "damage": "1d4+2",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              19,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest",
+          "pid": "PID_dc2e65c1"
+        },
+        {
+          "name": "Elric Thorne",
+          "str": 13,
+          "dex": 15,
+          "con": 14,
+          "hp": 12,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest",
+          "pid": "PID_223f029f"
+        },
+        {
+          "name": "Kara Stone",
+          "str": 15,
+          "dex": 11,
+          "con": 16,
+          "hp": 13,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest",
+          "pid": "PID_0788e815"
+        }
+      ]
+    },
+    "TID_c90d53e6": {
+      "tid": "TID_c90d53e6",
+      "name": "Azure Blades",
+      "color": [
+        255,
+        140,
+        140
+      ],
+      "fighters": [
+        {
+          "name": "Rowan Pike",
+          "str": 16,
+          "dex": 13,
+          "con": 15,
+          "hp": 12,
+          "ac": 11,
+          "speed": 25,
+          "weapon": {
+            "name": "Battleaxe",
+            "kind": "melee",
+            "damage": "1d8",
+            "attr": "str",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest",
+          "pid": "PID_c3d9a93b"
+        },
+        {
+          "name": "Nia Swift",
+          "str": 11,
+          "dex": 16,
+          "con": 14,
+          "hp": 10,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest",
+          "pid": "PID_cde3685e"
+        },
+        {
+          "name": "Thane Alder",
+          "str": 13,
+          "dex": 15,
+          "con": 14,
+          "hp": 12,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest",
+          "pid": "PID_77f7264f"
+        },
+        {
+          "name": "Brina Cole",
+          "str": 15,
+          "dex": 11,
+          "con": 16,
+          "hp": 13,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest",
+          "pid": "PID_6bae2a1c"
+        }
+      ]
+    }
+  },
+  "transfers": [],
+  "economy": {
+    "inflation": 1.0,
+    "prize_table": {}
+  },
+  "fixtures": {}
+}

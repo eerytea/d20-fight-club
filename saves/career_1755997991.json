@@ -1,0 +1,4343 @@
+{
+  "schema_version": 1,
+  "career_id": "CID_04992061",
+  "created_at": 1755997991.9445834,
+  "date": {
+    "season": 1,
+    "week": 1
+  },
+  "world_seed": 1755997991,
+  "schedule_seed": 1745863298,
+  "team_ids": [
+    "TID_137c4518",
+    "TID_3bc27548",
+    "TID_39b0ab77",
+    "TID_48066864",
+    "TID_19b8d2b4",
+    "TID_fa67ba7a",
+    "TID_e4475d35",
+    "TID_0cc6238f",
+    "TID_81a0adc8",
+    "TID_c1139fab",
+    "TID_de3873ab",
+    "TID_b1f981e7",
+    "TID_ba450f3b",
+    "TID_5aa451ed",
+    "TID_e4c73c64",
+    "TID_c94a36f3",
+    "TID_5e70a198",
+    "TID_d0f39fdb",
+    "TID_88f1ef5e",
+    "TID_2baee085"
+  ],
+  "teams": {
+    "TID_137c4518": {
+      "tid": "TID_137c4518",
+      "name": "Cobalt Sentinels",
+      "color": [
+        191,
+        76,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_12341ac9",
+          "name": "Kira Stone",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_b2ddcc40",
+          "name": "Mina Rhodes",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_1105c873",
+          "name": "Elena Swift",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_f6a8b04d",
+          "name": "Lyra Alder",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_3bc27548": {
+      "tid": "TID_3bc27548",
+      "name": "Obsidian Wolves",
+      "color": [
+        191,
+        110,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_339dc1d1",
+          "name": "Noah Jett",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_b4b6b7bc",
+          "name": "Mira Rhodes",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_31920a82",
+          "name": "Garruk Voss",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_d5b337e0",
+          "name": "Rina Cross",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_39b0ab77": {
+      "tid": "TID_39b0ab77",
+      "name": "Bronze Rangers",
+      "color": [
+        191,
+        145,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_e1d02c6f",
+          "name": "Garruk Fen",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_09384c4a",
+          "name": "Lyra Cross",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_4299532e",
+          "name": "Kira Vale",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_8b83b0fd",
+          "name": "Iris Crowe",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_48066864": {
+      "tid": "TID_48066864",
+      "name": "Obsidian Comets",
+      "color": [
+        191,
+        179,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_b1c65a8e",
+          "name": "Noah Pike",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_7fef7a06",
+          "name": "Darius Iverson",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_f5187204",
+          "name": "Evan Quill",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_be990fa1",
+          "name": "Tomas Fen",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_19b8d2b4": {
+      "tid": "TID_19b8d2b4",
+      "name": "Maroon Falcons",
+      "color": [
+        168,
+        191,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_605daeed",
+          "name": "Seren Dane",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_3e35a2d9",
+          "name": "Alden Easton",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_d38df0ae",
+          "name": "Mina Ironwall",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_a81217c7",
+          "name": "Quinn Sloane",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_fa67ba7a": {
+      "tid": "TID_fa67ba7a",
+      "name": "Golden Corsairs",
+      "color": [
+        133,
+        191,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_53700cb2",
+          "name": "Greta Crowe",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_fdf070cb",
+          "name": "Elena Sloane",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_ba0ddd31",
+          "name": "Evan Drake",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_4296f9f5",
+          "name": "Marcus Swift",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_e4475d35": {
+      "tid": "TID_e4475d35",
+      "name": "Ruby Lions",
+      "color": [
+        99,
+        191,
+        76
+      ],
+      "fighters": [
+        {
+          "pid": "PID_0e4a8511",
+          "name": "Sylvie Hale",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_b5fbbc4b",
+          "name": "Greta Cross",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_5b1bfd59",
+          "name": "Perrin Moss",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_6da4feea",
+          "name": "Rhea Locke",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_0cc6238f": {
+      "tid": "TID_0cc6238f",
+      "name": "Silver Marauders",
+      "color": [
+        76,
+        191,
+        87
+      ],
+      "fighters": [
+        {
+          "pid": "PID_3368d245",
+          "name": "Talia Orrin",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_afd4e88e",
+          "name": "Kira Pike",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_5e242855",
+          "name": "Thane Briar",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_4b904f5b",
+          "name": "Ronan Moss",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_81a0adc8": {
+      "tid": "TID_81a0adc8",
+      "name": "Ivory Valkyries",
+      "color": [
+        76,
+        191,
+        122
+      ],
+      "fighters": [
+        {
+          "pid": "PID_db980d68",
+          "name": "Evan Gale",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_1b3fd3f2",
+          "name": "Quinn Gale",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_e50ef1c5",
+          "name": "Tomas Rhodes",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_23bf5573",
+          "name": "Greta Stone",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_c1139fab": {
+      "tid": "TID_c1139fab",
+      "name": "Topaz Guardians",
+      "color": [
+        76,
+        191,
+        156
+      ],
+      "fighters": [
+        {
+          "pid": "PID_c6d0f536",
+          "name": "Thane Cole",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_9be10b73",
+          "name": "Lyra Rhodes",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_f5f115a8",
+          "name": "Thane Sable",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_97e1c8e1",
+          "name": "Rowan Marin",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_de3873ab": {
+      "tid": "TID_de3873ab",
+      "name": "Maroon Sentinels",
+      "color": [
+        76,
+        191,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_7b3a1d43",
+          "name": "Thane Voss",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_af1205b1",
+          "name": "Kira Frost",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_0410358f",
+          "name": "Jonas Thorne",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_3a0354a5",
+          "name": "Hale Cross",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_b1f981e7": {
+      "tid": "TID_b1f981e7",
+      "name": "Viridian Comets",
+      "color": [
+        76,
+        156,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_deb4b3ca",
+          "name": "Rhea Swift",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_6d43fb4d",
+          "name": "Marcus Easton",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_19b87c65",
+          "name": "Noah Vale",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_9fc627de",
+          "name": "Marcus Rhodes",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_ba450f3b": {
+      "tid": "TID_ba450f3b",
+      "name": "Onyx Sentinels",
+      "color": [
+        76,
+        122,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_b4e46fbb",
+          "name": "Garruk Keane",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_7d7cb536",
+          "name": "Quinn Falk",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_4ed28ff3",
+          "name": "Rowan North",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_93d2bffa",
+          "name": "Cora Dane",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_5aa451ed": {
+      "tid": "TID_5aa451ed",
+      "name": "Ivory Sentinels",
+      "color": [
+        76,
+        87,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_39d40afb",
+          "name": "Orla Falk",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_4b0b5b63",
+          "name": "Rowan Easton",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_09f8f4f7",
+          "name": "Tomas Quill",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_32ea5f79",
+          "name": "Jonas Keane",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_e4c73c64": {
+      "tid": "TID_e4c73c64",
+      "name": "Emerald Blades",
+      "color": [
+        99,
+        76,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_a09b3f0a",
+          "name": "Mina Frost",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_d219ea13",
+          "name": "Rhea Trask",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_98e1510b",
+          "name": "Ronan Locke",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_5c6ae6e8",
+          "name": "Perrin Locke",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_c94a36f3": {
+      "tid": "TID_c94a36f3",
+      "name": "Viridian Wardens",
+      "color": [
+        133,
+        76,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_fdb6bdf5",
+          "name": "Luther Falk",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_8eb50db6",
+          "name": "Cora Sloane",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_68c4b7ed",
+          "name": "Alden Gale",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_5a1d6652",
+          "name": "Mina Thorne",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_5e70a198": {
+      "tid": "TID_5e70a198",
+      "name": "Viridian Comets",
+      "color": [
+        168,
+        76,
+        191
+      ],
+      "fighters": [
+        {
+          "pid": "PID_96c30803",
+          "name": "Iris Fen",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_52d2a4ce",
+          "name": "Bren Locke",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_ea2513d4",
+          "name": "Brina Swift",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_057c66b9",
+          "name": "Elena Stone",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_d0f39fdb": {
+      "tid": "TID_d0f39fdb",
+      "name": "Emerald Dragons",
+      "color": [
+        191,
+        76,
+        179
+      ],
+      "fighters": [
+        {
+          "pid": "PID_e6f0a8bf",
+          "name": "Kara Alder",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_7cb556f6",
+          "name": "Orla Drake",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_b5100876",
+          "name": "Luther Cole",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_0cb2b85c",
+          "name": "Nia Pike",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_88f1ef5e": {
+      "tid": "TID_88f1ef5e",
+      "name": "Azure Blades",
+      "color": [
+        191,
+        76,
+        145
+      ],
+      "fighters": [
+        {
+          "pid": "PID_c89ff01b",
+          "name": "Lena Sloane",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_38325697",
+          "name": "Jace Voss",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_8e9e2acf",
+          "name": "Alden Cross",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_d40270a9",
+          "name": "Iris Cole",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    },
+    "TID_2baee085": {
+      "tid": "TID_2baee085",
+      "name": "Sable Valkyries",
+      "color": [
+        191,
+        76,
+        110
+      ],
+      "fighters": [
+        {
+          "pid": "PID_200772a7",
+          "name": "Tomas Thorne",
+          "role": "Vanguard",
+          "str": 16,
+          "dex": 11,
+          "con": 15,
+          "hp": 14,
+          "ac": 10,
+          "speed": 25,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        },
+        {
+          "pid": "PID_b973f083",
+          "name": "Elena Vale",
+          "role": "Duelist",
+          "str": 13,
+          "dex": 16,
+          "con": 14,
+          "hp": 12,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Shortsword",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "dex",
+            "reach": 1,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_4315d6ed",
+          "name": "Kira Ash",
+          "role": "Archer",
+          "str": 11,
+          "dex": 16,
+          "con": 13,
+          "hp": 11,
+          "ac": 13,
+          "speed": 30,
+          "weapon": {
+            "name": "Longbow",
+            "kind": "ranged",
+            "damage": "1d8",
+            "attr": "dex",
+            "reach": 20,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "lowest"
+        },
+        {
+          "pid": "PID_98885107",
+          "name": "Orla Cross",
+          "role": "Skirmisher",
+          "str": 14,
+          "dex": 15,
+          "con": 13,
+          "hp": 11,
+          "ac": 12,
+          "speed": 30,
+          "weapon": {
+            "name": "Spear",
+            "kind": "melee",
+            "damage": "1d6",
+            "attr": "str",
+            "reach": 2,
+            "crit": [
+              20,
+              2
+            ],
+            "prof": 2
+          },
+          "tactic": "nearest"
+        }
+      ]
+    }
+  },
+  "transfers": [],
+  "economy": {
+    "inflation": 1.0,
+    "prize_table": {}
+  },
+  "fixtures": {
+    "S1W1": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_de3873ab",
+        "result": null
+      }
+    ],
+    "S1W2": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_b1f981e7",
+        "result": null
+      }
+    ],
+    "S1W3": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_ba450f3b",
+        "result": null
+      }
+    ],
+    "S1W4": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_5aa451ed",
+        "result": null
+      }
+    ],
+    "S1W5": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_e4c73c64",
+        "result": null
+      }
+    ],
+    "S1W6": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_c94a36f3",
+        "result": null
+      }
+    ],
+    "S1W7": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_5e70a198",
+        "result": null
+      }
+    ],
+    "S1W8": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_d0f39fdb",
+        "result": null
+      }
+    ],
+    "S1W9": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_88f1ef5e",
+        "result": null
+      }
+    ],
+    "S1W10": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_2baee085",
+        "result": null
+      }
+    ],
+    "S1W11": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_3bc27548",
+        "result": null
+      }
+    ],
+    "S1W12": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_39b0ab77",
+        "result": null
+      }
+    ],
+    "S1W13": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_48066864",
+        "result": null
+      }
+    ],
+    "S1W14": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_19b8d2b4",
+        "result": null
+      }
+    ],
+    "S1W15": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_fa67ba7a",
+        "result": null
+      }
+    ],
+    "S1W16": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_e4475d35",
+        "result": null
+      }
+    ],
+    "S1W17": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_0cc6238f",
+        "result": null
+      }
+    ],
+    "S1W18": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_81a0adc8",
+        "result": null
+      }
+    ],
+    "S1W19": [
+      {
+        "home": "TID_137c4518",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_c1139fab",
+        "result": null
+      }
+    ],
+    "S1W20": [
+      {
+        "home": "TID_2baee085",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_c1139fab",
+        "result": null
+      }
+    ],
+    "S1W21": [
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_de3873ab",
+        "result": null
+      }
+    ],
+    "S1W22": [
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_b1f981e7",
+        "result": null
+      }
+    ],
+    "S1W23": [
+      {
+        "home": "TID_48066864",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_ba450f3b",
+        "result": null
+      }
+    ],
+    "S1W24": [
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_5aa451ed",
+        "result": null
+      }
+    ],
+    "S1W25": [
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_e4c73c64",
+        "result": null
+      }
+    ],
+    "S1W26": [
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_c94a36f3",
+        "result": null
+      }
+    ],
+    "S1W27": [
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_81a0adc8",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_5e70a198",
+        "result": null
+      }
+    ],
+    "S1W28": [
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_c1139fab",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_d0f39fdb",
+        "result": null
+      }
+    ],
+    "S1W29": [
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_de3873ab",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_2baee085",
+        "away": "TID_88f1ef5e",
+        "result": null
+      }
+    ],
+    "S1W30": [
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_b1f981e7",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_3bc27548",
+        "away": "TID_2baee085",
+        "result": null
+      }
+    ],
+    "S1W31": [
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_ba450f3b",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_39b0ab77",
+        "away": "TID_3bc27548",
+        "result": null
+      }
+    ],
+    "S1W32": [
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_5aa451ed",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_48066864",
+        "away": "TID_39b0ab77",
+        "result": null
+      }
+    ],
+    "S1W33": [
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_e4c73c64",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_19b8d2b4",
+        "away": "TID_48066864",
+        "result": null
+      }
+    ],
+    "S1W34": [
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_c94a36f3",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_fa67ba7a",
+        "away": "TID_19b8d2b4",
+        "result": null
+      }
+    ],
+    "S1W35": [
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_5e70a198",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_e4475d35",
+        "away": "TID_fa67ba7a",
+        "result": null
+      }
+    ],
+    "S1W36": [
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_d0f39fdb",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_0cc6238f",
+        "away": "TID_e4475d35",
+        "result": null
+      }
+    ],
+    "S1W37": [
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_88f1ef5e",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_81a0adc8",
+        "away": "TID_0cc6238f",
+        "result": null
+      }
+    ],
+    "S1W38": [
+      {
+        "home": "TID_88f1ef5e",
+        "away": "TID_137c4518",
+        "result": null
+      },
+      {
+        "home": "TID_d0f39fdb",
+        "away": "TID_2baee085",
+        "result": null
+      },
+      {
+        "home": "TID_5e70a198",
+        "away": "TID_3bc27548",
+        "result": null
+      },
+      {
+        "home": "TID_c94a36f3",
+        "away": "TID_39b0ab77",
+        "result": null
+      },
+      {
+        "home": "TID_e4c73c64",
+        "away": "TID_48066864",
+        "result": null
+      },
+      {
+        "home": "TID_5aa451ed",
+        "away": "TID_19b8d2b4",
+        "result": null
+      },
+      {
+        "home": "TID_ba450f3b",
+        "away": "TID_fa67ba7a",
+        "result": null
+      },
+      {
+        "home": "TID_b1f981e7",
+        "away": "TID_e4475d35",
+        "result": null
+      },
+      {
+        "home": "TID_de3873ab",
+        "away": "TID_0cc6238f",
+        "result": null
+      },
+      {
+        "home": "TID_c1139fab",
+        "away": "TID_81a0adc8",
+        "result": null
+      }
+    ]
+  },
+  "table": {
+    "TID_137c4518": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_3bc27548": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_39b0ab77": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_48066864": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_19b8d2b4": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_fa67ba7a": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_e4475d35": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_0cc6238f": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_81a0adc8": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_c1139fab": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_de3873ab": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_b1f981e7": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_ba450f3b": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_5aa451ed": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_e4c73c64": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_c94a36f3": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_5e70a198": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_d0f39fdb": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_88f1ef5e": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    },
+    "TID_2baee085": {
+      "P": 0,
+      "W": 0,
+      "D": 0,
+      "L": 0,
+      "PF": 0,
+      "PA": 0,
+      "PTS": 0
+    }
+  },
+  "season_meta": {
+    "total_weeks": 38
+  }
+}
