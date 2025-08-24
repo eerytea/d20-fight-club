@@ -63,7 +63,6 @@ class ExhibitionPickerState:
                 self._randomize(); return True
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            # click toggles side if near labels, very simple
             mx, my = event.pos
             w, h = self.app.width, self.app.height
             left_lbl = pygame.Rect(80, 70, 120, 28)
@@ -166,7 +165,6 @@ class ExhibitionPickerState:
 
             tb = build_tb()
 
-            # Open match viewer with Reset support
             self.app.safe_push(
                 MatchState,
                 app=self.app,
