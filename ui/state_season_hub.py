@@ -28,6 +28,18 @@ class SeasonHubState(UIState):
 
     def on_enter(self): pass
         Button(pygame.Rect(24+180+180+180, 24, 160, 40), "Play My Match", on_click=self._play_my_match),
+        # in on_enter button list, add:
+        Button(pygame.Rect(24+180+180+180+180, 24, 120, 40), "Schedule", on_click=self._open_schedule),
+        Button(pygame.Rect(24+180+180+180+180+140, 24, 100, 40), "Table", on_click=self._open_table),
+
+    # add methods:
+    def _open_schedule(self):
+        from .state_schedule import ScheduleState
+        self.app.push_state(ScheduleState(self.app, self.career))
+
+    def _open_table(self):
+        from .state_table import TableState
+        self.app.push_state(TableState(self.app, self.career, self.user_team_id))
 
     def _play_my_match(self):
         # find user's fixture this week
