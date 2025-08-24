@@ -28,10 +28,10 @@ def test_main_flow_smoke():
     if app.state.sel.item_list:
         first_label = app.state.sel.item_list[0]
         # Robust selection across pygame_gui versions:
-sel = app.state.sel
-if hasattr(sel, "select_item"):
+    sel = app.state.sel
+    if hasattr(sel, "select_item"):
     sel.select_item(first_label)
-else:
+    else:
     # Fallback: synthesize the selection event
     evt = pygame.event.Event(pygame_gui.UI_SELECTION_LIST_NEW_SELECTION, {
         "ui_element": sel,
