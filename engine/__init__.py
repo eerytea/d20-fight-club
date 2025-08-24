@@ -1,43 +1,39 @@
 # engine/__init__.py
-from .tbcombat import TBCombat  # adjust if your class/module is named differently
-from .model import Fighter, Weapon, Team
-from .grid import layout_teams_tiles
-from .tbcombat import TBCombat
-from .model import Fighter, Weapon, Team, fighter_from_dict
-from .grid import layout_teams_tiles
+"""
+Public API for the engine package.
+
+We lazily expose:
+- TBCombat                (from engine.tbcombat)
+- Team, Fighter, Weapon,
+  fighter_from_dict       (from engine.model)
+- layout_teams_tiles      (from engine.grid)
+
+Using lazy exports avoids circular import issues during package import.
+"""
 
 __all__ = [
-    "TBCombat", "Fighter", "Weapon", "Team",
-    "layout_teams_tiles", "fighter_from_dict",
-]
-# expose fighter_from_dict wherever it lives
-try:
-    from .model import fighter_from_dict  # preferred
-except Exception:
-    try:
-        from core.creator import fighter_from_dict  # fallback if you keep it in core
-    except Exception:
-        def fighter_from_dict(*args, **kwargs):
-            raise ImportError(
-                "Define fighter_from_dict in engine/model.py or core/creator.py and re-export in engine/__init__.py"
-            )
-
-__all__ = [
-    "TBCombat", "Fighter", "Weapon", "Team",
-    "layout_teams_tiles", "fighter_from_dict"
-]
-from .tbcombat import TBCombat
-from .model import Fighter, Weapon, Team, fighter_from_dict
-from .grid import layout_teams_tiles
-
-__all__ = [
-    "TBCombat", "Fighter", "Weapon", "Team",
-    "layout_teams_tiles", "fighter_from_dict",
+    "TBCombat",
+    "Team",
+    "Fighter",
+    "Weapon",
+    "fighter_from_dict",
+    "layout_teams_tiles",
 ]
 
-# engine/__init__.py
-from .tbcombat import TBCombat
-from .model import Team, fighter_from_dict
-from .grid import layout_teams_tiles
+def __getattr__(name: str):
+    if name == "TBCombat":
+        from . import tbcombat as _tb
+        return _tb.TBCombat
 
-__all__ = ["TBCombat", "Team", "fighter_from_dict", "layout_teams_tiles"]
+    if name in ("Team", "Fighter", "Weapon", "fighter_from_dict"):
+        from . import model as _model
+        return getattr(_model, name)
+
+    if name == "layout_teams_tiles":
+        from . import grid as _grid
+        return _grid.layout_teams_tiles
+
+    raise AttributeError(f"module 'engine' has no attribute {name!r}")
+
+def __dir__():
+    return sorted(__all__)
