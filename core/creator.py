@@ -1,5 +1,9 @@
 # core/creator.py
-# Fighter generation: standard array, Human +1 to highest, class fit, gear, ratings.
+# Truly random standard array assignment (no min-max),
+# Human +1 applied to a random ability among the current highest,
+# class chosen via multi-factor weighted scoring + small randomness.
+#
+# Works with core/ratings.CLASS_PROFILES to finalize combat + OVR.
 
 from typing import Dict, List, Optional
 import random
@@ -18,47 +22,59 @@ LAST_NAMES  = [
 ABILITY_KEYS = ["str","dex","con","int","wis","cha"]
 STANDARD_ARRAY = [15,14,13,12,10,8]
 
+# ---- Class ability weights (multi-factor) ----
+# Higher weight == more important for that class.
+CLASS_WEIGHTS: Dict[str, Dict[str, int]] = {
+    "Fighter":   {"str": 3, "dex": 1, "con": 2, "int": 0, "wis": 0, "cha": 0},
+    "Barbarian": {"str": 3, "dex": 0, "con": 3, "int": 0, "wis": 0, "cha": 0},
+    "Rogue":     {"str": 0, "dex": 3, "con": 1, "int": 1, "wis": 0, "cha": 1},
+    "Wizard":    {"str": 0, "dex": 1, "con": 1, "int": 3, "wis": 0, "cha": 0},
+    "Cleric":    {"str": 0, "dex": 0, "con": 2, "int": 0, "wis": 3, "cha": 0},
+    "Sorcerer":  {"str": 0, "dex": 1, "con": 1, "int": 0, "wis": 0, "cha": 3},
+}
+
 def assign_standard_array(r: random.Random) -> Dict[str,int]:
+    """Randomly assign the standard array to abilities with no optimization."""
     scores = STANDARD_ARRAY[:]
     r.shuffle(scores)
     return {k: v for k, v in zip(ABILITY_KEYS, scores)}
 
-def apply_human_bonus(stats: Dict[str,int]) -> None:
-    # +1 to the single highest ability (ties break by STR, DEX, CON, INT, WIS, CHA order)
-    order = ["str","dex","con","int","wis","cha"]
-    best = max(stats.values())
-    for k in order:
-        if stats[k] == best:
-            stats[k] += 1
-            break
+def apply_human_bonus(stats: Dict[str,int], r: random.Random) -> None:
+    """+1 to a randomly chosen ability among those tied for highest."""
+    max_val = max(stats.values())
+    tied = [k for k, v in stats.items() if v == max_val]
+    stats[r.choice(tied)] += 1
 
-def score_class_fit(stats: Dict[str,int], cls: str) -> int:
-    prof = CLASS_PROFILES[cls]
-    score = 0
-    for k in prof.get("primaries", []):
-        score += stats.get(k, 10) * 2
-    for k in prof.get("secondaries", []):
-        score += stats.get(k, 10)
-    return score
+def class_score(stats: Dict[str,int], cls: str, r: random.Random) -> float:
+    """Weighted sum with small randomness to avoid hard funnels."""
+    weights = CLASS_WEIGHTS.get(cls, {})
+    base = sum(stats.get(k, 10) * weights.get(k, 0) for k in ABILITY_KEYS)
+    # ±10% jitter
+    jitter = r.uniform(0.9, 1.1)
+    return base * jitter
 
-def pick_class(stats: Dict[str,int]) -> str:
-    best_cls, best_score = None, -10**9
+def pick_class(stats: Dict[str,int], r: random.Random) -> str:
+    best_cls, best_score = None, float("-inf")
     for cls in CLASS_PROFILES.keys():
-        sc = score_class_fit(stats, cls)
+        sc = class_score(stats, cls, r)
         if sc > best_score:
             best_cls, best_score = cls, sc
     return best_cls or "Fighter"
 
 def generate_fighter(level: int = 1, rng: Optional[random.Random] = None) -> Dict:
     r = rng or random.Random()
-    stats = assign_standard_array(r)
-    apply_human_bonus(stats)
 
-    cls = pick_class(stats)
+    # 1) Truly random standard array (no min-maxing)
+    stats = assign_standard_array(r)
+
+    # 2) Human +1 applied to random highest ability
+    apply_human_bonus(stats, r)
+
+    # 3) Pick class based on multi-factor weighted score (+jitter)
+    cls = pick_class(stats, r)
     prof = CLASS_PROFILES[cls]
 
-    # Basic combat (simple abstractions)
-    # You can later swap in class-specific hit dice; for now keep it simple and balanced for the sim.
+    # 4) Simple base combat; ratings will refine OVR/value
     hp = 6 + stats["con"]
     ac = int(prof.get("armor_ac", 12))
     speed = r.randint(5, 8)
@@ -85,11 +101,7 @@ def generate_fighter(level: int = 1, rng: Optional[random.Random] = None) -> Dic
 def generate_team(name: str, tid: str, color=(120,180,255), size: int = 4, level: int = 1,
                   rng: Optional[random.Random] = None) -> Dict:
     r = rng or random.Random()
-    fighters: List[Dict] = []
-    for _ in range(size):
-        f = generate_fighter(level=level, rng=r)
-        fighters.append(f)
-
+    fighters: List[Dict] = [generate_fighter(level=level, rng=r) for _ in range(size)]
     team = {
         "tid": tid,
         "name": name,
