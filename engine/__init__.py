@@ -2,7 +2,14 @@
 from .tbcombat import TBCombat  # adjust if your class/module is named differently
 from .model import Fighter, Weapon, Team
 from .grid import layout_teams_tiles
+from .tbcombat import TBCombat
+from .model import Fighter, Weapon, Team, fighter_from_dict
+from .grid import layout_teams_tiles
 
+__all__ = [
+    "TBCombat", "Fighter", "Weapon", "Team",
+    "layout_teams_tiles", "fighter_from_dict",
+]
 # expose fighter_from_dict wherever it lives
 try:
     from .model import fighter_from_dict  # preferred
