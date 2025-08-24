@@ -31,6 +31,15 @@ class SeasonHubState(UIState):
         # in on_enter button list, add:
         Button(pygame.Rect(24+180+180+180+180, 24, 120, 40), "Schedule", on_click=self._open_schedule),
         Button(pygame.Rect(24+180+180+180+180+140, 24, 100, 40), "Table", on_click=self._open_table),
+    def _save_now(self):
+        try:
+        from core.save import save_career
+        save_career(self.career, "saves/career.json")
+        # (optional) flash a tiny toast or push MessageState
+        except Exception as e:
+        from .state_message import MessageState
+        self.app.push_state(MessageState("Save Error", str(e)))
+
 
     # add methods:
     def _open_schedule(self):
