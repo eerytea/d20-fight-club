@@ -1,12 +1,7 @@
-# tests/conftest.py
-import os
-os.environ["SDL_VIDEODRIVER"] = "dummy"  # headless
-os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+import os, sys, pathlib
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
-import pytest, pygame
-
-@pytest.fixture(scope="session", autouse=True)
-def init_pygame():
-    pygame.init()
-    yield
-    pygame.quit()
+root = pathlib.Path(__file__).resolve().parents[1]
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))

@@ -116,3 +116,10 @@ class TBCombat:
         if self.turn_index == len(self.fighters) - 1:
             self.round += 1
             self.events.append(Event("round_start", {"round": self.round}))
+
+# engine/tbcombat.py, inside take_turn()
+dist = abs(tgt.tx - actor.tx) + abs(tgt.ty - actor.ty)
+reach = getattr(actor.weapon, "reach", 1)     # ← fallback
+if dist > reach:
+    # move toward target ...
+
