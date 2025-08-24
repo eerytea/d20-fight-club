@@ -1,32 +1,55 @@
 # ui/state_menu.py
 from __future__ import annotations
 
-from typing import Callable, List, Optional
+from typing import List, Callable, Optional
 
 try:
     import pygame
 except Exception:
     pygame = None  # type: ignore
 
-# Try to use your shared Button helper if available
+# Prefer your shared Button; fall back to an inline simple one if not available.
 try:
-    from .uiutil import Button  # expected signature: Button(rect, label, on_click=callable)
+    from .uiutil import Button  # expected: Button(pygame.Rect, label, on_click=callable)
 except Exception:
     Button = None  # type: ignore
 
-from .state_team_select import TeamSelectState
-from .state_exhibition_picker import ExhibitionPickerState
-from .state_message import MessageState
+
+class _SimpleButton:  # fallback if uiutil.Button isn't available
+    def __init__(self, rect, label, on_click: Callable[[], None]):
+        self.rect = rect
+        self.label = label
+        self.on_click = on_click
+        self.hover = False
+        self._font = pygame.font.SysFont("consolas", 22) if pygame else None
+
+    def handle_event(self, event) -> bool:
+        if pygame is None:
+            return False
+        if event.type == pygame.MOUSEMOTION:
+            self.hover = self.rect.collidepoint(event.pos)
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.on_click()
+                return True
+        return False
+
+    def draw(self, surface) -> None:
+        if pygame is None:
+            return
+        bg = (120, 120, 120) if self.hover else (100, 100, 100)
+        pygame.draw.rect(surface, bg, self.rect, border_radius=6)
+        pygame.draw.rect(surface, (60, 60, 60), self.rect, width=2, border_radius=6)
+        txt = self._font.render(self.label, True, (20, 20, 20))
+        tx = self.rect.x + (self.rect.w - txt.get_width()) // 2
+        ty = self.rect.y + (self.rect.h - txt.get_height()) // 2
+        surface.blit(txt, (tx, ty))
 
 
 class MenuState:
     """
-    Main menu with buttons (mouse) and keyboard fallback.
-
-    Keyboard:
-      UP/DOWN   – select
-      ENTER     – confirm
-      ESC       – quit
+    Start screen with centered title and clickable buttons.
+    Matches the style in your screenshot: stacked gray buttons in the middle.
     """
 
     def __init__(self, app) -> None:
@@ -34,61 +57,51 @@ class MenuState:
         self._font = None
         self._small = None
         self._buttons: List = []
-        self._items = [
-            ("New Game", self._new_game),
-            ("Exhibition", self._exhibition),
-            ("Settings", self._settings),
-            ("Quit", self._quit),
-        ]
-        self._index = 0  # for keyboard fallback
-
-    # ---------- lifecycle ----------
 
     def enter(self) -> None:
         if pygame is None:
             return
         pygame.font.init()
-        self._font = pygame.font.SysFont("consolas", 28)
-        self._small = pygame.font.SysFont("consolas", 16)
-
-        # Build buttons if helper is available
-        self._buttons.clear()
-        if Button is not None and self.app is not None:
-            x, y = 80, 140
-            for label, fn in self._items:
-                rect = pygame.Rect(x, y, 240, 48)
-                self._buttons.append(Button(rect, label, on_click=fn))  # type: ignore
-                y += 64
+        self._font = pygame.font.SysFont("consolas", 36)
+        self._small = pygame.font.SysFont("consolas", 18)
+        self._build_buttons()
 
     def exit(self) -> None:
         pass
 
-    # ---------- events / update / draw ----------
+    # -------- helpers --------
+
+    def _build_buttons(self) -> None:
+        if pygame is None:
+            return
+        self._buttons.clear()
+        w, h = self.app.width, self.app.height
+        btn_w, btn_h, gap = 280, 48, 14
+        start_y = h // 2 - (btn_h * 5 + gap * 4) // 2  # center block of 5 buttons
+        x = (w - btn_w) // 2
+
+        def mk(label: str, fn: Callable[[], None], y: int):
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            if Button is not None:
+                self._buttons.append(Button(rect, label, on_click=fn))  # type: ignore
+            else:
+                self._buttons.append(_SimpleButton(rect, label, on_click=fn))
+
+        y = start_y
+        mk("New Game", self._new_game, y); y += btn_h + gap
+        mk("Load Game", self._load_game, y); y += btn_h + gap
+        mk("Play Match", self._play_match, y); y += btn_h + gap
+        mk("Settings", self._settings, y); y += btn_h + gap
+        mk("Quit", self._quit, y)
+
+    # -------- events / update / draw --------
 
     def handle_event(self, event) -> bool:
         if pygame is None:
             return False
-
-        # Mouse → buttons
-        if Button is not None and self._buttons:
-            for b in self._buttons:
-                if hasattr(b, "handle_event") and b.handle_event(event):  # type: ignore
-                    return True
-
-        # Keyboard fallback
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                self._quit()
-                return True
-            if event.key == pygame.K_UP:
-                self._index = (self._index - 1) % len(self._items)
-                return True
-            if event.key == pygame.K_DOWN:
-                self._index = (self._index + 1) % len(self._items)
-                return True
-            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                _, fn = self._items[self._index]
-                fn()
+        # Mouse-only UI (keyboard still works via OS, but we don't rely on it)
+        for b in self._buttons:
+            if b.handle_event(event):
                 return True
         return False
 
@@ -99,53 +112,52 @@ class MenuState:
         if pygame is None:
             return
         w, h = surface.get_size()
-        title = self._font.render("D20 Fight Club", True, (255, 255, 255))  # type: ignore
-        surface.blit(title, (24, 24))
+        title = self._font.render("D20 Fight Club – Manager", True, (255, 255, 255))  # type: ignore
+        surface.blit(title, (w // 2 - title.get_width() // 2, 60))
 
-        if Button is not None and self._buttons:
-            # Button UI
-            for b in self._buttons:
-                if hasattr(b, "draw"):
-                    b.draw(surface)  # type: ignore
-            hint = self._small.render("Click a button • ESC to quit", True, (200, 200, 200))  # type: ignore
-            surface.blit(hint, (24, h - 32))
-            return
+        # subtitle: "No career loaded" or current team name if you want
+        subtitle = "No career loaded"
+        try:
+            career = self.app.data.get("career")
+            if career:
+                subtitle = f"Team: {career.team_names[career.user_team_id]}"
+        except Exception:
+            pass
+        sub = self._small.render(subtitle, True, (200, 200, 200))  # type: ignore
+        surface.blit(sub, (w // 2 - sub.get_width() // 2, 100))
 
-        # Keyboard fallback list
-        y = 140
-        for i, (label, _) in enumerate(self._items):
-            sel = (i == self._index)
-            prefix = "> " if sel else "  "
-            color = (255, 255, 255) if sel else (200, 200, 200)
-            txt = self._font.render(prefix + label, True, color)  # type: ignore
-            surface.blit(txt, (80, y))
-            y += 40
-        hint = self._small.render("UP/DOWN to choose • ENTER confirm • ESC quit", True, (200, 200, 200))  # type: ignore
-        surface.blit(hint, (24, h - 32))
+        # buttons
+        for b in self._buttons:
+            b.draw(surface)
 
-    # ---------- actions ----------
+    # -------- actions --------
 
     def _new_game(self) -> None:
-        if hasattr(self.app, "safe_push"):
+        try:
+            from .state_team_select import TeamSelectState
             self.app.safe_push(TeamSelectState, app=self.app)
-        else:
-            self.app.push_state(TeamSelectState(app=self.app))
+        except Exception as e:
+            from .state_message import MessageState
+            self.app.push_state(MessageState(app=self.app, text=f"New Game failed:\n{e}"))
 
-    def _exhibition(self) -> None:
-        if hasattr(self.app, "safe_push"):
+    def _load_game(self) -> None:
+        from .state_message import MessageState
+        self.app.push_state(MessageState(app=self.app, text="Load/Save UI coming soon."))
+
+    def _play_match(self) -> None:
+        try:
+            from .state_exhibition_picker import ExhibitionPickerState
             self.app.safe_push(ExhibitionPickerState, app=self.app)
-        else:
-            self.app.push_state(ExhibitionPickerState(app=self.app))
+        except Exception as e:
+            from .state_message import MessageState
+            self.app.push_state(MessageState(app=self.app, text=f"Play Match failed:\n{e}"))
 
     def _settings(self) -> None:
-        # If you have a SettingsState, push it; else show a friendly popup
         try:
-            from .state_settings import SettingsState  # type: ignore
-            if hasattr(self.app, "safe_push"):
-                self.app.safe_push(SettingsState, app=self.app)
-            else:
-                self.app.push_state(SettingsState(app=self.app))
+            from .state_settings import SettingsState  # if you have it
+            self.app.safe_push(SettingsState, app=self.app)
         except Exception:
+            from .state_message import MessageState
             self.app.push_state(MessageState(app=self.app, text="Settings screen not available."))
 
     def _quit(self) -> None:
