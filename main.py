@@ -1,4 +1,4 @@
-# main.py — D20 Fight Club Manager (clean build)
+# main.py — D20 Fight Club Manager (clean build, factory-safe)
 
 import os, json, time, pygame, pygame_gui
 from typing import List, Dict, Tuple, Optional
@@ -68,19 +68,16 @@ def make_default_career() -> Optional[Career]:
             try:
                 return meth(**kwargs)
             except TypeError:
-                # try calling without kwargs if signature differs
                 try:
                     return meth()
                 except Exception:
                     pass
             except Exception:
                 pass
-    # final fallback: maybe Career() auto-initializes a league internally
     try:
         return Career()
     except Exception:
         return None
-
 
 # =====================================================================================
 #                                         STATES
@@ -117,24 +114,23 @@ class MenuState:
             self.ui.set_window_resolution(event.size); self._build_ui()
 
         # support old/new pygame_gui event styles
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
+        if pressed:
             if event.ui_element == self.btn_new:
-    # start a fresh league (robust across save_system versions)
-    car = make_default_career()
-    if car is None:
-        # graceful message instead of crashing
-        pygame_gui.windows.UIMessageWindow(
-            pygame.Rect(200, 200, 420, 200),
-            "Could not create a default league.\n"
-            "Please update core/save_system.py to expose a league factory."
-            , self.ui
-        )
-    else:
-        self.app.career = car
-        self.app.set_state(TeamSelectState(self.app))
+                car = make_default_career()
+                if car is None:
+                    pygame_gui.windows.UIMessageWindow(
+                        pygame.Rect(200, 200, 440, 220),
+                        "Could not create a default league.\n"
+                        "Please update core/save_system.py to expose a league factory.",
+                        self.ui
+                    )
+                else:
+                    self.app.career = car
+                    self.app.set_state(TeamSelectState(self.app))
+
             elif event.ui_element == self.btn_load:
-                # load dialog
                 path = os.path.join(SAVES_DIR, "career.json")
                 car = load_career(path)
                 if car:
@@ -143,12 +139,29 @@ class MenuState:
                         self.app.set_state(ManagerMenuState(self.app))
                     else:
                         self.app.set_state(TeamSelectState(self.app))
+                else:
+                    pygame_gui.windows.UIMessageWindow(
+                        pygame.Rect(200, 200, 360, 200),
+                        "No save found at saves/career.json",
+                        self.ui
+                    )
+
             elif event.ui_element == self.btn_play:
-                # exhibition: pick two teams then launch match selector
+                if not self.app.career:
+                    car = make_default_career()
+                    if not car:
+                        pygame_gui.windows.UIMessageWindow(
+                            pygame.Rect(200, 200, 360, 200),
+                            "No league available.", self.ui
+                        )
+                        return
+                    self.app.career = car
                 self.app.exhibition_pair = None
                 self.app.set_state(ExhibitionSelectState(self.app))
+
             elif event.ui_element == self.btn_set:
                 self.app.set_state(SettingsState(self.app))
+
             elif event.ui_element == self.btn_quit:
                 self.app.running = False
 
@@ -190,31 +203,32 @@ class SettingsState:
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui()
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED) or \
-           (event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED):
-            if event.ui_element == self.dd_res:
-                try:
-                    sx, sy = [int(x) for x in event.text.split("x")]
-                    self.app.apply_resolution((sx, sy))
-                    self.app.settings["resolution"] = [sx, sy]
-                    save_json(SETTINGS_PATH, self.app.settings)
-                except Exception:
-                    pass
+        changed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_DROP_DOWN_MENU_CHANGED) \
+                  or (event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED)
+        moved   = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_HORIZONTAL_SLIDER_MOVED) \
+                  or (event.type == pygame_gui.UI_HORIZONTAL_SLIDER_MOVED)
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_HORIZONTAL_SLIDER_MOVED) or \
-           (event.type == pygame_gui.UI_HORIZONTAL_SLIDER_MOVED):
-            if event.ui_element == self.slider:
-                v = float(self.slider.get_current_value())
-                self.lbl_vol.set_text(f"Volume: {int(v*100)}%")
-                self.app.settings["volume_master"] = v
-                try: pygame.mixer.music.set_volume(v)
-                except Exception: pass
+        if changed and event.ui_element == self.dd_res:
+            try:
+                sx, sy = [int(x) for x in event.text.split("x")]
+                self.app.apply_resolution((sx, sy))
+                self.app.settings["resolution"] = [sx, sy]
                 save_json(SETTINGS_PATH, self.app.settings)
+            except Exception:
+                pass
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
-            if event.ui_element == self.btn_back:
-                self.app.set_state(MenuState(self.app))
+        if moved and event.ui_element == self.slider:
+            v = float(self.slider.get_current_value())
+            self.lbl_vol.set_text(f"Volume: {int(v*100)}%")
+            self.app.settings["volume_master"] = v
+            try: pygame.mixer.music.set_volume(v)
+            except Exception: pass
+            save_json(SETTINGS_PATH, self.app.settings)
+
+        if pressed and event.ui_element == self.btn_back:
+            self.app.set_state(MenuState(self.app))
 
         self.ui.process_events(event)
 
@@ -287,8 +301,12 @@ class TeamSelectState:
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui(); return
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION) or \
-           (event.type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION):
+        newsel = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION) \
+                 or (event.type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION)
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
+
+        if newsel:
             if event.ui_element == self.list_teams:
                 label = event.text
                 tid = self._label_to_tid.get(label)
@@ -310,8 +328,7 @@ class TeamSelectState:
                         self._render_fighter_details(f)
                         break
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
+        if pressed:
             if event.ui_element == self.btn_back:
                 self.app.set_state(MenuState(self.app))
             elif event.ui_element == self.btn_manage:
@@ -355,15 +372,17 @@ class ExhibitionSelectState:
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui()
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION) or \
-           (event.type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION):
-            if event.ui_element in (self.listA, self.listB):
-                lab = event.text; tid = self._label_to_tid.get(lab)
-                if event.ui_element == self.listA: self._selA = tid
-                else: self._selB = tid
+        newsel = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION) \
+                 or (event.type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION)
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
+        if newsel and event.ui_element in (self.listA, self.listB):
+            lab = event.text; tid = self._label_to_tid.get(lab)
+            if event.ui_element == self.listA: self._selA = tid
+            else: self._selB = tid
+
+        if pressed:
             if event.ui_element == self.btn_back:
                 self.app.set_state(MenuState(self.app))
             elif event.ui_element == self.btn_go:
@@ -401,14 +420,15 @@ class ManagerMenuState:
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui()
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
+
+        if pressed:
             if event.ui_element == self.btn_play:
                 self.app.scheduled_fixture = True
                 self.app.set_state(MatchState(self.app, scheduled=True))
             elif event.ui_element == self.btn_adv:
                 simulate_week_ai(self.app.career)   # quick-sim AI + update table
-                # auto-save after week
                 ensure_dir(SAVES_DIR); save_career(os.path.join(SAVES_DIR, "career.json"), self.app.career)
             elif event.ui_element == self.btn_ros:
                 self.app.set_state(RosterState(self.app))
@@ -513,7 +533,6 @@ class RosterState:
                 return
 
     def _compare_popup(self):
-        # placeholder: you can expand later
         pygame_gui.windows.UIMessageWindow(pygame.Rect(200,200,360,200),"Compare coming soon", self.manager)
 
     def handle(self, event):
@@ -531,8 +550,14 @@ class RosterState:
             self.btn_compare.set_relative_rect(pygame.Rect(440, h-48, 120, 32))
             self.btn_back.set_relative_rect(pygame.Rect(w-16-140, 16, 140, 32))
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
+        changed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_DROP_DOWN_MENU_CHANGED) \
+                  or (event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED)
+        newsel = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION) \
+                 or (event.type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION)
+
+        if pressed:
             if event.ui_element == self.btn_back:
                 self.app.set_state(ManagerMenuState(self.app))
             elif event.ui_element == self.btn_prev:
@@ -546,15 +571,11 @@ class RosterState:
             elif event.ui_element == self.btn_compare:
                 self._compare_popup()
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED) or \
-           (event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED):
-            if event.ui_element == self.dd_sort:
-                self._page = 0; self._apply_sort_and_page()
+        if changed and event.ui_element == self.dd_sort:
+            self._page = 0; self._apply_sort_and_page()
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION) or \
-           (event.type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION):
-            if event.ui_element == self.list_fighters:
-                self._update_card_from_selection()
+        if newsel and event.ui_element == self.list_fighters:
+            self._update_card_from_selection()
 
         self.manager.process_events(event)
 
@@ -569,11 +590,9 @@ class ScheduleState:
         w,h = self.app.screen.get_size()
         self.lbl = pygame_gui.elements.UILabel(pygame.Rect(16,16,w-32,32), "Schedule", self.ui)
         self.btn_back = pygame_gui.elements.UIButton(pygame.Rect(w-16-120,16,120,32),"Back", self.ui)
-        # simple list
         self.box = pygame_gui.elements.UITextBox(pygame.Rect(16,64,w-32,h-80), self._html_schedule(), self.ui)
 
     def _html_schedule(self):
-        # simple HTML: show current week fixtures and previous/next
         try:
             html = []
             wk = self.app.career.week
@@ -590,10 +609,10 @@ class ScheduleState:
     def handle(self, event):
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui()
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
-            if event.ui_element == self.btn_back:
-                self.app.set_state(ManagerMenuState(self.app))
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
+        if pressed and event.ui_element == self.btn_back:
+            self.app.set_state(ManagerMenuState(self.app))
         self.ui.process_events(event)
 
     def update(self, dt): self.ui.update(dt)
@@ -624,10 +643,10 @@ class TableState:
     def handle(self, event):
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui()
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
-            if event.ui_element == self.btn_back:
-                self.app.set_state(ManagerMenuState(self.app))
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
+        if pressed and event.ui_element == self.btn_back:
+            self.app.set_state(ManagerMenuState(self.app))
         self.ui.process_events(event)
 
     def update(self, dt): self.ui.update(dt)
@@ -647,11 +666,9 @@ class MatchState:
 
         # Build fighters for this match
         if scheduled:
-            # Your team vs scheduled opponent this week
             fx = self.app.career.get_fixture_for_team(self.app.chosen_tid)
             self.home_tid = fx["home"]; self.away_tid = fx["away"]
         else:
-            # exhibition pair chosen previously
             self.home_tid, self.away_tid = self.app.exhibition_pair
 
         tH = self.app.career.get_team(self.home_tid)
@@ -678,7 +695,6 @@ class MatchState:
 
     def _build_ui(self):
         w,h = self.app.screen.get_size()
-        pad = 8
         self.btn_back = pygame_gui.elements.UIButton(pygame.Rect(w-16-120, 16, 120, 32),"Back", self.ui)
         self.btn_next = pygame_gui.elements.UIButton(pygame.Rect(w-16-120, 56, 120, 32),"Step Turn", self.ui)
         self.btn_auto = pygame_gui.elements.UIButton(pygame.Rect(w-16-120, 96, 120, 32),"Auto: OFF", self.ui)
@@ -714,10 +730,10 @@ class MatchState:
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui()
 
-        if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
-           (event.type == pygame_gui.UI_BUTTON_PRESSED):
+        pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
+                  or (event.type == pygame_gui.UI_BUTTON_PRESSED)
+        if pressed:
             if event.ui_element == self.btn_back:
-                # if scheduled match, we could write result to career here (you might already do it in save_system)
                 self.app.set_state(ManagerMenuState(self.app))
             elif event.ui_element == self.btn_next:
                 if self.combat.winner is None: self._step_one_turn()
@@ -761,7 +777,6 @@ class MatchState:
                 col = (255,140,140) if f.team_id==1 else (120,180,255)
             rect = pygame.Rect(f.tx*cell_w+2, f.ty*cell_h+2, cell_w-4, cell_h-4)
             pygame.draw.rect(surf, col, rect)
-            # name/HP
             name = getattr(f, "name", "?")
             hp = getattr(f, "hp", 0)
             txt = self.font.render(f"{name} ({hp})", True, WHITE)
