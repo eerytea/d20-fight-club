@@ -646,25 +646,58 @@ class MatchState:
 # -------- App --------
 class App:
     def __init__(self):
-        ensure_dir(SAVES_DIR); self.settings = load_json(SETTINGS_PATH, DEFAULT_SETTINGS.copy())
+        ensure_dir(SAVES_DIR)
+        self.settings = load_json(SETTINGS_PATH, DEFAULT_SETTINGS.copy())
         pygame.init()
-        try: pygame.mixer.init()
-        except Exception: pass
-        self.apply_resolution(tuple(self.settings.get("resolution", [1280,720]))); pygame.display.set_caption("D20 Fight Club — Manager")
-        try: pygame.mixer.music.set_volume(float(self.settings.get("volume_master", 0.8)))
-        except Exception: pass
-        self.clock = pygame.time.Clock(); self.running = True
-        self.career = None; self.current_save_path = None; self.chosen_tid = None
-        self.exhibition_pair = None; self.scheduled_fixture = None
+        try:
+            pygame.mixer.init()
+        except Exception:
+            pass
+        # this calls the method we’re adding below:
+        self.apply_resolution(tuple(self.settings.get("resolution", [1280, 720])))
+        pygame.display.set_caption("D20 Fight Club — Manager")
+        try:
+            pygame.mixer.music.set_volume(float(self.settings.get("volume_master", 0.8)))
+        except Exception:
+            pass
+
+        self.clock = pygame.time.Clock()
+        self.running = True
+
+        self.career = None
+        self.current_save_path = None
+        self.chosen_tid = None
+        self.exhibition_pair = None
+        self.scheduled_fixture = None
+
         self.state = MenuState(self)
-def apply_resolution(self, res_xy):
-    flags = pygame.RESIZABLE | pygame.SCALED
-    try:
-        # SCALED is nice on desktop, but fails under headless/dummy video driver.
-        self.screen = pygame.display.set_mode(res_xy, flags)
-    except Exception:
-        # Fallback for headless/CI: no SCALED, still resizable.
-        self.screen = pygame.display.set_mode(res_xy, pygame.RESIZABLE)
+
+    # >>> MAKE SURE THIS METHOD IS **INDENTED INSIDE THE CLASS** <<<
+    def apply_resolution(self, res_xy):
+        flags = pygame.RESIZABLE | pygame.SCALED
+        try:
+            # SCALED looks nice on desktop, but fails under headless/dummy driver.
+            self.screen = pygame.display.set_mode(res_xy, flags)
+        except Exception:
+            # Fallback for headless/CI: no SCALED, still resizable.
+            self.screen = pygame.display.set_mode(res_xy, pygame.RESIZABLE)
+
+    def set_state(self, state):
+        self.state = state
+
+    def run(self):
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                else:
+                    self.state.handle(event)
+            self.state.update(dt)
+            self.state.draw(self.screen)
+            pygame.display.flip()
+        pygame.quit()
+
 
 def main(): App().run()
 if __name__ == "__main__": main()
