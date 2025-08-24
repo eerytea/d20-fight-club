@@ -73,6 +73,51 @@ class Event:
     kind: str
     payload: Dict[str, Any]
 
+# --- Weapon normalization helper (paste above TBCombat class) ---
+from typing import Any
+
+def normalize_weapon(wpn: Any):
+    """
+    Accepts a Weapon instance, a dict of fields, or a known string key.
+    Returns a proper Weapon object; falls back to Unarmed.
+    """
+    # Lazy imports to avoid cycles if model imports tbcombat
+    try:
+        from .model import Weapon, WEAPON_CATALOG  # adjust names if yours differ
+    except Exception:
+        # Fallbacks if catalog not present; keep the code resilient
+        class Weapon:  # very small local stand-in
+            def __init__(self, name="Unarmed", dmg=(1, 4, 0), reach=1, crit=(20,2)):
+                self.name = name
+                self.dmg = dmg
+                self.reach = reach
+                self.crit = crit
+        WEAPON_CATALOG = {
+            "Unarmed": Weapon("Unarmed", (1,4,0), 1, (20,2))
+        }
+
+    if isinstance(wpn, Weapon):
+        return wpn
+    if isinstance(wpn, dict):
+        # allow partial dicts
+        name  = wpn.get("name", "Unarmed")
+        dmg   = tuple(wpn.get("dmg", (1,4,0)))
+        reach = int(wpn.get("reach", 1))
+        crit  = tuple(wpn.get("crit", (20,2)))
+        return Weapon(name=name, dmg=dmg, reach=reach, crit=crit)
+    if isinstance(wpn, str):
+        # match by key or by weapon name in catalog
+        if wpn in WEAPON_CATALOG:
+            return WEAPON_CATALOG[wpn]
+        # try name-based lookup
+        for v in WEAPON_CATALOG.values():
+            if getattr(v, "name", None) == wpn:
+                return v
+    # final fallback
+    return WEAPON_CATALOG.get("Unarmed") or Weapon("Unarmed", (1,4,0), 1, (20,2))
+# --- end helper ---
+
+
 class TBCombat:
     """
     Turn-based grid combat with:
