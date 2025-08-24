@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import random
-from typing import List, Optional
+from typing import List
 
 try:
     import pygame
@@ -10,7 +10,7 @@ except Exception:
     pygame = None  # type: ignore
 
 from core.career import new_career
-from .state_season_hub import SeasonHubState  # placeholder or your real hub
+from .state_season_hub import SeasonHubState  # your hub
 from .state_message import MessageState
 
 
@@ -20,12 +20,12 @@ def _rand_seed() -> int:
 
 class TeamSelectState:
     """
-    Minimal "New Game → pick your team" screen.
+    New Game → pick your team.
 
     Controls:
-      UP/DOWN  — select team
-      ENTER    — confirm
-      ESC      — back
+      UP/DOWN  – select team
+      ENTER    – confirm
+      ESC      – back
     """
 
     def __init__(self, app) -> None:
@@ -34,25 +34,23 @@ class TeamSelectState:
         self.team_names: List[str] = []
         self.selected_idx: int = 0
 
-    # ----- lifecycle -----
+    # ---------- lifecycle ----------
 
     def enter(self) -> None:
         if pygame is None:
             return
         pygame.font.init()
         self._font = pygame.font.SysFont("consolas", 22)
-
         try:
-            # build a preview career just to fetch team names
             preview = new_career(seed=self.app.seed or _rand_seed())
             self.team_names = list(preview.team_names)
         except Exception as e:
-            self._push_msg(f"Couldn't build team list:\n{e}")
+            self._msg(f"Couldn't build team list:\n{e}")
 
     def exit(self) -> None:
         pass
 
-    # ----- events / update / draw -----
+    # ---------- events / update / draw ----------
 
     def handle_event(self, event) -> bool:
         if pygame is None:
@@ -96,36 +94,44 @@ class TeamSelectState:
         hint = self._text("UP/DOWN select  •  ENTER confirm  •  ESC back", 18)
         surface.blit(hint, (24, h - 36))
 
-    # ----- internals -----
+    # ---------- internals ----------
 
     def _text(self, s: str, size: int, bold: bool = False):
         ft = pygame.font.SysFont("consolas", size, bold=bold)  # type: ignore
         return ft.render(s, True, (255, 255, 255))
 
-    def _push_msg(self, text: str):
-        try:
-            self.app.push_state(MessageState(app=self.app, text=text))
-        except Exception:
-            print(text)
+    def _msg(self, text: str):
+        self.app.push_state(MessageState(app=self.app, text=text))
 
     def _confirm_new_game(self):
         try:
             if not self.team_names:
-                raise ValueError("No teams to choose from.")
+                raise ValueError("No teams available.")
             team_id = int(self.selected_idx)
             seed = self.app.seed or _rand_seed()
 
-            # fresh career for the run
+            # Build fresh career for the actual run
             career = new_career(seed=seed)
             career.user_team_id = team_id
 
-            # stash in app
+            # Stash in app for other screens
             self.app.data["career"] = career
 
-            # go to season hub
+            # Go to Hub, then open Roster immediately
             if hasattr(self.app, "safe_replace"):
                 self.app.safe_replace(SeasonHubState, app=self.app, career=career)
             else:
                 self.app.push_state(SeasonHubState(app=self.app, career=career))
+
+            # Immediately open roster so the player sees their squad
+            try:
+                from .state_roster import RosterState  # type: ignore
+                if hasattr(self.app, "safe_push"):
+                    self.app.safe_push(RosterState, app=self.app, career=career)
+                else:
+                    self.app.push_state(RosterState(app=self.app, career=career))
+            except Exception:
+                # If roster screen isn't available, show a friendly message
+                self._msg("Roster screen not available yet. (state_roster.py)")
         except Exception as e:
-            self._push_msg(f"New Game failed:\n{e}")
+            self._msg(f"New Game failed:\n{e}")
