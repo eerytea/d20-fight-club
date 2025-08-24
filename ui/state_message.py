@@ -16,8 +16,9 @@ class MessageState:
     Controls:
       - ENTER / ESC: close
       - Mouse click: close
+
     Usage:
-      app.push_state(MessageState(app=self, text="Hello"))
+      app.push_state(MessageState(app=app, text="Hello"))
     """
 
     def __init__(self, app, text: str, on_close: Optional[callable] = None) -> None:
