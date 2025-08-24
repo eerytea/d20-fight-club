@@ -1,5 +1,70 @@
 # engine/tbcombat.py
 from __future__ import annotations
+
+from typing import Any
+
+# --- Weapon normalization helper (must be at column 0; not nested) ---
+def normalize_weapon(wpn: Any):
+    """
+    Accepts a Weapon instance, a dict of fields, or a known string key.
+    Returns a proper Weapon object; falls back to Unarmed.
+    """
+    # Lazy imports to avoid cycles if model imports tbcombat
+    try:
+        from .model import Weapon, WEAPON_CATALOG  # adjust names if yours differ
+    except Exception:
+        # Minimal local stand-in to keep code resilient
+        class Weapon:  # type: ignore[no-redef]
+            def __init__(self, name="Unarmed", dmg=(1, 4, 0), reach=1, crit=(20, 2)):
+                self.name = name
+                self.dmg = dmg
+                self.reach = reach
+                self.crit = crit
+        WEAPON_CATALOG = {
+            "Unarmed": Weapon("Unarmed", (1, 4, 0), 1, (20, 2))
+        }
+
+    # If already a Weapon instance, return it
+    try:
+        from .model import Weapon  # re-import for isinstance check
+        if isinstance(wpn, Weapon):
+            return wpn
+    except Exception:
+        pass
+
+    # Dict → Weapon
+    if isinstance(wpn, dict):
+        name  = wpn.get("name", "Unarmed")
+        dmg   = tuple(wpn.get("dmg", (1, 4, 0)))
+        reach = int(wpn.get("reach", 1))
+        crit  = tuple(wpn.get("crit", (20, 2)))
+        # Use catalog Weapon class when available, else local stub
+        try:
+            from .model import Weapon as _Weapon
+            return _Weapon(name=name, dmg=dmg, reach=reach, crit=crit)
+        except Exception:
+            class _Weapon:  # local stub
+                def __init__(self, name, dmg, reach, crit):
+                    self.name, self.dmg, self.reach, self.crit = name, dmg, reach, crit
+            return _Weapon(name, dmg, reach, crit)
+
+    # Str → catalog lookup (by key or by name)
+    if isinstance(wpn, str):
+        if wpn in WEAPON_CATALOG:
+            return WEAPON_CATALOG[wpn]
+        for v in WEAPON_CATALOG.values():
+            if getattr(v, "name", None) == wpn:
+                return v
+
+    # Fallback
+    return WEAPON_CATALOG.get("Unarmed")
+# --- end helper ---
+
+# (KEEP the rest of your original tbcombat.py code below this line unchanged)
+
+
+# engine/tbcombat.py
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Set, Any
 import random, re
