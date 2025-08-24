@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, List, Type
+from typing import Any, List, Type, Optional
 
 try:
     import pygame
@@ -16,9 +16,16 @@ class App:
       - Initializes pygame (with safe fallback to headless 'dummy' driver if needed)
       - Owns the window/screen, clock, state stack
       - Provides push_state/pop_state/replace helpers used by UI states
+      - Supports fps_cap from main.py
     """
 
-    def __init__(self, width: int = 1280, height: int = 720, title: str = "D20 Fight Club") -> None:
+    def __init__(
+        self,
+        width: int = 1280,
+        height: int = 720,
+        title: str = "D20 Fight Club",
+        fps_cap: Optional[int] = 60,   # <-- NEW
+    ) -> None:
         self.width = width
         self.height = height
         self.title = title
@@ -28,6 +35,7 @@ class App:
 
         self.screen = None
         self.clock = None
+        self.fps_cap = fps_cap or 60   # <-- NEW
 
         self._init_pygame()
 
@@ -110,7 +118,8 @@ class App:
         if pygame is None:
             return
         while self.running:
-            dt = self.clock.tick(60) / 1000.0 if self.clock else 0.016
+            cap = max(1, int(self.fps_cap)) if self.fps_cap else 60  # <-- NEW
+            dt = self.clock.tick(cap) / 1000.0 if self.clock else 0.016
 
             # Events
             for event in pygame.event.get():
@@ -155,7 +164,10 @@ class App:
                 pygame.display.init()
             self.screen = None
 
-    # <<< NEW: expose current state for tests (and convenience)
+    def set_fps_cap(self, fps: Optional[int]) -> None:  # <-- NEW
+        """Update the FPS cap at runtime."""
+        self.fps_cap = fps or 60
+
     @property
     def state(self) -> Any | None:
         """Return the current (top) UI state or None if empty."""
