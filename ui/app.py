@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import random
 from typing import Any, List, Type, Optional
 
 try:
@@ -16,15 +17,16 @@ class App:
       - Initializes pygame (with safe fallback to headless 'dummy' driver if needed)
       - Owns the window/screen, clock, state stack
       - Provides push_state/pop_state/replace helpers used by UI states
-      - Supports fps_cap from main.py
+      - Supports fps_cap and exposes a deterministic seed + rng for UI screens
     """
 
     def __init__(
         self,
         width: int = 1280,
-        height: int = 720,
-        title: str = "D20 Fight Club",
-        fps_cap: Optional[int] = 60,   # <-- NEW
+        height:  int = 720,
+        title:   str = "D20 Fight Club",
+        fps_cap: Optional[int] = 60,
+        seed:    Optional[int] = None,   # <-- NEW
     ) -> None:
         self.width = width
         self.height = height
@@ -35,7 +37,11 @@ class App:
 
         self.screen = None
         self.clock = None
-        self.fps_cap = fps_cap or 60   # <-- NEW
+        self.fps_cap = fps_cap or 60
+
+        # Deterministic RNG for UI helpers (team lists, random previews, etc.)
+        self.seed: int = int(seed) if seed is not None else random.randint(1, 2_147_483_647)  # <-- NEW
+        self.rng = random.Random(self.seed)  # <-- NEW
 
         self._init_pygame()
 
@@ -61,7 +67,7 @@ class App:
                 pygame.display.set_caption(self.title)
                 self.screen = pygame.display.set_mode((self.width, self.height))
             except Exception:
-                # As a last resort, ensure event module is initialized to satisfy tests calling pygame.event.get()
+                # Ensure event module is initialized to satisfy tests calling pygame.event.get()
                 pygame.display.init()
                 self.screen = None  # no window, but event queue works
 
@@ -69,7 +75,6 @@ class App:
 
     def quit(self) -> None:
         self.running = False
-        # Do not pygame.quit() here; tests may still call pygame.event.get()
 
     # --------------- state management ---------------
 
@@ -118,7 +123,7 @@ class App:
         if pygame is None:
             return
         while self.running:
-            cap = max(1, int(self.fps_cap)) if self.fps_cap else 60  # <-- NEW
+            cap = max(1, int(self.fps_cap)) if self.fps_cap else 60
             dt = self.clock.tick(cap) / 1000.0 if self.clock else 0.016
 
             # Events
@@ -159,13 +164,11 @@ class App:
         try:
             self.screen = pygame.display.set_mode(res)
         except Exception:
-            # If display is headless dummy, ensure display module stays initialized
             if not pygame.display.get_init():
                 pygame.display.init()
             self.screen = None
 
-    def set_fps_cap(self, fps: Optional[int]) -> None:  # <-- NEW
-        """Update the FPS cap at runtime."""
+    def set_fps_cap(self, fps: Optional[int]) -> None:
         self.fps_cap = fps or 60
 
     @property
