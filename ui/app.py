@@ -1,5 +1,11 @@
 import pygame
-pygame._app_ref = None  # type: ignore[attr-defined]
+pygame._app_ref = None  # add this at top
+
+class App:
+    def __init__(self, width=960, height=600):
+        pygame.init()
+        pygame._app_ref = self
+        ...
 
 import os
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
