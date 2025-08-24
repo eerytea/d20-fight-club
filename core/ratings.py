@@ -4,6 +4,7 @@
 # Honors optional negative trait multipliers from creator.
 
 from typing import Dict
+import copy
 
 # -------------------- Class Profiles (combat defaults) --------------------
 CLASS_PROFILES: Dict[str, Dict] = {
@@ -252,6 +253,30 @@ def level_up(f: Dict) -> None:
                 if f.get(stat,10) < 20:
                     f[stat] = min(20, f[stat] + 2)
                     break
+                    
+def _compute_peak_ovr_at_20(base_f: Dict) -> int:
+    """
+    Deterministically simulate the fighter to level 20 using level_up(),
+    then return the final OVR. Uses a deep copy; does not mutate base_f.
+    """
+    sim = copy.deepcopy(base_f)
+
+    # Ensure required fields exist
+    sim["level"] = int(sim.get("level", 1))
+    sim["hp"] = int(sim.get("hp", 10))
+    sim["ac"] = int(sim.get("ac", 12))
+    sim["speed"] = int(sim.get("speed", 6))
+
+    # Recompute derived once on the copy (skip potential loop)
+    refresh_fighter_ratings(sim, _skip_potential=True)
+
+    # Level until 20 (level_up already refreshes derived/OVR each step)
+    while sim["level"] < 20:
+        level_up(sim)  # includes ASI + HP growth + refresh
+
+    # One more refresh for safety
+    refresh_fighter_ratings(sim, _skip_potential=True)
+    return int(sim.get("ovr", 50))
 
     # --- Refresh ratings ---
     refresh_fighter_ratings(f)
