@@ -657,16 +657,14 @@ class App:
         self.career = None; self.current_save_path = None; self.chosen_tid = None
         self.exhibition_pair = None; self.scheduled_fixture = None
         self.state = MenuState(self)
-    def apply_resolution(self, res_xy): self.screen = pygame.display.set_mode(res_xy, pygame.RESIZABLE | pygame.SCALED)
-    def set_state(self, state): self.state = state
-    def run(self):
-        while self.running:
-            dt = self.clock.tick(FPS) / 1000.0
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT: self.running = False
-                else: self.state.handle(event)
-            self.state.update(dt); self.state.draw(self.screen); pygame.display.flip()
-        pygame.quit()
+    def apply_resolution(self, res_xy):
+    flags = pygame.RESIZABLE | pygame.SCALED
+    try:
+        # If dummy driver or no renderer, SCALED may fail — we try it first anyway.
+        self.screen = pygame.display.set_mode(res_xy, flags)
+    except Exception:
+        # Fallback for headless/CI: no SCALED
+        self.screen = pygame.display.set_mode(res_xy, pygame.RESIZABLE)
 
 def main(): App().run()
 if __name__ == "__main__": main()
