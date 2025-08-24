@@ -663,6 +663,39 @@ class MatchState:
             self.log_box.set_text(self._log_html)
         except Exception:
             pass
+self._drain_idx = 0  # how far into combat.events we've read
+self._log_html = ""  # only used if you had a UITextBox
+# Drain new events → log
+if hasattr(self, "combat") and self.combat:
+    evs = self.combat.events
+    while self._drain_idx < len(evs):
+        e = evs[self._drain_idx]; self._drain_idx += 1
+        k = getattr(e, "kind", None) or e.kind
+        p = getattr(e, "payload", {}) or e.payload
+        if k == "init":
+            self._append_log(f"Init: {p.get('name')} (initiative {p.get('init')})")
+        elif k == "round_start":
+            self._append_log(f"— Round {p.get('round')} —")
+        elif k == "move_step":
+            self._append_log(f"{p.get('name')} moves to {p.get('to')}")
+        elif k == "attack":
+            a = p.get('attacker'); d = p.get('defender'); nat = p.get('nat'); hit = p.get('hit')
+            crit = p.get('critical'); tac = p.get('target_ac')
+            if hit:
+                self._append_log(f"{a} attacks {d} (d20={nat} vs AC {tac}) — HIT{' (CRIT!)' if crit else ''}")
+            else:
+                self._append_log(f"{a} attacks {d} (d20={nat} vs AC {tac}) — miss")
+        elif k == "damage":
+            a = p.get('attacker'); d = p.get('defender'); amt = p.get('amount'); hp = p.get('hp_after')
+            self._append_log(f"… {a} deals {amt} to {d} (HP now {hp})")
+        elif k == "down":
+            self._append_log(f"*** {p.get('name')} is DOWN! ***")
+        elif k == "level_up":
+            self._append_log(f"↑ {p.get('name')} leveled up to {p.get('level')}!")
+        elif k == "end":
+            w = p.get('winner') or p.get('reason', 'Match ended')
+            self._append_log(f"== {w} ==")
+
 
 # -------- App --------
 class App:
