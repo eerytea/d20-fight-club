@@ -111,7 +111,6 @@ class MatchState:
         self._teams = self._detect_teams()
         self._grid_w, self._grid_h = self._detect_grid_dims()
 
-        # Keep snapshot for simple result derivation
         self._finished = False
 
     # -------- lifecycle --------
@@ -124,7 +123,7 @@ class MatchState:
         self._font = pygame.font.SysFont("consolas", 18)
         self._small = pygame.font.SysFont("consolas", 14)
         self._layout()
-        self._pull_new_events()  # prime log if engine had existing messages
+        self._pull_new_events()  # prime log
 
     def exit(self) -> None:
         pass
@@ -145,11 +144,9 @@ class MatchState:
         for w_name, h_name in (("grid_w", "grid_h"), ("width", "height")):
             if hasattr(tb, w_name) and hasattr(tb, h_name):
                 return int(getattr(tb, w_name)), int(getattr(tb, h_name))
-        # fallback
         return 10, 8
 
     def _get_events_container(self) -> Optional[List[Any]]:
-        # Support several possible names
         for attr in ("event_log", "events", "log"):
             if hasattr(self.tb, attr):
                 obj = getattr(self.tb, attr)
@@ -165,7 +162,6 @@ class MatchState:
         title_h = 54
         buttons_h = 60
 
-        # Left grid ~70%, right log ~30%
         grid_w = int(w * 0.68)
         self._grid_rect = pygame.Rect(pad, title_h + pad, grid_w - pad * 2, h - (title_h + buttons_h + pad * 3))
         self._log_rect = pygame.Rect(grid_w, title_h + pad, w - grid_w - pad, h - (title_h + buttons_h + pad * 3))
@@ -177,27 +173,21 @@ class MatchState:
 
         def mk(label: str, fn):
             rect = pygame.Rect(bx, by, btn_w, btn_h)
-            bx_local = bx  # closure capture
             if Button is not None:
                 self._buttons.append(Button(rect, label, on_click=fn))  # type: ignore
             else:
                 self._buttons.append(_SimpleButton(rect, label, fn))
-            return bx_local
 
-        # Order: Back, Reset, Next Turn, Auto ON/OFF
         self._buttons.clear()
-        back_x = mk("Back", self._back)
-        bx = back_x - (btn_w + gap)
+        mk("Back", self._back); bx -= (btn_w + gap)
         self._buttons.append(
             (Button(pygame.Rect(bx, by, btn_w, btn_h), "Reset", self._reset))
             if Button is not None else _SimpleButton(pygame.Rect(bx, by, btn_w, btn_h), "Reset", self._reset)
-        )
-        bx -= (btn_w + gap)
+        ); bx -= (btn_w + gap)
         self._buttons.append(
             (Button(pygame.Rect(bx, by, btn_w, btn_h), "Next Turn", self._next))
             if Button is not None else _SimpleButton(pygame.Rect(bx, by, btn_w, btn_h), "Next Turn", self._next)
-        )
-        bx -= (btn_w + gap)
+        ); bx -= (btn_w + gap)
         self._btn_auto_rect = pygame.Rect(bx, by, btn_w, btn_h)
         self._btn_auto = (
             Button(self._btn_auto_rect, "Auto: OFF", on_click=self._toggle_auto)
@@ -211,12 +201,10 @@ class MatchState:
         if pygame is None:
             return False
 
-        # Buttons
         for b in self._buttons:
             if hasattr(b, "handle_event") and b.handle_event(event):
                 return True
 
-        # Turn log scroll
         if event.type == pygame.MOUSEWHEEL:
             if self._log_rect.collidepoint(pygame.mouse.get_pos()):
                 self._log_scroll = max(0, self._log_scroll - event.y * 3)
@@ -235,27 +223,19 @@ class MatchState:
         if pygame is None:
             return
 
-        # Title
         title = self._title_font.render(self.title, True, (255, 255, 255))  # type: ignore
         surface.blit(title, (16, 12))
 
-        # Panels
         _draw_panel(surface, self._grid_rect, None, self._title_font)
         _draw_panel(surface, self._log_rect, "Turn Log", self._title_font)
 
-        # Grid and fighters
         self._draw_grid(surface, self._grid_rect)
         self._draw_fighters(surface, self._grid_rect)
-
-        # Turn log
         self._draw_log(surface, self._log_rect)
 
-        # Buttons
-        # Update Auto label
         label = f"Auto: {'ON' if self.auto_play else 'OFF'}"
         if hasattr(self._btn_auto, "label"):
             self._btn_auto.label = label  # type: ignore
-        # Draw them
         for b in self._buttons:
             if hasattr(b, "draw"):
                 b.draw(surface)
@@ -268,7 +248,7 @@ class MatchState:
     def _reset(self) -> None:
         if callable(self.rebuild):
             try:
-                self.tb = self.rebuild()  # fresh instance
+                self.tb = self.rebuild()
                 self._teams = self._detect_teams()
                 self._grid_w, self._grid_h = self._detect_grid_dims()
                 self.log_lines.clear()
@@ -294,12 +274,9 @@ class MatchState:
 
     def _step_one_turn(self) -> None:
         try:
-            # run a single engine turn
             before_len = self._events_len()
             self.tb.take_turn()
-            # collect new events
             self._pull_new_events(start=before_len)
-            # check winner
             if getattr(self.tb, "winner", None) is not None and not self._finished:
                 self._finished = True
                 self._on_finished()
@@ -314,28 +291,24 @@ class MatchState:
     def _pull_new_events(self, start: Optional[int] = None) -> None:
         container = self._get_events_container()
         if container is None:
-            return  # engine didn't expose an event list
+            return
         if start is None:
             start = self._last_event_idx
         new = container[start:]
-        # normalize to strings
         for e in new:
-            s = str(e)
-            self.log_lines.append(s)
+            self.log_lines.append(str(e))
         self._last_event_idx = start + len(new)
-        # keep log bounded
         if len(self.log_lines) > self._max_log:
             drop = len(self.log_lines) - self._max_log
             self.log_lines = self.log_lines[drop:]
 
     def _on_finished(self) -> None:
-        # Derive a simple score: number of enemy downs (same heuristic used in tests/sim)
         fighters = getattr(self.tb, "fighters", [])
         home_alive = sum(1 for f in fighters if getattr(f, "team_id", 0) == 0 and getattr(f, "alive", True))
         away_alive = sum(1 for f in fighters if getattr(f, "team_id", 0) == 1 and getattr(f, "alive", True))
         home_goals = max(0, 4 - away_alive)
         away_goals = max(0, 4 - home_alive)
-        winner_rel = getattr(self.tb, "winner", -1)  # 0 home, 1 away, or -1 for draw/unknown
+        winner_rel = getattr(self.tb, "winner", -1)
 
         if callable(self.on_result):
             try:
@@ -354,16 +327,13 @@ class MatchState:
             return tuple(getattr(a, "color"))
         if tid == 1 and b is not None and hasattr(b, "color"):
             return tuple(getattr(b, "color"))
-        # fallback palette
         return (180, 110, 110) if tid == 0 else (110, 140, 200)
 
     def _draw_grid(self, surf, rect) -> None:
         gw, gh = self._grid_w, self._grid_h
         tw = rect.w / gw
         th = rect.h / gh
-        # grid background
         pygame.draw.rect(surf, (22, 24, 30), rect, border_radius=6)
-        # grid lines
         for x in range(gw + 1):
             X = rect.x + int(x * tw)
             pygame.draw.line(surf, (55, 60, 70), (X, rect.y), (X, rect.y + rect.h))
@@ -386,19 +356,16 @@ class MatchState:
             cy = rect.y + int((ty + 0.5) * th)
             r = int(min(tw, th) * 0.35)
 
-            # body
             col = self._team_color(getattr(f, "team_id", 0))
             alive = getattr(f, "alive", True)
             body = col if alive else (90, 90, 90)
             pygame.draw.circle(surf, body, (cx, cy), r)
             pygame.draw.circle(surf, (30, 30, 30), (cx, cy), r, 2)
 
-            # name (tiny)
             name = str(getattr(f, "name", ""))
             label = self._small.render(name[:8], True, (240, 240, 240))
             surf.blit(label, (cx - label.get_width() // 2, cy - r - 16))
 
-            # HP bar
             hp = float(getattr(f, "hp", 0))
             max_hp = float(getattr(f, "max_hp", max(1, int(hp))))
             pct = max(0.0, min(1.0, hp / max_hp))
@@ -415,7 +382,6 @@ class MatchState:
         x, y = rect.x + 8, rect.y + 8
         line_h = 18
 
-        # visible lines with scroll
         lines_per = (rect.h - 16) // line_h
         start = max(0, len(self.log_lines) - lines_per - self._log_scroll)
         end = min(len(self.log_lines), start + lines_per)
