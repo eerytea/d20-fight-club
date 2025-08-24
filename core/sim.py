@@ -1,4 +1,9 @@
 # core/sim.py
+import random
+def set_seed(seed: int | None):
+    if seed is not None:
+        random.seed(seed)
+
 from __future__ import annotations
 from typing import List
 import random
