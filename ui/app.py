@@ -5,11 +5,14 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 from typing import Protocol, Optional, List
 
-# make a global ref available for states (like MenuState)
+
+# Optional global so states can access the current App instance
+# (used by MenuState and others to push/pop states without wiring)
 pygame._app_ref = None  # type: ignore[attr-defined]
 
 
 class UIState(Protocol):
+    """Interface for UI states."""
     def on_enter(self) -> None: ...
     def on_exit(self) -> None: ...
     def handle_event(self, event: pygame.event.Event) -> Optional["UIState"]: ...
@@ -21,7 +24,7 @@ class App:
     def __init__(self, width: int = 1280, height: int = 720,
                  title: str = "D20 Fight Club", fps: int = 60):
         pygame.init()
-        pygame._app_ref = self  # 👈 set the global reference here
+        pygame._app_ref = self  # type: ignore[attr-defined]
 
         self.WIDTH, self.HEIGHT = width, height
         self.TITLE = title
@@ -34,6 +37,7 @@ class App:
         self._stack: List[UIState] = []
         self._running = False
 
+    # ---------- state stack ----------
     def push_state(self, state: UIState) -> None:
         self._stack.append(state)
         state.on_enter()
@@ -45,8 +49,10 @@ class App:
         try:
             s.on_exit()
         except Exception:
+            # don't let a bad on_exit crash the app
             pass
         if not self._stack:
+            # no states left -> exit on next loop
             self._running = False
 
     def replace_state(self, state: UIState) -> None:
@@ -58,37 +64,40 @@ class App:
     def state(self) -> Optional[UIState]:
         return self._stack[-1] if self._stack else None
 
+    # ---------- main loop ----------
     def run(self) -> None:
         self._running = True
 
-    # Fallback: if no state was pushed yet, boot into the main menu.
-    if not self._stack:
+        # Fallback: if no state was pushed yet, boot into the main menu.
+        if not self._stack:
+            try:
+                from .state_menu import MenuState
+                self.push_state(MenuState())
+            except Exception as e:
+                print("Failed to boot MenuState:", e)
+                self._running = False
+
         try:
-            from .state_menu import MenuState
-            self.push_state(MenuState())
-        except Exception as e:
-            # If even that fails, stop gracefully so you see the traceback
-            print("Failed to boot MenuState:", e)
-            self._running = False
+            while self._running and self.state is not None:
+                dt = self.clock.tick(self.FPS) / 1000.0
 
-    try:
-        while self._running and self.state is not None:
-            dt = self.clock.tick(self.FPS) / 1000.0
+                # events
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        self._running = False
+                        break
+                    nxt = self.state.handle_event(event)  # type: ignore[union-attr]
+                    if nxt is not None:
+                        self.push_state(nxt)
 
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self._running = False
-                    break
-                nxt = self.state.handle_event(event)
+                # update
+                nxt = self.state.update(dt)  # type: ignore[union-attr]
                 if nxt is not None:
                     self.push_state(nxt)
 
-            nxt = self.state.update(dt)
-            if nxt is not None:
-                self.push_state(nxt)
-
-            self.screen.fill((18, 18, 22))
-            self.state.draw(self.screen)
-            pygame.display.flip()
-    finally:
-        pygame.quit()
+                # draw
+                self.screen.fill((18, 18, 22))
+                self.state.draw(self.screen)  # type: ignore[union-attr]
+                pygame.display.flip()
+        finally:
+            pygame.quit()
