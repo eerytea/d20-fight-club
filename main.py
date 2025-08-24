@@ -756,8 +756,8 @@ class App:
         self.clock = pygame.time.Clock()
         self.running = True
 
-        # game state
-        self.career: Optional[Career] = Career.new_default_league()
+        # game state (career will be created on "New Game")
+        self.career: Optional[Career] = None
         self.current_save_path: Optional[str] = None
         self.chosen_tid: Optional[int] = None
         self.exhibition_pair: Optional[Tuple[int,int]] = None
