@@ -49,6 +49,39 @@ def team_average_ovr(team_dict: Dict) -> int:
     vals = [int(f.get("ovr", 50)) for f in fs]
     return int(round(sum(vals)/max(1, len(vals))))
 
+def make_default_career() -> Optional[Career]:
+    """
+    Try multiple factory names on Career to build a default league.
+    Fall back to bare Career() if factories are missing.
+    """
+    factories = [
+        ("new_default_league", {}),
+        ("new_default", {}),
+        ("new_league", {"num_teams": 20}),
+        ("create_default_league", {}),
+        ("build_default_league", {}),
+        ("generate_default_league", {}),
+    ]
+    for name, kwargs in factories:
+        meth = getattr(Career, name, None)
+        if callable(meth):
+            try:
+                return meth(**kwargs)
+            except TypeError:
+                # try calling without kwargs if signature differs
+                try:
+                    return meth()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+    # final fallback: maybe Career() auto-initializes a league internally
+    try:
+        return Career()
+    except Exception:
+        return None
+
+
 # =====================================================================================
 #                                         STATES
 # =====================================================================================
@@ -87,9 +120,19 @@ class MenuState:
         if (event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED) or \
            (event.type == pygame_gui.UI_BUTTON_PRESSED):
             if event.ui_element == self.btn_new:
-                # start a fresh league
-                self.app.career = Career.new_default_league()
-                self.app.set_state(TeamSelectState(self.app))
+    # start a fresh league (robust across save_system versions)
+    car = make_default_career()
+    if car is None:
+        # graceful message instead of crashing
+        pygame_gui.windows.UIMessageWindow(
+            pygame.Rect(200, 200, 420, 200),
+            "Could not create a default league.\n"
+            "Please update core/save_system.py to expose a league factory."
+            , self.ui
+        )
+    else:
+        self.app.career = car
+        self.app.set_state(TeamSelectState(self.app))
             elif event.ui_element == self.btn_load:
                 # load dialog
                 path = os.path.join(SAVES_DIR, "career.json")
