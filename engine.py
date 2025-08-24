@@ -3,6 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any
 import math, random
+def _weapon_damage_str(wpn) -> str:
+    """
+    Accepts either a dict ({"damage": "1d8"}) or an object with .damage/.damage_die.
+    Falls back to '1d6'.
+    """
+    if wpn is None:
+        return "1d6"
+    # dict style
+    if isinstance(wpn, dict):
+        return wpn.get("damage", "1d6")
+    # object style
+    if hasattr(wpn, "damage") and getattr(wpn, "damage"):
+        return getattr(wpn, "damage")
+    if hasattr(wpn, "damage_die") and getattr(wpn, "damage_die"):
+        return getattr(wpn, "damage_die")
+    return "1d6"
 
 # ---------- Dice & modifiers ----------
 def ability_mod(score: int) -> int:
@@ -273,7 +289,7 @@ class TBCombat:
         if not hit:
             return
 
-        dmg_str = getattr(attacker, "weapon", {"damage": "1d6"}).get("damage", "1d6")
+        dmg_str = _weapon_damage_str(getattr(attacker, "weapon", None))
         dmg = _roll_damage(dmg_str, self.rng)
         # add damage bonus: for simplicity, use STR or DEX mod already baked into atk_mod in your ratings
         # to avoid double-dipping, we'll add a small flat bonus for crits only
