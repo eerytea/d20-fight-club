@@ -27,6 +27,17 @@ class SeasonHubState(UIState):
         ]
 
     def on_enter(self): pass
+        Button(pygame.Rect(24+180+180+180, 24, 160, 40), "Play My Match", on_click=self._play_my_match),
+
+    def _play_my_match(self):
+        # find user's fixture this week
+        wk = self.career.week
+        my_fx = [f for f in self.career.fixtures if f.week == wk and (f.home_id == self.user_team_id or f.away_id == self.user_team_id)]
+        if not my_fx:
+        return
+        from .state_match_season import SeasonMatchState
+        self.app.push_state(SeasonMatchState(self.app, self.career, self.user_team_id))
+
     def on_exit(self): pass
 
     def _back(self):
