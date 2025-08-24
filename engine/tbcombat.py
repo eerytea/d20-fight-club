@@ -266,7 +266,29 @@ class TBCombat:
                 break
             self.events.append(Event("move_step", {"name": actor.name, "to": (actor.tx, actor.ty)}))
 
-        if actor.alive and target.alive and self._adjacent(actor, target):
-            self._attack(i, tgt_i)
+        # move toward target until within reach
+        reach = 1
+        wpn = getattr(actor, "weapon", None)
+            if isinstance(wpn, dict):
+        reach = int(wpn.get("reach", 1))
+            elif hasattr(wpn, "reach"):
+        reach = int(getattr(wpn, "reach") or 1)
+
+    def _in_reach(a, b, r):
+        return manhattan(a.tx, a.ty, b.tx, b.ty) <= max(1, r)
+
+        steps = getattr(actor, "speed", 6)
+        for _ in range(max(1, steps)):
+        if not actor.alive or not target.alive:
+        break
+        if _in_reach(actor, target, reach):
+        break
+        if not self._step_toward(actor, target.tx, target.ty, i):
+        break
+        self.events.append(Event("move_step", {"name": actor.name, "to": (actor.tx, actor.ty)}))
+
+        if actor.alive and target.alive and _in_reach(actor, target, reach):
+        self._attack(i, tgt_i)
+
 
         self._check_end()
