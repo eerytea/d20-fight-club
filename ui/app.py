@@ -59,7 +59,7 @@ class App:
         return self._stack[-1] if self._stack else None
 
     def run(self) -> None:
-    self._running = True
+        self._running = True
 
     # Fallback: if no state was pushed yet, boot into the main menu.
     if not self._stack:
