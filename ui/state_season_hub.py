@@ -31,6 +31,10 @@ class SeasonHubState(UIState):
         # in on_enter button list, add:
         Button(pygame.Rect(24+180+180+180+180, 24, 120, 40), "Schedule", on_click=self._open_schedule),
         Button(pygame.Rect(24+180+180+180+180+140, 24, 100, 40), "Table", on_click=self._open_table),
+        from .state_roster import RosterState
+        self.buttons.append(
+        Button(pygame.Rect(24+180+180, 24, 120, 40), "Roster", on_click=lambda: self.app.push_state(RosterState(self.app, self.career, self.user_team_id)))
+   
     def _save_now(self):
         try:
         from core.save import save_career
