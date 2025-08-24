@@ -660,10 +660,10 @@ class App:
     def apply_resolution(self, res_xy):
     flags = pygame.RESIZABLE | pygame.SCALED
     try:
-        # If dummy driver or no renderer, SCALED may fail — we try it first anyway.
+        # SCALED is nice on desktop, but fails under headless/dummy video driver.
         self.screen = pygame.display.set_mode(res_xy, flags)
     except Exception:
-        # Fallback for headless/CI: no SCALED
+        # Fallback for headless/CI: no SCALED, still resizable.
         self.screen = pygame.display.set_mode(res_xy, pygame.RESIZABLE)
 
 def main(): App().run()
