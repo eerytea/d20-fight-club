@@ -440,7 +440,16 @@ def fighter_from_dict(d: dict) -> Fighter:
         tactic=d.get("tactic", "nearest"),
     )
     return f
-
+    
+# near the end of fighter_from_dict(...) after constructing f:
+if not getattr(f, "name", None):
+    import random
+    try:
+        from core.creator import make_placeholder_name
+        f.name = make_placeholder_name(random.Random())
+    except Exception:
+        f.name = f"Fighter {id(f)%10000}"
+        
 def layout_teams_tiles(fighters: List[Fighter], grid_w: int, grid_h: int):
     # simple spawn lines left/right on the grid
     left = [f for f in fighters if f.team_id == 0]
@@ -451,3 +460,4 @@ def layout_teams_tiles(fighters: List[Fighter], grid_w: int, grid_h: int):
     gap_right = grid_h // (len(right) + 1) if right else grid_h // 2
     for i, f in enumerate(right, start=1):
         f.tx, f.ty = max(0, grid_w - 2), min(grid_h-1, i * gap_right)
+
