@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any
 import math, random
+from core.ratings import total_xp_multiplier
 def _weapon_damage_str(wpn) -> str:
     """
     Accepts either a dict ({"damage": "1d8"}) or an object with .damage/.damage_die.
@@ -333,7 +334,7 @@ class TBCombat:
         if not contributors:
             return  # nobody to credit (shouldn't happen)
 
-        share = max(1, xp_value // len(contributors))
+                share = max(1, xp_value // len(contributors))
         # map keys back to fighter objects
         key_to_f = {self._key_for(f): f for f in self.fighters}
         for k in contributors:
@@ -348,11 +349,11 @@ class TBCombat:
 
             # level up while enough XP
             while f.xp >= _next_level_threshold(f.level):
-                level_up(f)             # will bump stats/HP/OVR etc.
+                level_up(f)
                 self.events.append(Event("level_up", {"name": f.name, "level": f.level}))
-                # small safety: if someone hands us crazy XP, cap loop
                 if f.level - before_lvl > 10:
                     break
+
 
     # -------- turn engine --------
     def _team_alive(self, tid: int) -> bool:
