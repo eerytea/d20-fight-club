@@ -106,179 +106,292 @@ class Team:
     color: Tuple[int, int, int]
 
 # ---------- Core turn-based engine ----------
+# --- DROP-IN REPLACEMENT: TBCombat with XP/CR/Leveling wired in ---
+
+import math, random, re
+from typing import List, Dict, Tuple, Optional, Set
+
+# bring in your ratings helpers
+try:
+    from core.ratings import level_up
+except Exception:
+    def level_up(f):
+        pass  # if not available, do nothing
+
+_DIE_RE = re.compile(r"^\s*(\d+)[dD](\d+)\s*$")
+
+# D&D-ish XP thresholds (total XP to reach next level)
+_XP_THRESHOLDS = [0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000, 100000]
+
+def _next_level_threshold(lvl: int) -> int:
+    if lvl < 1: lvl = 1
+    if lvl >= len(_XP_THRESHOLDS): return _XP_THRESHOLDS[-1] + 50000*(lvl - (len(_XP_THRESHOLDS)-1))
+    return _XP_THRESHOLDS[lvl]
+
+def _roll_damage(dmg_str: str, rng: random.Random) -> int:
+    m = _DIE_RE.match(dmg_str or "1d6")
+    if not m: return 1
+    n, s = int(m.group(1)), int(m.group(2))
+    return sum(rng.randint(1, s) for _ in range(max(1, n)))
+
+def _challenge_xp_for_ovr(ovr: int) -> int:
+    """Map OVR (25..90) to a D&D-like XP value for KO rewards."""
+    if ovr < 35:   return 25       # CR 1/8
+    if ovr < 45:   return 50       # CR 1/4
+    if ovr < 55:   return 100      # CR 1/2
+    if ovr < 65:   return 200      # CR 1
+    if ovr < 70:   return 450      # CR 2
+    if ovr < 75:   return 700      # CR 3
+    if ovr < 80:   return 1100     # CR 4
+    if ovr < 85:   return 1800     # CR 5
+    if ovr < 88:   return 2300     # CR 6
+    return 2900                    # CR 7 (top-tier)
+
+class Event:
+    def __init__(self, kind: str, payload: Dict):
+        self.kind = kind
+        self.payload = payload
+
 class TBCombat:
-    def __init__(self, teamA: Team, teamB: Team, fighters: List[Fighter],
-                 grid_w: int, grid_h: int, seed: Optional[int]=None):
+    """
+    Simple turn-based grid combat with d20 attacks, movement toward nearest enemy,
+    and an event log consumed by the UI. Now includes XP/CR/Leveling:
+
+    - Track damage contributors per target.
+    - On 'down', award XP to contributors (solo gets all, otherwise split).
+    - Apply level-ups (may chain if enough XP).
+    """
+    def __init__(self, teamA, teamB, fighters: List, grid_w: int, grid_h: int, seed: Optional[int] = None):
         self.teamA = teamA
         self.teamB = teamB
+        self.fighters = fighters
         self.grid_w = grid_w
         self.grid_h = grid_h
-        self.fighters = fighters
+        self.rng = random.Random(seed)
+        self.events: List[Event] = []
         self.round = 1
         self.turn_index = 0
-        self.initiative: List[Fighter] = []
-        self.events: List[Event] = []
-        self.winner: Optional[int] = None
-        self.time_tick = 0  # increments per event, for ordering
-        if seed is not None:
-            random.seed(seed)
-        self.roll_initiative()
+        self.winner: Optional[int] = None  # 0 teamA, 1 teamB, None ongoing
 
-    # ------- helpers -------
-    def log(self, kind: str, **payload):
-        self.time_tick += 1
-        self.events.append(Event(self.time_tick, kind, payload))
+        # Initialize combat data and XP scaffolding
+        for f in self.fighters:
+            # initiative (roll once, re-roll every round if you prefer)
+            init_roll = self.rng.randint(1, 20) + getattr(f, "eva_mod", 0)
+            setattr(f, "_init", init_roll)
+            # base hp book-keeping
+            f.max_hp = getattr(f, "max_hp", getattr(f, "hp", 10))
+            if getattr(f, "hp", None) is None:
+                f.hp = f.max_hp
+            f.alive = True if getattr(f, "alive", True) else False
+            # XP scaffolding
+            if getattr(f, "level", None) is None: f.level = 1
+            if getattr(f, "xp", None) is None:    f.xp = 0
 
-    def living_team(self, team_id: int) -> List[Fighter]:
-        return [f for f in self.fighters if f.team_id == team_id and f.alive]
+        # initiative order (descending)
+        self.order = sorted([i for i,_ in enumerate(self.fighters)],
+                            key=lambda idx: getattr(self.fighters[idx], "_init", 0),
+                            reverse=True)
 
-    def enemies_of(self, f: Fighter) -> List[Fighter]:
-        return [o for o in self.fighters if o.team_id != f.team_id and o.alive]
+        # contributors: target_key -> set(attacker_keys)
+        self._contributors: Dict[str, Set[str]] = {}
+        # last hitter: target_key -> attacker_key (for solo kill edge cases)
+        self._last_hitter: Dict[str, str] = {}
 
-    def distance_tiles(self, a: Fighter, b: Fighter) -> int:
-        return abs(a.tx - b.tx) + abs(a.ty - b.ty)  # Manhattan for simple melee/range
+        # emit init events
+        for f in self.fighters:
+            self.events.append(Event("init", {"name": f.name, "init": getattr(f, "_init", 0)}))
+        self.events.append(Event("round_start", {"round": self.round}))
 
-    def choose_target(self, f: Fighter) -> Optional[Fighter]:
-        es = self.enemies_of(f)
-        if not es:
-            return None
-        if f.tactic == "lowest":
-            return min(es, key=lambda e: e.hp)
-        # nearest tiebreaker: lowest HP
-        nearest = min(es, key=lambda e: (self.distance_tiles(f, e), e.hp))
-        return nearest
+    # -------- utility --------
+    def _key_for(self, f) -> str:
+        return getattr(f, "pid", None) or f"{id(f)}"
 
-    def roll_initiative(self):
-        order = []
-        for f in [x for x in self.fighters if x.alive]:
-            init = d20() + ability_mod(f.dex)
-            order.append((init, d20(), f))  # small tiebreaker die
-            self.log("init", name=f.name, dex=f.dex, init=init)
-        order.sort(key=lambda t: (t[0], t[1]), reverse=True)
-        self.initiative = [t[2] for t in order]
-        self.turn_index = 0
-        self.log("round_start", round=self.round,
-                 order=[f.name for f in self.initiative])
+    def _enemies_of(self, team_id: int) -> List:
+        return [x for x in self.fighters if x.alive and x.team_id != team_id]
 
-    def end_check(self):
-        a_alive = len(self.living_team(self.teamA.team_id))
-        b_alive = len(self.living_team(self.teamB.team_id))
-        if a_alive == 0 and b_alive == 0:
-            self.winner = -1
-            self.log("end", reason="double_elim")
-        elif a_alive == 0:
-            self.winner = self.teamB.team_id
-            self.log("end", reason="elimination", winner=self.teamB.name)
-        elif b_alive == 0:
-            self.winner = self.teamA.team_id
-            self.log("end", reason="elimination", winner=self.teamA.name)
+    def _dist(self, a, b) -> int:
+        return abs(a.tx - b.tx) + abs(a.ty - b.ty)
 
-    # ------- movement (greedy Manhattan) -------
-    def step_toward(self, f: Fighter, tgt: Fighter, steps: int):
-        """
-        Move up to 'steps' tiles (N/E/S/W only) greedily toward target.
-        No obstacles yet (empty arena). Stops if adjacent for melee.
-        """
-        for _ in range(steps):
-            # Stop if in melee reach already
-            if f.weapon.kind == "melee":
-                if self.distance_tiles(f, tgt) <= max(1, f.weapon.reach):
-                    break
-            # Choose axis with greater distance
-            dx = tgt.tx - f.tx
-            dy = tgt.ty - f.ty
-            if abs(dx) >= abs(dy):
-                f.tx += 1 if dx > 0 else -1 if dx < 0 else 0
+    def _nearest_enemy(self, f) -> Optional:
+        enemies = self._enemies_of(f.team_id)
+        if not enemies: return None
+        return min(enemies, key=lambda e: self._dist(f, e))
+
+    def _adjacent(self, a, b) -> bool:
+        return self._dist(a, b) == 1
+
+    def _try_move_toward(self, f, target):
+        """Greedy Manhattan step toward target; avoids stepping off board or onto occupied tiles."""
+        if not target: return
+        steps = getattr(f, "speed", 6)
+        for _ in range(max(1, steps)):
+            if not f.alive: break
+            if self._adjacent(f, target): break
+            dx = 1 if target.tx > f.tx else -1 if target.tx < f.tx else 0
+            dy = 1 if target.ty > f.ty else -1 if target.ty < f.ty else 0
+
+            # try x then y; if blocked, try y then x
+            def free(nx, ny):
+                if nx < 0 or ny < 0 or nx >= self.grid_w or ny >= self.grid_h: return False
+                for o in self.fighters:
+                    if o.alive and o is not f and o.tx == nx and o.ty == ny:
+                        return False
+                return True
+
+            moved = False
+            if dx != 0 and free(f.tx + dx, f.ty):
+                f.tx += dx; moved = True
+            elif dy != 0 and free(f.tx, f.ty + dy):
+                f.ty += dy; moved = True
+            elif dy != 0 and free(f.tx, f.ty + dy):
+                f.ty += dy; moved = True
+            elif dx != 0 and free(f.tx + dx, f.ty):
+                f.tx += dx; moved = True
+
+            if moved:
+                self.events.append(Event("move_step", {"name": f.name, "to": (f.tx, f.ty)}))
             else:
-                f.ty += 1 if dy > 0 else -1 if dy < 0 else 0
-            # clamp to grid
-            f.tx = max(0, min(self.grid_w-1, f.tx))
-            f.ty = max(0, min(self.grid_h-1, f.ty))
-            self.log("move_step", name=f.name, to=(f.tx, f.ty))
+                break
 
-    # ------- attack -------
-    def try_attack(self, f: Fighter, tgt: Fighter) -> bool:
-        # range check
-        dist = self.distance_tiles(f, tgt)
-        if f.weapon.kind == "melee":
-            in_range = dist <= max(1, f.weapon.reach)
-        else:
-            # simple ranged: use 'reach' as RANGE in tiles
-            in_range = dist <= max(2, f.weapon.reach)
+    # -------- combat actions --------
+    def _attack(self, attacker, defender):
+        atk_mod = getattr(attacker, "atk_mod", 0)
+        ac = getattr(defender, "ac", 12)
+        d20 = self.rng.randint(1, 20)
+        crit = (d20 == 20)
+        hit = (d20 + atk_mod >= ac) or crit
 
-        if not in_range:
-            return False
+        self.events.append(Event("attack", {
+            "attacker": attacker.name,
+            "defender": defender.name,
+            "nat": d20,
+            "target_ac": ac,
+            "critical": crit,
+            "hit": hit
+        }))
 
-        nat = d20()
-        total = nat + f.weapon.attack_bonus(f)
-        crit = nat >= f.weapon.crit[0]
-        hit = (nat == 20) or (total >= tgt.ac and nat != 1)
-        self.log("attack", attacker=f.name, defender=tgt.name,
-                 nat=nat, total=total, target_ac=tgt.ac, hit=hit, critical=crit)
-        if hit:
-            dmg = f.weapon.damage_roll(f, critical=crit)
-            tgt.hp -= max(1, dmg)
-            self.log("damage", attacker=f.name, defender=tgt.name,
-                     amount=dmg, hp_after=max(0, tgt.hp), critical=crit)
-            if tgt.hp <= 0 and tgt.alive:
-                tgt.alive = False
-                self.log("down", name=tgt.name, team=tgt.team_id)
-                self.end_check()
-        return True
+        if not hit:
+            return
 
-    # ------- one full actor turn -------
-    def take_turn(self) -> Optional[str]:
-        """
-        Execute the next fighter's turn (move -> attack).
-        Returns the acting fighter's name, or None if combat already over.
-        """
-        if self.winner is not None:
-            return None
-        # if initiative list is empty (rare), reroll
-        self.initiative = [f for f in self.initiative if f.alive]
-        if not self.initiative:
-            self.roll_initiative()
+        dmg_str = getattr(attacker, "weapon", {"damage": "1d6"}).get("damage", "1d6")
+        dmg = _roll_damage(dmg_str, self.rng)
+        # add damage bonus: for simplicity, use STR or DEX mod already baked into atk_mod in your ratings
+        # to avoid double-dipping, we'll add a small flat bonus for crits only
+        if crit:
+            dmg += _roll_damage(dmg_str, self.rng)
 
-        # find next living actor
-        for _ in range(len(self.initiative)):
-            actor = self.initiative[self.turn_index % len(self.initiative)]
-            self.turn_index = (self.turn_index + 1) % len(self.initiative)
-            if not actor.alive:
+        defender.hp -= max(1, dmg)
+        if defender.hp <= 0:
+            defender.hp = 0
+            defender.alive = False
+
+        # track contributors
+        tkey = self._key_for(defender); akey = self._key_for(attacker)
+        self._contributors.setdefault(tkey, set()).add(akey)
+        self._last_hitter[tkey] = akey
+
+        self.events.append(Event("damage", {
+            "attacker": attacker.name,
+            "defender": defender.name,
+            "amount": dmg,
+            "hp_after": defender.hp
+        }))
+
+        if not defender.alive:
+            self.events.append(Event("down", {"name": defender.name}))
+            self._award_xp_on_down(defender)
+
+    def _award_xp_on_down(self, target):
+        """Distribute XP to anyone who damaged 'target' (solo gets all, else split)."""
+        tkey = self._key_for(target)
+        contributors = list(self._contributors.get(tkey, []))
+        # if for some reason we didn't record contributors, give it to last hitter
+        if not contributors:
+            last = self._last_hitter.get(tkey)
+            if last: contributors = [last]
+
+        # find XP value from target's OVR (fallback if missing)
+        ovr = getattr(target, "ovr", 50)
+        xp_value = _challenge_xp_for_ovr(int(ovr))
+
+        if not contributors:
+            return  # nobody to credit (shouldn't happen)
+
+        share = max(1, xp_value // len(contributors))
+        # map keys back to fighter objects
+        key_to_f = {self._key_for(f): f for f in self.fighters}
+        for k in contributors:
+            f = key_to_f.get(k)
+            if not f or not getattr(f, "alive", True):
                 continue
-            self.log("turn_start", actor=actor.name, round=self.round)
+            # ensure xp/level fields exist
+            if getattr(f, "xp", None) is None: f.xp = 0
+            if getattr(f, "level", None) is None: f.level = 1
+            before_lvl = f.level
+            f.xp += share
 
-            # pick a target
-            tgt = self.choose_target(actor)
-            if tgt is None:
-                self.end_check()
-                return actor.name
+            # level up while enough XP
+            while f.xp >= _next_level_threshold(f.level):
+                level_up(f)             # will bump stats/HP/OVR etc.
+                self.events.append(Event("level_up", {"name": f.name, "level": f.level}))
+                # small safety: if someone hands us crazy XP, cap loop
+                if f.level - before_lvl > 10:
+                    break
 
-            # MOVE toward target (tiles per turn)
-            steps = actor.tiles_per_turn()
-            if actor.weapon.kind == "melee":
-                # move until within melee reach
-                while steps > 0 and self.distance_tiles(actor, tgt) > max(1, actor.weapon.reach):
-                    self.step_toward(actor, tgt, 1)
-                    steps -= 1
-            else:
-                # ranged: try to maintain line-of-sight; here just distance
-                # optionally kite to keep some distance (not yet)
-                if self.distance_tiles(actor, tgt) > max(2, actor.weapon.reach):
-                    self.step_toward(actor, tgt, steps)
-                    steps = 0
+    # -------- turn engine --------
+    def _team_alive(self, tid: int) -> bool:
+        return any(f.alive and f.team_id == tid for f in self.fighters)
 
-            # ATTACK if possible
-            self.try_attack(actor, tgt)
+    def _check_end(self):
+        a = self._team_alive(0)
+        b = self._team_alive(1)
+        if a and b:
+            return
+        if a and not b:
+            self.winner = 0
+            self.events.append(Event("end", {"winner": self.teamA.name, "reason": "all opponents down"}))
+        elif b and not a:
+            self.winner = 1
+            self.events.append(Event("end", {"winner": self.teamB.name, "reason": "all opponents down"}))
+        else:
+            self.winner = -1
+            self.events.append(Event("end", {"reason": "all fighters down"}))
 
-            self.log("turn_end", actor=actor.name)
-            self.end_check()
-            return actor.name
+    def take_turn(self):
+        if self.winner is not None:
+            return
 
-        # end of round -> advance round & reroll initiative
-        self.round += 1
-        self.log("round_end", round=self.round-1)
-        self.roll_initiative()
-        return "ROUND_ADVANCE"
+        if self.turn_index >= len(self.order):
+            # new round
+            self.round += 1
+            self.turn_index = 0
+            self.events.append(Event("round_end", {"round": self.round - 1}))
+            self.events.append(Event("round_start", {"round": self.round}))
+
+        idx = self.order[self.turn_index]
+        actor = self.fighters[idx]
+        self.turn_index += 1
+
+        if not actor.alive:
+            return  # skip dead
+
+        self.events.append(Event("turn_start", {"actor": actor.name}))
+
+        target = self._nearest_enemy(actor)
+        if not target:
+            self._check_end()
+            return
+
+        # move into melee range
+        if not self._adjacent(actor, target):
+            self._try_move_toward(actor, target)
+
+        # if in range after moving, attack
+        if actor.alive and target.alive and self._adjacent(actor, target):
+            self._attack(actor, target)
+
+        self._check_end()
+
 
 # ---------- Factories / helpers ----------
 def fighter_from_dict(d: dict) -> Fighter:
