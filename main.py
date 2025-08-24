@@ -1,8 +1,10 @@
-# Auto-generated entry by tools/modularize_ui.py
 from ui.app import App
+from ui.state_menu import MenuState
 
 def main():
-    App().run()
+    app = App()
+    app.push_state(MenuState())
+    app.run()
 
 if __name__ == "__main__":
     main()
