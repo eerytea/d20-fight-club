@@ -1,6 +1,5 @@
 # ui/state_menu.py
 from __future__ import annotations
-
 from typing import Optional, List, Any, Callable
 
 try:
@@ -53,14 +52,13 @@ class _SimpleButton:
 class MenuState:
     """
     Clickable main menu.
-    NOTE: __init__ takes no required args so tests can call MenuState().
+    __init__ takes no required args so tests can call MenuState().
 
-    App reference is injected automatically by App.push_state (we also
-    fall back to setting it in enter() if needed).
+    App reference is injected by App.push_state; we also guard-draw so
+    fonts/buttons are created even if enter() wasn't called.
     """
 
     def __init__(self, app: Optional[Any] = None) -> None:
-        # 'app' is optional so tests can instantiate MenuState()
         self.app = app
         self._title_font = None
         self._font = None
@@ -69,20 +67,26 @@ class MenuState:
     # ---- lifecycle ----
 
     def enter(self) -> None:
-        # If app wasn't provided at construction time, App.push_state
-        # should have assigned it before calling enter(). If not,
-        # we stay defensive.
         if pygame is None:
             return
-        pygame.font.init()
-        self._title_font = pygame.font.SysFont("consolas", 36)
-        self._font = pygame.font.SysFont("consolas", 22)
+        self._ensure_fonts()
         self._layout_buttons()
 
     def exit(self) -> None:
         pass
 
-    # ---- layout ----
+    # ---- setup helpers ----
+
+    def _ensure_fonts(self) -> None:
+        """Lazy-create fonts if needed; safe to call from draw()."""
+        if pygame is None:
+            return
+        if not pygame.font.get_init():
+            pygame.font.init()
+        if self._title_font is None:
+            self._title_font = pygame.font.SysFont("consolas", 36)
+        if self._font is None:
+            self._font = pygame.font.SysFont("consolas", 22)
 
     def _layout_buttons(self) -> None:
         if pygame is None:
@@ -129,6 +133,12 @@ class MenuState:
     def draw(self, surface) -> None:
         if pygame is None:
             return
+        # Self-heal: if fonts/buttons aren't ready (enter() skipped), init now.
+        if self._title_font is None or self._font is None:
+            self._ensure_fonts()
+        if not self._buttons:
+            self._layout_buttons()
+
         w, h = surface.get_size()
         # Title
         title = self._title_font.render("D20 Fight Club", True, (255, 255, 255))
@@ -144,7 +154,6 @@ class MenuState:
 
     def _new_game(self) -> None:
         try:
-            # Lazy import to avoid cycles
             from ui.state_team_select import TeamSelectState
             if hasattr(self.app, "safe_push"):
                 self.app.safe_push(TeamSelectState, app=self.app)
@@ -155,7 +164,6 @@ class MenuState:
 
     def _load_game(self) -> None:
         try:
-            # Minimal load: tries core.save.load_career() if available, else message
             from core.save import load_career  # type: ignore
             career = load_career()
             if not career:
@@ -189,7 +197,6 @@ class MenuState:
             self._message(f"Settings failed:\n{e}")
 
     def _quit(self) -> None:
-        # Try App.quit(); else set a running flag; else pygame.quit()
         if hasattr(self.app, "quit"):
             self.app.quit()
             return
@@ -200,8 +207,6 @@ class MenuState:
             pygame.event.post(pygame.event.Event(pygame.QUIT))  # type: ignore
         except Exception:
             pass
-
-    # ---- util ----
 
     def _message(self, text: str) -> None:
         try:
