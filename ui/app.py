@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, List, Optional, Type
+from typing import Any, List, Type
 
 try:
     import pygame
@@ -154,3 +154,9 @@ class App:
             if not pygame.display.get_init():
                 pygame.display.init()
             self.screen = None
+
+    # <<< NEW: expose current state for tests (and convenience)
+    @property
+    def state(self) -> Any | None:
+        """Return the current (top) UI state or None if empty."""
+        return self._stack[-1] if self._stack else None
