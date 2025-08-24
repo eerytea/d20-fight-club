@@ -27,7 +27,17 @@ def test_main_flow_smoke():
     # selection lists use text labels; call set_current_selection directly:
     if app.state.sel.item_list:
         first_label = app.state.sel.item_list[0]
-        app.state.sel.set_current_selection(first_label)
+        # Robust selection across pygame_gui versions:
+sel = app.state.sel
+if hasattr(sel, "select_item"):
+    sel.select_item(first_label)
+else:
+    # Fallback: synthesize the selection event
+    evt = pygame.event.Event(pygame_gui.UI_SELECTION_LIST_NEW_SELECTION, {
+        "ui_element": sel,
+        "text": first_label
+    })
+    app.state.handle(evt)
         press(app.state.btn_manage, app.state)
     assert isinstance(app.state, game_main.ManagerMenuState)
 
