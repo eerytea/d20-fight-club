@@ -59,4 +59,4 @@ class App:
         return self._stack[-1] if self._stack else None
 
     def run(self) -> None:
-        sel
+        self
