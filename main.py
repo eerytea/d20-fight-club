@@ -1,4 +1,4 @@
-# main.py — D20 Fight Club Manager (clean build, factory-safe)
+# main.py — D20 Fight Club Manager (clean build, factory-safe, UITextBox fixed)
 
 import os, json, time, pygame, pygame_gui
 from typing import List, Dict, Tuple, Optional
@@ -113,7 +113,6 @@ class MenuState:
         if event.type == pygame.VIDEORESIZE:
             self.ui.set_window_resolution(event.size); self._build_ui()
 
-        # support old/new pygame_gui event styles
         pressed = (event.type == pygame.USEREVENT and getattr(event, "user_type", None) == pygame_gui.UI_BUTTON_PRESSED) \
                   or (event.type == pygame_gui.UI_BUTTON_PRESSED)
         if pressed:
@@ -274,6 +273,7 @@ class TeamSelectState:
         self.list_roster = pygame_gui.elements.UISelectionList(
             pygame.Rect(right_x, 48, right_w, top_h), [], manager=self.ui
         )
+        # UITextBox(html_text, rect, manager=...)
         self.box_details = pygame_gui.elements.UITextBox(
             "<b>Fighter Details</b><br>Select a fighter to view.",
             pygame.Rect(right_x, 48+top_h+pad, right_w, h - (48+top_h+2*pad)),
@@ -485,11 +485,11 @@ class RosterState:
         list_rect, card_rect = self._calc_boxes(w, h)
         self.list_fighters = pygame_gui.elements.UISelectionList(list_rect, [], self.manager)
         self.card_box = pygame_gui.elements.UITextBox(
-        "<b>Select a fighter</b>",
-        card_rect,
-        manager=self.manager
+            "<b>Select a fighter</b>",
+            card_rect,
+            manager=self.manager
         )
-        
+
         # toolbar
         self.dd_sort = pygame_gui.elements.UIDropDownMenu(
             ["OVR","AGE","LEVEL","CLASS","NAME"], "OVR",
@@ -595,7 +595,11 @@ class ScheduleState:
         w,h = self.app.screen.get_size()
         self.lbl = pygame_gui.elements.UILabel(pygame.Rect(16,16,w-32,32), "Schedule", self.ui)
         self.btn_back = pygame_gui.elements.UIButton(pygame.Rect(w-16-120,16,120,32),"Back", self.ui)
-        self.box = pygame_gui.elements.UITextBox(pygame.Rect(16,64,w-32,h-80), self._html_schedule(), self.ui)
+        self.box = pygame_gui.elements.UITextBox(
+            self._html_schedule(),
+            pygame.Rect(16,64,w-32,h-80),
+            manager=self.ui
+        )
 
     def _html_schedule(self):
         try:
@@ -631,12 +635,12 @@ class TableState:
         w,h = self.app.screen.get_size()
         self.lbl = pygame_gui.elements.UILabel(pygame.Rect(16,16,w-32,32), "Table", self.ui)
         self.btn_back = pygame_gui.elements.UIButton(pygame.Rect(w-16-120,16,120,32),"Back", self.ui)
-            self.box = pygame_gui.elements.UITextBox(
+        self.box = pygame_gui.elements.UITextBox(
             self._html_table(),
             pygame.Rect(16,64,w-32,h-80),
             manager=self.ui
-         )
-        
+        )
+
     def _html_table(self):
         try:
             rows = ["<b>Pos  Team                      Pts  W-D-L</b>"]
