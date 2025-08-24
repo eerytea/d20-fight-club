@@ -275,8 +275,9 @@ class TeamSelectState:
             pygame.Rect(right_x, 48, right_w, top_h), [], manager=self.ui
         )
         self.box_details = pygame_gui.elements.UITextBox(
+            "<b>Fighter Details</b><br>Select a fighter to view.",
             pygame.Rect(right_x, 48+top_h+pad, right_w, h - (48+top_h+2*pad)),
-            "<b>Fighter Details</b><br>Select a fighter to view.", manager=self.ui
+            manager=self.ui
         )
 
         btn_w, btn_h = 160, 36
@@ -483,8 +484,12 @@ class RosterState:
 
         list_rect, card_rect = self._calc_boxes(w, h)
         self.list_fighters = pygame_gui.elements.UISelectionList(list_rect, [], self.manager)
-        self.card_box = pygame_gui.elements.UITextBox(card_rect, "<b>Select a fighter</b>", self.manager)
-
+        self.card_box = pygame_gui.elements.UITextBox(
+        "<b>Select a fighter</b>",
+        card_rect,
+        manager=self.manager
+        )
+        
         # toolbar
         self.dd_sort = pygame_gui.elements.UIDropDownMenu(
             ["OVR","AGE","LEVEL","CLASS","NAME"], "OVR",
@@ -626,8 +631,12 @@ class TableState:
         w,h = self.app.screen.get_size()
         self.lbl = pygame_gui.elements.UILabel(pygame.Rect(16,16,w-32,32), "Table", self.ui)
         self.btn_back = pygame_gui.elements.UIButton(pygame.Rect(w-16-120,16,120,32),"Back", self.ui)
-        self.box = pygame_gui.elements.UITextBox(pygame.Rect(16,64,w-32,h-80), self._html_table(), self.ui)
-
+            self.box = pygame_gui.elements.UITextBox(
+            self._html_table(),
+            pygame.Rect(16,64,w-32,h-80),
+            manager=self.ui
+         )
+        
     def _html_table(self):
         try:
             rows = ["<b>Pos  Team                      Pts  W-D-L</b>"]
