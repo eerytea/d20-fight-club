@@ -34,3 +34,10 @@ __all__ = [
     "TBCombat", "Fighter", "Weapon", "Team",
     "layout_teams_tiles", "fighter_from_dict",
 ]
+
+# engine/__init__.py
+from .tbcombat import TBCombat
+from .model import Team, fighter_from_dict
+from .grid import layout_teams_tiles
+
+__all__ = ["TBCombat", "Team", "fighter_from_dict", "layout_teams_tiles"]
