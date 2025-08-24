@@ -1,189 +1,144 @@
+# engine/model.py
 from __future__ import annotations
-from dataclasses import dataclass, field, fields as dataclass_fields
-from typing import Any, Dict, Tuple
 
-# -----------------------------
-# Core dataclasses
-# -----------------------------
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Optional, Tuple, Any
 
+
+# ----------------------
+# Weapon & Catalog
+# ----------------------
 @dataclass
 class Weapon:
     name: str = "Unarmed"
-    damage: str = "1d2"      # dice string like "1d6", "2d6+1"
-    to_hit_bonus: int = 0
-    crit_range: int = 20     # nat20 crit
-    crit_mult: int = 2
-    reach: int = 1           # melee reach in Manhattan tiles
+    # damage tuple: (num_dice, sides, flat_bonus)
+    dmg: Tuple[int, int, int] = (1, 4, 0)
+    reach: int = 1
+    # crit tuple: (threat range lower bound on d20, multiplier)
+    crit: Tuple[int, int] = (20, 2)
 
+
+# A minimal built-in catalog you can extend elsewhere
+WEAPON_CATALOG: Dict[str, Weapon] = {
+    "Unarmed": Weapon("Unarmed", (1, 4, 0), 1, (20, 2)),
+    "Dagger":  Weapon("Dagger",  (1, 4, 0), 1, (19, 2)),
+    "Sword":   Weapon("Sword",   (1, 8, 0), 1, (19, 2)),
+    "Spear":   Weapon("Spear",   (1, 6, 0), 2, (20, 3)),
+}
+
+
+def _weapon_from_any(value: Any) -> Weapon:
+    """Normalize a weapon that might be a Weapon, dict, or string key."""
+    if isinstance(value, Weapon):
+        return value
+    if isinstance(value, dict):
+        return Weapon(
+            name=value.get("name", "Unarmed"),
+            dmg=tuple(value.get("dmg", (1, 4, 0))),
+            reach=int(value.get("reach", 1)),
+            crit=tuple(value.get("crit", (20, 2))),
+        )
+    if isinstance(value, str):
+        if value in WEAPON_CATALOG:
+            return WEAPON_CATALOG[value]
+        # try match by weapon.name
+        for w in WEAPON_CATALOG.values():
+            if w.name == value:
+                return w
+    return WEAPON_CATALOG["Unarmed"]
+
+
+# ----------------------
+# Fighter & Team
+# ----------------------
 @dataclass
 class Fighter:
-    # identity / placement
-    id: int | None = None
-    team_id: int = 0
-    name: str = "Fighter"
-    tx: int = 0
-    ty: int = 0
-    alive: bool = True
-
-    # combat stats
-    level: int = 1
-    ac: int = 10
-    hp: int = 10
-    max_hp: int = 10
-
-    # ability scores (D&D-ish)
-    str_: int = 10
-    dex: int = 10
-    con: int = 10
-    int_: int = 10
-    wis: int = 10
-    cha: int = 10
-
-    # misc
-    age: int | None = None
-    cls: str | None = None  # class name (optional)
-
-    # equipment
-    weapon: Weapon = field(default_factory=Weapon)
-
-    # tracking
+    id: int
+    name: str
+    cls: str
+    level: int
+    ovr: int
+    hp: int
+    atk: int
+    defense: int
+    speed: int
+    weapon: Weapon = field(default_factory=lambda: WEAPON_CATALOG["Unarmed"])
     xp: int = 0
 
-    # convenience accessors for common aliases (str/int reserved words)
-    @property
-    def str(self) -> int:
-        return self.str_
+    # optional career fields (friendly defaults for back-compat)
+    age: int = 20
+    years_left: int = 2
+
+    def is_alive(self) -> bool:
+        return self.hp > 0
 
     @property
-    def int(self) -> int:
-        return self.int_
+    def next_level_xp(self) -> int:
+        # simple curve: 100, 200, 300, ...
+        return 100 * self.level
+
+    def level_up(self) -> None:
+        self.level += 1
+        # modest stat bumps to make leveling feel good
+        self.hp += 2
+        self.atk += 1
+        self.defense += 1
+        self.speed += 0  # keep speed stable by default
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "id": self.id, "name": self.name, "class": self.cls,
+            "level": self.level, "ovr": self.ovr, "hp": self.hp,
+            "atk": self.atk, "def": self.defense, "spd": self.speed,
+            "weapon": self.weapon.name, "reach": self.weapon.reach,
+            "xp": self.xp, "age": self.age, "years_left": self.years_left,
+        }
 
 
 @dataclass
 class Team:
     id: int
     name: str
-    color: Tuple[int, int, int] = (180, 180, 180)
+    fighters: List[Fighter] = field(default_factory=list)
+
+    def alive(self) -> Iterable[Fighter]:
+        return (f for f in self.fighters if f.is_alive())
+
+    def add(self, f: Fighter) -> None:
+        self.fighters.append(f)
 
 
-# -----------------------------
-# Helpers for flexible creation
-# -----------------------------
-
-def _pick(d: Dict[str, Any], *keys, default=None):
-    for k in keys:
-        if k in d and d[k] is not None:
-            return d[k]
-    return default
-
-def _to_weapon(w: Any) -> Weapon:
-    """
-    Accept:
-      - Weapon instance
-      - dict with known or aliased fields
-      - str: either dice ("1d6+1") or name ("Shortsword")
-      - None -> default Weapon()
-    """
-    if isinstance(w, Weapon):
-        return w
-    if isinstance(w, dict):
-        kw: Dict[str, Any] = {}
-        # copy recognized fields
-        for f in dataclass_fields(Weapon):
-            if f.name in w:
-                kw[f.name] = w[f.name]
-        # friendly aliases/defaults
-        kw.setdefault("name", _pick(w, "weapon_name", default="Unarmed"))
-        kw.setdefault("damage", _pick(w, "weapon_damage", "dmg", default="1d2"))
-        kw.setdefault("to_hit_bonus", _pick(w, "to_hit_bonus", "to_hit", "atk_mod", default=0))
-        kw.setdefault("crit_range", int(_pick(w, "crit_range", default=20)))
-        kw.setdefault("crit_mult", int(_pick(w, "crit_mult", default=2)))
-        kw.setdefault("reach", int(_pick(w, "reach", default=1)))
-        return Weapon(**kw)
-    if isinstance(w, str):
-        s = w.strip()
-        has_dice = ("d" in s.lower()) and any(ch.isdigit() for ch in s)
-        if has_dice:
-            return Weapon(name="Custom", damage=s, to_hit_bonus=0, crit_range=20, crit_mult=2, reach=1)
-        return Weapon(name=s, damage="1d4", to_hit_bonus=0, crit_range=20, crit_mult=2, reach=1)
-    return Weapon()
-
-
+# ----------------------
+# Converters / Helpers
+# ----------------------
 def fighter_from_dict(d: Dict[str, Any]) -> Fighter:
     """
-    Build a Fighter from flexible dicts used by tests/core.creator.
-    Accepted keys:
-      id/fighter_id, team_id, name, class, level/lvl, ac, hp/current_hp, max_hp
-      str/STR, dex, con, int/INT, wis, cha
-      weapon (dict/str) or weapon_* flattened fields
-      age (optional)
-    Unknown keys are ignored.
+    Build a Fighter from a dict. Accepts weapon as string/dict/Weapon.
+    Required keys: id, name, cls, level, ovr, hp, atk, defense, speed.
+    Optional: weapon, xp, age, years_left.
     """
-    fid = _pick(d, "id", "fighter_id")
-    name = _pick(d, "name", default=f"Fighter {fid}" if fid is not None else "Fighter")
-    team_id = int(_pick(d, "team_id", "team", default=0))
-    level = int(_pick(d, "level", "lvl", default=1))
-    ac = int(_pick(d, "ac", default=10))
-    age = _pick(d, "age", default=None)
-    cls = _pick(d, "class", "cls", default=None)
-
-    # stats (case-insensitive + aliasing for 'str'/'int')
-    def _stat(key: str, default=10) -> int:
-        return int(_pick(d, key, key.upper(), default=default))
-
-    STR = _stat("str")
-    DEX = _stat("dex")
-    CON = _stat("con")
-    INT = _stat("int")
-    WIS = _stat("wis")
-    CHA = _stat("cha")
-
-    # HP
-    max_hp = int(_pick(d, "max_hp", "maxHP", default=_pick(d, "hp", "HP", default=10)))
-    hp = int(_pick(d, "hp", "current_hp", "HP", default=max_hp))
-
-    # weapon: accept dict/str; or flattened weapon_* fields
-    wdict = _pick(d, "weapon", default=None)
-    if wdict is None:
-        maybe: Dict[str, Any] = {}
-        if "weapon_name" in d:   maybe["name"] = d["weapon_name"]
-        if "weapon_damage" in d: maybe["damage"] = d["weapon_damage"]
-        if "damage" in d and "weapon_damage" not in maybe: maybe["damage"] = d["damage"]
-        if any(k in d for k in ("to_hit_bonus", "to_hit", "atk_mod")):
-            maybe["to_hit_bonus"] = _pick(d, "to_hit_bonus", "to_hit", "atk_mod", default=0)
-        if "reach" in d: maybe["reach"] = d["reach"]
-        wdict = maybe or None
-    weapon = _to_weapon(wdict)
-
-    # optional global atk_mod merges into weapon
-    atk_mod = _pick(d, "atk_mod")
-    if atk_mod is not None:
-        weapon = Weapon(
-            name=weapon.name,
-            damage=weapon.damage,
-            to_hit_bonus=int(weapon.to_hit_bonus) + int(atk_mod),
-            crit_range=weapon.crit_range,
-            crit_mult=weapon.crit_mult,
-            reach=weapon.reach,
-        )
-
-    # Build fighter with safe field names
-    f = Fighter(
-        id=fid,
-        team_id=team_id,
-        name=name,
-        level=level,
-        ac=ac,
-        hp=hp,
-        max_hp=max_hp,
-        str_=STR,
-        dex=DEX,
-        con=CON,
-        int_=INT,
-        wis=WIS,
-        cha=CHA,
-        age=age,
-        cls=cls,
+    weapon = _weapon_from_any(d.get("weapon", "Unarmed"))
+    return Fighter(
+        id=int(d["id"]),
+        name=str(d["name"]),
+        cls=str(d.get("cls", d.get("class", "Fighter"))),
+        level=int(d.get("level", 1)),
+        ovr=int(d.get("ovr", 1)),
+        hp=int(d.get("hp", 10)),
+        atk=int(d.get("atk", 1)),
+        defense=int(d.get("defense", d.get("def", 10))),
+        speed=int(d.get("speed", 0)),
         weapon=weapon,
+        xp=int(d.get("xp", 0)),
+        age=int(d.get("age", 20)),
+        years_left=int(d.get("years_left", 2)),
     )
-    return f
+
+
+def team_from_dict(d: Dict[str, Any]) -> Team:
+    fighters = [fighter_from_dict(fd) for fd in d.get("fighters", [])]
+    return Team(
+        id=int(d.get("id", 0)),
+        name=str(d.get("name", "Team")),
+        fighters=fighters,
+    )
