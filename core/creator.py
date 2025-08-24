@@ -85,6 +85,18 @@ def pick_class(stats: Dict[str,int], r: random.Random, class_mode: str, misfit_p
 def maybe_negative_trait(r: random.Random, prob: float = 0.20) -> Optional[Tuple[str, Dict[str, float]]]:
     return r.choice(NEG_TRAITS_POOL) if r.random() < prob else None
 
+# Helper: consistent placeholder names
+def make_placeholder_name(r):
+    FIRST_NAMES = [
+        "Alex","Jordan","Riley","Casey","Morgan","Taylor","Jess","Drew","Parker","Sam",
+        "Avery","Quinn","Cameron","Shawn","Jamie","Charlie","Sage","Rowan","Elliot","Skyler"
+    ]
+    LAST_NAMES  = [
+        "Stone","Brooks","Miller","Reeves","Hayes","Cole","Ford","Wells","Blake","Hale",
+        "Shaw","Sloan","Bishop","Rhodes","Vance","Kerr","Greer","Lane","Pryce","Lowe"
+    ]
+    return f"{r.choice(FIRST_NAMES)} {r.choice(LAST_NAMES)}"
+
 def generate_fighter(level: int = 1, rng: Optional[random.Random] = None,
                      class_mode: str = "weighted", misfit_prob: float = 0.15,
                      neg_trait_prob: float = 0.20) -> Dict:
