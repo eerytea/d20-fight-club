@@ -99,7 +99,7 @@ def generate_fighter(level: int = 1, rng: Optional[random.Random] = None,
         "class": cls,
         "level": int(level),
         "age": r.randint(18, 34),
-        "potential": r.randint(55, 96),  # allow some lemons
+        
         # Abilities
         "str": stats["str"], "dex": stats["dex"], "con": stats["con"],
         "int": stats["int"], "wis": stats["wis"], "cha": stats["cha"],
