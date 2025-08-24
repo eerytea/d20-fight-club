@@ -1,12 +1,14 @@
 # core/save_system.py
 # Career save/load, schedule, table, and week simulation.
 # Use full TBCombat for AI week sims
+
+from __future__ import annotations
+
 try:
     from engine import TBCombat, Team, fighter_from_dict, layout_teams_tiles
 except Exception:
     TBCombat = Team = fighter_from_dict = layout_teams_tiles = None
 
-from __future__ import annotations
 import json, os, random
 from typing import Dict, List, Tuple, Optional
 
