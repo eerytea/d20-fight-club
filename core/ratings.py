@@ -1,16 +1,17 @@
 # core/ratings.py
-# Class-aware ratings, OVR, and simple value/wage model.
+# Class-aware ratings with OVR capped at 90, floor 25.
+# Combines: class-fit (abilities vs class weights), offense/defense/mobility, age/potential.
+# Honors optional negative trait multipliers from creator.
 
 from typing import Dict
 
-# -------------------- Class Profiles --------------------
-
+# -------------------- Class Profiles (combat defaults) --------------------
 CLASS_PROFILES: Dict[str, Dict] = {
     "Fighter": {
         "weights": (0.45, 0.40, 0.15),      # offense, defense, mobility
         "primaries": ["str", "con"],
         "secondaries": ["dex"],
-        "attack_stat_priority": ["str", "dex"],  # to-hit stat order
+        "attack_stat_priority": ["str", "dex"],
         "melee_damage_stat": "str",
         "weapon": {"name": "Longsword", "damage": "1d8"},
         "armor_ac": 16,
@@ -19,7 +20,7 @@ CLASS_PROFILES: Dict[str, Dict] = {
         "weights": (0.40, 0.40, 0.20),
         "primaries": ["wis", "con"],
         "secondaries": ["str"],
-        "attack_stat_priority": ["wis", "str"],  # spell/melee hybrid
+        "attack_stat_priority": ["wis", "str"],
         "spell_damage_stat": "wis",
         "melee_damage_stat": "str",
         "weapon": {"name": "Mace", "damage": "1d6"},
@@ -29,7 +30,7 @@ CLASS_PROFILES: Dict[str, Dict] = {
         "weights": (0.55, 0.25, 0.20),
         "primaries": ["int"],
         "secondaries": ["dex"],
-        "attack_stat_priority": ["int"],     # spell attack proxy
+        "attack_stat_priority": ["int"],
         "spell_damage_stat": "int",
         "weapon": {"name": "Quarterstaff", "damage": "1d6"},
         "armor_ac": 10,
@@ -39,7 +40,7 @@ CLASS_PROFILES: Dict[str, Dict] = {
         "primaries": ["dex"],
         "secondaries": ["int"],
         "attack_stat_priority": ["dex"],
-        "melee_damage_stat": "dex",          # finesse proxy
+        "melee_damage_stat": "dex",
         "weapon": {"name": "Dagger", "damage": "1d4"},
         "armor_ac": 14,
     },
@@ -56,15 +57,27 @@ CLASS_PROFILES: Dict[str, Dict] = {
         "weights": (0.55, 0.25, 0.20),
         "primaries": ["cha"],
         "secondaries": ["con"],
-        "attack_stat_priority": ["cha"],     # spell attack proxy
+        "attack_stat_priority": ["cha"],
         "spell_damage_stat": "cha",
         "weapon": {"name": "Wand", "damage": "1d6"},
         "armor_ac": 12,
     },
 }
 
-# -------------------- Core helpers --------------------
+# Class selection weights (shared with creator, duplicated here to keep file standalone)
+CLASS_WEIGHTS: Dict[str, Dict[str, int]] = {
+    "Fighter":   {"str": 3, "dex": 1, "con": 2, "int": 0, "wis": 0, "cha": 0},
+    "Barbarian": {"str": 3, "dex": 0, "con": 3, "int": 0, "wis": 0, "cha": 0},
+    "Rogue":     {"str": 0, "dex": 3, "con": 1, "int": 1, "wis": 0, "cha": 1},
+    "Wizard":    {"str": 0, "dex": 1, "con": 1, "int": 3, "wis": 0, "cha": 0},
+    "Cleric":    {"str": 0, "dex": 0, "con": 2, "int": 0, "wis": 3, "cha": 0},
+    "Sorcerer":  {"str": 0, "dex": 1, "con": 1, "int": 0, "wis": 0, "cha": 3},
+}
 
+OVR_MAX = 90
+OVR_MIN = 25
+
+# -------------------- Core helpers --------------------
 def ability_mod(score: int) -> int:
     return (score - 10) // 2
 
@@ -83,8 +96,9 @@ def expected_weapon_dmg(damage_die: str) -> float:
     except Exception:
         return 3.5
 
-# -------------------- Components for OVR --------------------
+def clamp01(x: float) -> float: return max(0.0, min(1.0, x))
 
+# -------------------- Components --------------------
 def _attack_ability_for(f: Dict) -> int:
     cls = f.get("class", "Fighter")
     prof = CLASS_PROFILES.get(cls, CLASS_PROFILES["Fighter"])
@@ -103,34 +117,44 @@ def compute_component_offense(f: Dict) -> float:
     level = int(f.get("level", 1))
     atk_mod = _attack_ability_for(f) + proficiency_by_level(level)
     target_ac = 12
-    hit_chance = min(0.95, max(0.05, (21 + atk_mod - target_ac) / 20.0))
-
+    hit_chance = clamp01((21 + atk_mod - target_ac) / 20.0)
     wpn = f.get("weapon", {"damage": "1d6"})
     base_dmg = expected_weapon_dmg(wpn.get("damage", "1d6"))
     dmg_bonus = _damage_bonus_for(f)
     dpr = hit_chance * (base_dmg + dmg_bonus)
-
-    return 100.0 * (0.55 * hit_chance + 0.45 * min(1.0, dpr / 8.0))
+    # Normalize: decent offense ~ 0.6–0.8
+    return 0.55 * hit_chance + 0.45 * clamp01(dpr / 8.0)
 
 def compute_component_defense(f: Dict) -> float:
     ac = int(f.get("ac", 12))
     hp = int(f.get("hp", 10))
-    ac_score  = min(1.0, max(0.0, (ac - 10) / 10.0))
-    ehp_score = min(1.0, max(0.0, (hp - 8) / 24.0))
-    return 100.0 * (0.55 * ac_score + 0.45 * ehp_score)
+    ac_score  = clamp01((ac - 10) / 10.0)      # AC 20 => 1.0
+    ehp_score = clamp01((hp - 8)  / 24.0)      # HP ~32 => 1.0
+    return 0.55 * ac_score + 0.45 * ehp_score
 
 def compute_component_mobility(f: Dict) -> float:
     spd = int(f.get("speed", 6))
     dex_mod = ability_mod(f.get("dex", 10))
-    spd_score = min(1.0, spd / 12.0)
-    dodge_score = min(1.0, max(0.0, (10 + dex_mod - 10) / 8.0))
-    return 100.0 * (0.7 * spd_score + 0.3 * dodge_score)
+    spd_score = clamp01(spd / 12.0)            # SPD 12 => 1.0
+    dodge_score = clamp01((10 + dex_mod - 10) / 8.0)  # modest influence
+    return 0.7 * spd_score + 0.3 * dodge_score
 
-# -------------------- Age/Potential curves --------------------
+def compute_class_fit(f: Dict) -> float:
+    """Ability-to-class alignment (0–1). Abilities max at 20."""
+    cls = f.get("class", "Fighter")
+    weights = CLASS_WEIGHTS.get(cls, {})
+    if not weights: return 0.5
+    top = sum(max(0, w) for w in weights.values()) * 20.0
+    if top <= 0: return 0.5
+    acc = 0.0
+    for k, w in weights.items():
+        acc += max(0, w) * float(f.get(k, 10))
+    return clamp01(acc / top)
 
+# -------------------- Age/Potential & Traits --------------------
 def age_factor(age: int) -> float:
-    if age < 20: return 0.92
-    if age < 23: return 0.97
+    if age < 20: return 0.93
+    if age < 23: return 0.98
     if age < 26: return 1.00
     if age < 29: return 1.03
     if age < 31: return 1.02
@@ -140,41 +164,60 @@ def age_factor(age: int) -> float:
     return 0.90
 
 def potential_factor(potential: int, age: int) -> float:
-    base = (potential - 50) / 50.0
+    base = (potential - 60) / 40.0  # centered lower to allow more lemons
     youth = max(0.0, (25 - age) / 25.0)
-    return 1.0 + 0.15 * base * youth
+    return 1.0 + 0.12 * base * youth  # gentler than before
+
+def trait_multipliers(f: Dict) -> Dict[str, float]:
+    mods = f.get("_trait_mods", {})
+    return {
+        "off_mult": float(mods.get("off_mult", 1.0)),
+        "def_mult": float(mods.get("def_mult", 1.0)),
+        "mob_mult": float(mods.get("mob_mult", 1.0)),
+        "ovr_mult": float(mods.get("ovr_mult", 1.0)),
+    }
 
 # -------------------- Overall (OVR) --------------------
-
 def compute_ovr(f: Dict) -> int:
     cls = f.get("class", "Fighter")
     prof = CLASS_PROFILES.get(cls, CLASS_PROFILES["Fighter"])
     off_w, def_w, mob_w = prof["weights"]
+    tm = trait_multipliers(f)
 
-    off = compute_component_offense(f)
-    de  = compute_component_defense(f)
-    mob = compute_component_mobility(f)
+    off = compute_component_offense(f) * tm["off_mult"]   # 0–1
+    de  = compute_component_defense(f) * tm["def_mult"]   # 0–1
+    mob = compute_component_mobility(f) * tm["mob_mult"]  # 0–1
+    fit = compute_class_fit(f)                            # 0–1
 
-    raw = off_w*off + def_w*de + mob_w*mob
-    raw *= age_factor(int(f.get("age", 24)))
-    raw *= potential_factor(int(f.get("potential", 70)), int(f.get("age", 24)))
-    return int(round(max(25, min(99, raw))))
+    # Blend components into a 0–1 score; include class-fit as its own weight
+    # We’ll give class fit 25% influence so misfits hurt meaningfully.
+    comp = (off_w*off + def_w*de + mob_w*mob)
+    total_01 = 0.75 * comp + 0.25 * fit
 
-# -------------------- Value / Wage model --------------------
+    # Age/potential adjust
+    total_01 *= age_factor(int(f.get("age", 24)))
+    total_01 *= potential_factor(int(f.get("potential", 70)), int(f.get("age", 24)))
+    total_01 *= tm["ovr_mult"]
 
+    # Map 0–1 to OVR_MIN..OVR_MAX (soft clamp)
+    raw = OVR_MIN + (OVR_MAX - OVR_MIN) * clamp01(total_01)
+    return int(round(max(OVR_MIN, min(OVR_MAX, raw))))
+
+# -------------------- Value / Wage --------------------
 def value_wage_from_profile(ovr: int, age: int, potential: int, league_economy: float = 1.0) -> Dict[str, int]:
-    base_val = (ovr ** 2.1) * 15
-    pot_mult = 1.0 + (potential - 70) * 0.03
+    # Recalibrate value curve for OVR 25..90 range
+    norm = (ovr - OVR_MIN) / (OVR_MAX - OVR_MIN + 1e-6)  # 0..1
+    base_val = (50_000 + 2_000_000 * (norm ** 2.2))      # concave-up
+    pot_mult = 1.0 + (potential - 70) * 0.02
     if 21 <= age <= 26: age_mult = 1.15
     elif age <= 30:     age_mult = 1.00
-    elif age < 21:      age_mult = 0.90
+    elif age < 21:      age_mult = 0.92
     else:               age_mult = 0.85
     value = int(base_val * pot_mult * age_mult * league_economy)
-    wage  = int((value ** 0.5) * (0.85 + (potential - 70) * 0.01) * (1.0 if 22 <= age <= 30 else 0.9))
-    return {"value": max(10_000, value), "wage": max(200, wage)}
+    wage  = int((value ** 0.5) * (0.6 + 0.01 * max(0, potential - 65)))
+    return {"value": max(10_000, value), "wage": max(150, wage)}
 
 # -------------------- Public API --------------------
-
 def refresh_fighter_ratings(f: Dict, league_economy: float = 1.0) -> None:
     lvl = int(f.get("level", 1))
     f["prof"] = proficiency_by_level(lvl)
