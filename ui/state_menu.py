@@ -58,8 +58,9 @@ class MenuState(UIState):
                 )
 
         def cb_exhibition():
-            from .state_exhibition import ExhibitionState
-            pygame._app_ref.push_state(ExhibitionState(pygame._app_ref))  # type: ignore[attr-defined]
+            from .state_match import MatchState
+            pygame._app_ref.push_state(MatchState(pygame._app_ref))  # type: ignore[attr-defined]
+
 
         def cb_settings():
             from .state_settings import SettingsState
