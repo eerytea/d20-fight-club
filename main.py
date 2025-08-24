@@ -657,7 +657,7 @@ class App:
         self.career = None; self.current_save_path = None; self.chosen_tid = None
         self.exhibition_pair = None; self.scheduled_fixture = None
         self.state = MenuState(self)
-    def apply_resolution(self, res_xy):
+def apply_resolution(self, res_xy):
     flags = pygame.RESIZABLE | pygame.SCALED
     try:
         # SCALED is nice on desktop, but fails under headless/dummy video driver.
