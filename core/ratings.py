@@ -6,6 +6,27 @@
 from typing import Dict
 import copy
 
+def age_xp_multiplier(age: int) -> float:
+    """
+    XP gain factor by age. Tunable. Current spec:
+    18–23: x1.25, 24–28: x1.00, 29+: x0.75 (feel free to later add 34+: x0.5).
+    """
+    if age <= 23:
+        return 1.25
+    if age <= 28:
+        return 1.00
+    return 0.75
+
+def total_xp_multiplier(f: dict) -> float:
+    """
+    Combine age and development-trait multipliers.
+    Falls back safely if fields are missing.
+    """
+    age = int(f.get("age", 24))
+    dev_mult = float(f.get("dev_mult", 1.0))
+    return age_xp_multiplier(age) * dev_mult
+
+
 # -------------------- Class Profiles (combat defaults) --------------------
 CLASS_PROFILES: Dict[str, Dict] = {
     "Fighter": {
