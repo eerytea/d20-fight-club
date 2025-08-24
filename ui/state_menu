@@ -1,0 +1,31 @@
+import pygame
+from typing import Optional
+from .app import UIState
+from .uiutil import draw_text, BIG
+
+class MenuState(UIState):
+    def __init__(self):
+        self._font = None
+
+    def on_enter(self) -> None:
+        if not pygame.font.get_init():
+            pygame.font.init()
+
+    def on_exit(self) -> None:
+        pass
+
+    def handle_event(self, event: pygame.event.Event):
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+            from .state_team_select import TeamSelectState
+            # Need app to push states; grab the top-level from a global registry via pygame
+            # We don’t have a direct 'app' here, so we’ll return a new state to be pushed by App.run()
+            return TeamSelectState(pygame._app_ref)  # see note below
+        return None
+
+    def update(self, dt: float):
+        return None
+
+    def draw(self, surface: pygame.Surface) -> None:
+        surface.fill((18,18,22))
+        draw_text(surface, "D20 Fight Club", (40, 40), font=BIG)
+        draw_text(surface, "Press Enter to start a New Career", (40, 90))
