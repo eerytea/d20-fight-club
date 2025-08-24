@@ -1,46 +1,44 @@
+# main.py
+from __future__ import annotations
 
-import os, sys, traceback, datetime
-CRASH_DIR = os.path.join(os.path.dirname(__file__), "saves")
-os.makedirs(CRASH_DIR, exist_ok=True)
-try:
-    # --- existing imports and boot code below ---
-    ...
-except Exception:
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_path = os.path.join(CRASH_DIR, f"crash-{ts}.log")
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write("".join(traceback.format_exception(*sys.exc_info())))
-    print(f"⚠️ Crash captured to {log_path}")
-    raise
+import os
+import sys
+import traceback
 
-from ui.app import App
-from ui.state_menu import MenuState
 
-def main():
-    app = App(width=1280, height=720, title="D20 Fight Club")
-    app.push_state(MenuState())   # <<< make sure this line exists
+def main() -> None:
+    # Lazy import so heavy UI modules load only when running the game
+    from ui import App
+
+    # You can tweak title/FPS here if you like
+    app = App(title="D20 Fight Club", fps_cap=60)
     app.run()
 
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
-        from pathlib import Path
-        import traceback, time
-        Path("saves").mkdir(parents=True, exist_ok=True)
-        Path("saves/crash.log").write_text(
-            f"[{time.ctime()}]\n{traceback.format_exc()}\n", encoding="utf-8"
-        )
-        # Try to show a polite UI message if Pygame is still alive
+    except SystemExit:
+        # Allow clean quits without logging as crashes
+        raise
+    except Exception:
+        # Never "just close"—always leave a crash log in saves/crash.log
+        repo_dir = os.path.dirname(__file__)
+        saves_dir = os.path.join(repo_dir, "saves")
+        os.makedirs(saves_dir, exist_ok=True)
+
+        crash_path = os.path.join(saves_dir, "crash.log")
+        with open(crash_path, "a", encoding="utf-8") as f:
+            f.write("\n=== Crash ===\n")
+            traceback.print_exc(file=f)
+
+        # Breadcrumb file some UIs use to hint where the last crash log lives
         try:
-            from ui.state_message import MessageState
-            from ui.app import App
-            app = App()
-            app.push_state(MessageState("Crash", f"{e}\nSee saves/crash.log"))
-            app.run()
+            with open(os.path.join(saves_dir, "last_crash.txt"), "w", encoding="utf-8") as f:
+                f.write(crash_path)
         except Exception:
             pass
-        raise
+
+        # Also echo the path to the console so it's easy to find
+        print(f"\nCrash written to: {crash_path}", file=sys.stderr)
+        raise  # re-raise so you still see the full traceback in the terminal
