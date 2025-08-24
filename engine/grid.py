@@ -45,11 +45,9 @@ def _flatten_fighters(objs: Iterable) -> List[Fighter]:
     fighters: List[Fighter] = []
     items = list(objs)
     if len(items) == 2 and all(isinstance(x, Team) for x in items):
-        # Two-team form
         for t in items:  # type: ignore[assignment]
             fighters.extend(t.fighters)
         return fighters
-    # Generic flatten
     for x in items:
         if isinstance(x, Fighter):
             fighters.append(x)
@@ -68,7 +66,8 @@ def layout_teams_tiles(
     """
     Flexible layout to match tests:
       - If given a FLAT LIST of fighters (each with .team_id in {0,1}),
-        return {fighter_id: (x, y)} with team 0 on the left and team 1 on the right.
+        set f.tx/f.ty and return {fighter_id: (x, y)} with team 0 on the left
+        and team 1 on the right.
       - If given (TeamA, TeamB), also supported.
     Deterministic and stateless for easy testing.
     """
@@ -78,7 +77,6 @@ def layout_teams_tiles(
         raise ValueError("Grid height must be >= 1.")
 
     fighters = _flatten_fighters(objs)
-    # bucket by team_id
     team0 = [f for f in fighters if getattr(f, "team_id", 0) == 0]
     team1 = [f for f in fighters if getattr(f, "team_id", 0) == 1]
 
@@ -89,9 +87,12 @@ def layout_teams_tiles(
     rb = _spread_rows(len(team1), height)
 
     pos: Dict[int, Tuple[int, int]] = {}
+
     for f, y in zip(team0, ra):
-        pos[f.id] = (xa, y)
+        f.tx, f.ty = xa, y  # <-- tests rely on these attributes
+        pos[f.id] = (f.tx, f.ty)
     for f, y in zip(team1, rb):
-        pos[f.id] = (xb, y)
+        f.tx, f.ty = xb, y
+        pos[f.id] = (f.tx, f.ty)
 
     return pos
