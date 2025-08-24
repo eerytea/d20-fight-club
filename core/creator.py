@@ -8,6 +8,15 @@ import random
 
 from .ratings import CLASS_PROFILES, refresh_fighter_ratings
 
+# Development traits (hidden growth archetypes)
+# weight is the pick probability; mult is the XP gain multiplier applied on top of age.
+DEV_TRAITS = [
+    ("Bad Developer",    0.20, 0.75),
+    ("Normal Developer", 0.55, 1.00),
+    ("Star Developer",   0.20, 1.25),
+    ("Superstar",        0.05, 1.50),
+]
+
 FIRST_NAMES = [
     "Alex","Jordan","Riley","Casey","Morgan","Taylor","Jess","Drew","Parker","Sam",
     "Avery","Quinn","Cameron","Shawn","Jamie","Charlie","Sage","Rowan","Elliot","Skyler"
