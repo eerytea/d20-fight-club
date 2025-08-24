@@ -121,7 +121,18 @@ def generate_fighter(level: int = 1, rng: Optional[random.Random] = None,
     if trait:
         f.setdefault("traits", []).append(trait[0])
         f["_trait_mods"] = trait[1]  # used by ratings
-
+ # Assign a development trait
+    roll = r.random()
+    acc = 0.0
+    for name, weight, mult in DEV_TRAITS:
+        acc += weight
+        if roll <= acc:
+            f["dev_trait"] = name
+            f["dev_mult"] = mult
+            break
+    if "dev_trait" not in f:
+        f["dev_trait"] = "Normal Developer"
+        f["dev_mult"] = 1.0
     refresh_fighter_ratings(f, league_economy=1.0)
     return f
 
