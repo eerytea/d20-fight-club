@@ -642,6 +642,27 @@ class MatchState:
         x0 = arena_w; pygame.draw.rect(screen, (20,22,30), pygame.Rect(x0, 0, SIDEBAR_W, screen.get_height()))
         hdr = self.font_big.render("Turn Log", True, WHITE); screen.blit(hdr, (x0 + 16, 16))
         self.manager.draw_ui(screen)
+    def _append_log(self, text: str):
+    """Push one line into whatever log widget exists."""
+    # Try SelectionList first
+    if hasattr(self, "log_list") and self.log_list is not None:
+        items = list(self.log_list.item_list or [])
+        items.append(text)
+        # pygame_gui UISelectionList has .set_item_list in newer versions
+        if hasattr(self.log_list, "set_item_list"):
+            self.log_list.set_item_list(items)
+        else:
+            # crude fallback: recreate the widget when needed (optional)
+            pass
+        return
+    # Try a UITextBox (if you used one)
+    if hasattr(self, "log_box") and self.log_box is not None:
+        old = getattr(self, "_log_html", "")
+        self._log_html = (old + (("" if not old else "<br>") + pygame.html.escape(text)))
+        try:
+            self.log_box.set_text(self._log_html)
+        except Exception:
+            pass
 
 # -------- App --------
 class App:
