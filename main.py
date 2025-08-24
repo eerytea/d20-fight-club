@@ -174,7 +174,15 @@ class TeamSelectState:
             pass
 
     def handle(self, event):
-        if event.type == pygame.USEREVENT:
+        evt_type = getattr(event, "type", None)
+user_type = getattr(event, "user_type", None)
+
+if evt_type == pygame.USEREVENT and user_type == pygame_gui.UI_BUTTON_PRESSED:
+    ...
+# also support new direct types
+if evt_type == pygame_gui.UI_BUTTON_PRESSED:
+    ...
+
             # Teams selection
             if event.user_type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION and event.ui_element == self.list_teams:
                 label = event.text
@@ -390,7 +398,15 @@ class RosterState:
             self.card_box.set_relative_rect(card_rect)
             self._layout_toolbar(w)
 
-        if event.type == pygame_gui.UI_BUTTON_PRESSED:
+        evt_type = getattr(event, "type", None)
+user_type = getattr(event, "user_type", None)
+
+if evt_type == pygame.USEREVENT and user_type == pygame_gui.UI_BUTTON_PRESSED:
+    ...
+# also support new direct types
+if evt_type == pygame_gui.UI_BUTTON_PRESSED:
+    ...
+
             if event.ui_element == self.btn_back:
                 self.app.set_state(ManagerMenuState(self.app))
             elif event.ui_element == self.btn_prev:
@@ -868,4 +884,25 @@ class App:
 
 
 def main(): App().run()
+    def run(self):
+    try:
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                else:
+                    self.state.handle(event)
+            self.state.update(dt)
+            self.state.draw(self.screen)
+            pygame.display.flip()
+    except Exception as e:
+        import traceback, datetime
+        with open("crash.log", "a", encoding="utf-8") as f:
+            f.write(f"\n=== {datetime.datetime.now()} ===\n")
+            f.write("".join(traceback.format_exc()))
+        raise
+    finally:
+        pygame.quit()
+
 if __name__ == "__main__": main()
