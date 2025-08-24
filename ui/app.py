@@ -1,3 +1,6 @@
+import pygame
+pygame._app_ref = None  # type: ignore[attr-defined]
+
 import os
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
