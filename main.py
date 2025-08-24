@@ -38,6 +38,12 @@ def save_json(path, obj):
     except Exception: pass
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
+    
+def team_average_ovr(team_dict) -> int:
+    fs = team_dict.get("fighters", [])
+    if not fs: return 0
+    vals = [int(f.get("ovr", 50)) for f in fs]
+    return int(round(sum(vals) / max(1, len(vals))))
 
 # -------- Settings --------
 class SettingsWindow(pygame_gui.elements.UIWindow):
@@ -80,30 +86,138 @@ class SettingsWindow(pygame_gui.elements.UIWindow):
 class TeamSelectState:
     def __init__(self, app):
         self.app = app
-        self.manager = pygame_gui.UIManager(self.app.screen.get_size())
-        self.title = pygame.font.SysFont("consolas", 34).render("Select Your Team", True, WHITE)
-        self.btn_back = pygame_gui.elements.UIButton(pygame.Rect((16, 16), (110, 36)), "Back", self.manager)
-        self.btn_manage = pygame_gui.elements.UIButton(pygame.Rect((140, 16), (190, 36)), "Manage This Team", self.manager)
-        items, self.tid_by_label = [], {}
-        if self.app.career:
-            for tid in self.app.career.team_ids:
-                t = self.app.career.teams[tid]
-                lab = f"{t['name']}  (TID {tid})"
-                items.append(lab); self.tid_by_label[lab] = tid
-        r = pygame.Rect(40, 80, self.app.screen.get_width() - 80, self.app.screen.get_height() - 140)
-        self.sel = pygame_gui.elements.UISelectionList(relative_rect=r, item_list=items, manager=self.manager)
+        self.ui = pygame_gui.UIManager(app.screen.get_size())
+        self.selected_tid = None
+        self._label_to_tid = {}   # "Team (Avg XX)" -> tid
+        self._current_team = None
+        self._current_fighter = None
+        self.setup_ui()
+
+    def setup_ui(self):
+        w, h = self.app.screen.get_size()
+        pad = 12
+        left_w = int(w * 0.38)
+        right_w = w - left_w - pad*3
+        right_x = pad*2 + left_w
+
+        # Title
+        self.lbl_title = pygame_gui.elements.UILabel(
+            relative_rect=pygame.Rect(pad, pad, w - pad*2, 32),
+            text="Select Your Team",
+            manager=self.ui
+        )
+
+        # Left: Teams
+        self.list_teams = pygame_gui.elements.UISelectionList(
+            relative_rect=pygame.Rect(pad, 48, left_w, h - 48 - pad),
+            item_list=self._make_team_label_list(),
+            manager=self.ui
+        )
+
+        # Right top: Roster of selected team
+        top_h = int((h - 48 - pad) * 0.55)
+        self.list_roster = pygame_gui.elements.UISelectionList(
+            relative_rect=pygame.Rect(right_x, 48, right_w, top_h),
+            item_list=[], manager=self.ui
+        )
+
+        # Right bottom: Fighter details
+        self.box_details = pygame_gui.elements.UITextBox(
+            relative_rect=pygame.Rect(right_x, 48 + top_h + pad, right_w, h - (48 + top_h + pad) - pad),
+            html_text="<b>Fighter Details</b><br>Select a fighter to view.",
+            manager=self.ui
+        )
+
+        # Bottom buttons
+        btn_w = 160; btn_h = 36
+        self.btn_manage = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect(w - pad - btn_w*2 - 8, pad, btn_w, btn_h),
+            text="Manage Team", manager=self.ui
+        )
+        self.btn_back = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect(w - pad - btn_w, pad, btn_w, btn_h),
+            text="Back", manager=self.ui
+        )
+
+    def _make_team_label_list(self):
+        labels = []
+        self._label_to_tid.clear()
+        for t in self.app.career.teams:
+            avg = team_average_ovr(t)
+            label = f"{t['name']} (Avg OVR {avg})"
+            labels.append(label)
+            self._label_to_tid[label] = t["tid"]
+        return labels
+
+    def _populate_roster(self, team):
+        items = []
+        for f in team.get("fighters", []):
+            items.append(f"{f.get('name','?')} — OVR {int(f.get('ovr',0))}")
+        # set list
+        if hasattr(self.list_roster, "set_item_list"):
+            self.list_roster.set_item_list(items)
+        else:
+            # fallback if needed
+            pass
+
+    def _render_fighter_details(self, f):
+        keys = ("class","level","age","ovr","peak_ovr","hp","ac","speed","str","dex","con","int","wis","cha","dev_trait")
+        rows = []
+        rows.append(f"<b>{f.get('name','?')}</b>")
+        for k in keys:
+            if k in f:
+                rows.append(f"{k.upper()}: {f[k]}")
+        html = "<br>".join(rows)
+        try:
+            self.box_details.set_text(html)
+        except Exception:
+            pass
+
     def handle(self, event):
-        if event.type == pygame_gui.UI_BUTTON_PRESSED:
-            if event.ui_element == self.btn_back: self.app.set_state(MenuState(self.app))
-            elif event.ui_element == self.btn_manage:
-                s = self.sel.get_single_selection()
-                if s: self.app.chosen_tid = self.tid_by_label[s]; self.app.set_state(ManagerMenuState(self.app))
-        self.manager.process_events(event)
-    def update(self, dt): self.manager.update(dt)
-    def draw(self, screen):
-        screen.fill(BG); draw_bg_grid(screen)
-        screen.blit(self.title, (screen.get_width()//2 - self.title.get_width()//2, 22))
-        self.manager.draw_ui(screen)
+        if event.type == pygame.USEREVENT:
+            # Teams selection
+            if event.user_type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION and event.ui_element == self.list_teams:
+                label = event.text
+                tid = self._label_to_tid.get(label)
+                if tid is not None:
+                    # find team
+                    for t in self.app.career.teams:
+                        if t["tid"] == tid:
+                            self._current_team = t
+                            self.selected_tid = tid
+                            self._populate_roster(t)
+                            # clear fighter details
+                            self._current_fighter = None
+                            self.box_details.set_text("<b>Fighter Details</b><br>Select a fighter to view.")
+                            break
+            # Roster selection
+            if event.user_type == pygame_gui.UI_SELECTION_LIST_NEW_SELECTION and event.ui_element == self.list_roster:
+                label = event.text  # "Name — OVR XX"
+                # find fighter by prefix name
+                if self._current_team:
+                    name = label.split(" — ", 1)[0]
+                    for f in self._current_team.get("fighters", []):
+                        if f.get("name") == name:
+                            self._current_fighter = f
+                            self._render_fighter_details(f)
+                            break
+            # Buttons
+            if event.user_type == pygame_gui.UI_BUTTON_PRESSED:
+                if event.ui_element == self.btn_back:
+                    self.app.set_state(MenuState(self.app))
+                elif event.ui_element == self.btn_manage:
+                    if self.selected_tid is not None:
+                        self.app.chosen_tid = self.selected_tid
+                        self.app.set_state(ManagerMenuState(self.app))
+
+        self.ui.process_events(event)
+
+    def update(self, dt):
+        self.ui.update(dt)
+
+    def draw(self, surf):
+        surf.fill((20,22,26))
+        self.ui.draw_ui(surf)
 
 # -------- Roster (sorting, paging, compare, scouting card) --------
 class RosterState:
