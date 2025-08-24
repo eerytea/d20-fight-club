@@ -16,3 +16,7 @@ Thumbs.db
 # Project
 saves/*.bak
 *.bak.*
+
+saves/*.json
+saves/*.bak
+saves/replays/**
