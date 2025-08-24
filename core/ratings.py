@@ -227,3 +227,31 @@ def refresh_fighter_ratings(f: Dict, league_economy: float = 1.0) -> None:
     money = value_wage_from_profile(f["ovr"], int(f.get("age", 24)), int(f.get("potential", 70)), league_economy)
     f["value"] = money["value"]
     f["wage"]  = money["wage"]
+ASI_LEVELS = [4, 8, 12, 16, 19]
+
+def level_up(f: Dict) -> None:
+    f["level"] += 1
+    cls = f.get("class", "Fighter")
+    prof = CLASS_PROFILES.get(cls, CLASS_PROFILES["Fighter"])
+
+    # --- HP growth (use averages instead of dice rolls) ---
+    hit_die = {"Fighter":10,"Barbarian":12,"Rogue":8,"Cleric":8,"Wizard":6,"Sorcerer":6}.get(cls,8)
+    avg = hit_die // 2 + 1  # 1dX average
+    f["hp"] += avg + ability_mod(f.get("con",10))
+
+    # --- ASI every 4 levels ---
+    if f["level"] in ASI_LEVELS:
+        primaries = prof.get("primaries", ["str"])
+        for stat in primaries:
+            if f.get(stat,10) < 20:
+                f[stat] = min(20, f[stat] + 2)
+                break
+        else:
+            # if all primaries maxed, spill to secondary
+            for stat in prof.get("secondaries", []):
+                if f.get(stat,10) < 20:
+                    f[stat] = min(20, f[stat] + 2)
+                    break
+
+    # --- Refresh ratings ---
+    refresh_fighter_ratings(f)
