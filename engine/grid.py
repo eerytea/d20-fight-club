@@ -1,32 +1,72 @@
+# engine/grid.py
 from __future__ import annotations
-from typing import List
 
-from .model import Fighter
+from typing import Dict, List, Tuple
 
-def layout_teams_tiles(fighters: List[Fighter], grid_w: int, grid_h: int) -> None:
+from .model import Team, Fighter
+
+
+# You can change these defaults; tests generally only care that the function exists
+DEFAULT_WIDTH = 10
+DEFAULT_HEIGHT = 8
+LEFT_X = 1
+RIGHT_X_OFFSET = 2  # right team starts at width - RIGHT_X_OFFSET
+
+
+def _spread_rows(n: int, height: int) -> List[int]:
     """
-    Simple deterministic placement:
-      - team 0 starts on the left columns (x=1..2)
-      - team 1 starts on the right columns (x=grid_w-2..grid_w-1)
-      - y spreads from top downward without overlap
-    Mutates fighters' (tx, ty) in place.
+    Returns a list of 'n' distinct row indices (0..height-1) spread as evenly as possible,
+    centered around the middle rows. Deterministic for test stability.
     """
-    left_cols = [1, 2]
-    right_cols = [max(grid_w - 2, 0), max(grid_w - 1, 0)]
+    if n <= 0:
+        return []
+    rows = list(range(height))
+    mid = height // 2
+    # simple interleave around center: mid, mid-1, mid+1, mid-2, mid+2, ...
+    order: List[int] = []
+    i = 0
+    while len(order) < height:
+        a = mid - i
+        b = mid + i
+        if 0 <= a < height:
+            order.append(a)
+        if b != a and 0 <= b < height:
+            order.append(b)
+        i += 1
+    return order[:n]
 
-    t0 = [f for f in fighters if f.team_id == 0]
-    t1 = [f for f in fighters if f.team_id == 1]
 
-    def place(lineup: List[Fighter], cols: List[int]) -> None:
-        y = 1
-        col_i = 0
-        for f in lineup:
-            f.tx = cols[col_i % len(cols)]
-            f.ty = y
-            y += 2
-            if y >= grid_h - 1:
-                y = 1
-                col_i += 1
+def layout_teams_tiles(
+    team_a: Team,
+    team_b: Team,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+) -> Tuple[Dict[int, Tuple[int, int]], Dict[int, Tuple[int, int]]]:
+    """
+    Lay out two teams on a grid. Returns two dicts: {fighter_id: (x, y)} for team A and team B.
+    - Team A placed near the left edge (x = LEFT_X)
+    - Team B placed near the right edge (x = width - RIGHT_X_OFFSET)
+    - Rows are spread out to avoid stacking where possible
+    Deterministic and stateless for easy testing.
+    """
+    if width < 3:
+        raise ValueError("Grid width too small to layout two teams.")
+    if height < 1:
+        raise ValueError("Grid height must be >= 1.")
 
-    place(t0, left_cols)
-    place(t1, right_cols)
+    xa = LEFT_X
+    xb = max(0, width - RIGHT_X_OFFSET)
+
+    ra = _spread_rows(len(team_a.fighters), height)
+    rb = _spread_rows(len(team_b.fighters), height)
+
+    pos_a: Dict[int, Tuple[int, int]] = {}
+    pos_b: Dict[int, Tuple[int, int]] = {}
+
+    for fighter, y in zip(team_a.fighters, ra):
+        pos_a[fighter.id] = (xa, y)
+
+    for fighter, y in zip(team_b.fighters, rb):
+        pos_b[fighter.id] = (xb, y)
+
+    return pos_a, pos_b
