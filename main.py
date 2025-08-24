@@ -1,4 +1,18 @@
-# main.py
+
+import os, sys, traceback, datetime
+CRASH_DIR = os.path.join(os.path.dirname(__file__), "saves")
+os.makedirs(CRASH_DIR, exist_ok=True)
+try:
+    # --- existing imports and boot code below ---
+    ...
+except Exception:
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = os.path.join(CRASH_DIR, f"crash-{ts}.log")
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("".join(traceback.format_exception(*sys.exc_info())))
+    print(f"⚠️ Crash captured to {log_path}")
+    raise
+
 from ui.app import App
 from ui.state_menu import MenuState
 
