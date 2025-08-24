@@ -30,6 +30,41 @@ class TeamSelectState(UIState):
             Button(start_rect, "Start Career", on_click=self._start),
             Button(back_rect,  "Back",        on_click=self._back),
         ]
+ def __init__(self, app):
+        self.app = app
+        self.selected_team_id = None
+        self.selected_fighter = None
+        self._fighter_rows = []  # store clickable rects for fighters
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            # check if clicked a fighter row
+            for fighter, rect in self._fighter_rows:
+                if rect.collidepoint(mx, my):
+                    self.selected_fighter = fighter
+                    break
+        return None
+
+    def draw(self, surface):
+        # ... draw left and right panels as before
+
+        # --- Right panel roster ---
+        self._fighter_rows = []
+        x, y = right_rect.x + 10, right_rect.y + 40
+        for fighter in roster:   # however you load them
+            rect = pygame.Rect(x, y, right_rect.w - 20, 28)
+            pygame.draw.rect(surface, (50,50,60), rect, 0, border_radius=4)
+            label = f"{fighter['name']} Lv{fighter['level']} OVR{fighter.get('ovr',0)}"
+            draw_text(surface, label, (x+6, y+4))
+            self._fighter_rows.append((fighter, rect))
+            y += 32
+
+        # --- Fighter details ---
+        if self.selected_fighter:
+            f = self.selected_fighter
+            draw_text(surface, f"Class: {f['class']}  Age: {f['age']}", (right_rect.x+10, y+20))
+            # etc.
 
     def on_enter(self): pass
     def on_exit(self): pass
