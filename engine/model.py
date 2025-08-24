@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple, Any
+import re
 
 
 # ----------------------
@@ -18,7 +19,6 @@ class Weapon:
     crit: Tuple[int, int] = (20, 2)
 
 
-# A minimal built-in catalog you can extend elsewhere
 WEAPON_CATALOG: Dict[str, Weapon] = {
     "Unarmed": Weapon("Unarmed", (1, 4, 0), 1, (20, 2)),
     "Dagger":  Weapon("Dagger",  (1, 4, 0), 1, (19, 2)),
@@ -27,16 +27,37 @@ WEAPON_CATALOG: Dict[str, Weapon] = {
 }
 
 
+def _parse_damage_string(s: str) -> Tuple[int, int, int]:
+    """
+    Parse strings like '1d4', '2d6+1', '1d8-1' into (num, sides, bonus).
+    """
+    s = s.strip().lower()
+    m = re.fullmatch(r"\s*(\d+)\s*d\s*(\d+)\s*([+-]\s*\d+)?\s*", s)
+    if not m:
+        return (1, 4, 0)
+    n = int(m.group(1))
+    sides = int(m.group(2))
+    bonus = 0
+    if m.group(3):
+        bonus = int(m.group(3).replace(" ", ""))
+    return (n, sides, bonus)
+
+
 def _weapon_from_any(value: Any) -> Weapon:
     """Normalize a weapon that might be a Weapon, dict, or string key."""
     if isinstance(value, Weapon):
         return value
     if isinstance(value, dict):
+        # Accept either 'dmg' tuple or 'damage' string
+        if "dmg" in value:
+            dmg = tuple(value.get("dmg", (1, 4, 0)))
+        else:
+            dmg = _parse_damage_string(str(value.get("damage", "1d4")))
         return Weapon(
             name=value.get("name", "Unarmed"),
-            dmg=tuple(value.get("dmg", (1, 4, 0))),
+            dmg=dmg,  # type: ignore[arg-type]
             reach=int(value.get("reach", 1)),
-            crit=tuple(value.get("crit", (20, 2))),
+            crit=tuple(value.get("crit", (20, 2))),  # type: ignore[arg-type]
         )
     if isinstance(value, str):
         if value in WEAPON_CATALOG:
@@ -65,7 +86,8 @@ class Fighter:
     weapon: Weapon = field(default_factory=lambda: WEAPON_CATALOG["Unarmed"])
     xp: int = 0
 
-    # optional career fields (friendly defaults for back-compat)
+    # career/UI helpers
+    team_id: int = 0
     age: int = 20
     years_left: int = 2
 
@@ -83,7 +105,7 @@ class Fighter:
         self.hp += 2
         self.atk += 1
         self.defense += 1
-        self.speed += 0  # keep speed stable by default
+        # keep speed stable by default
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -92,6 +114,7 @@ class Fighter:
             "atk": self.atk, "def": self.defense, "spd": self.speed,
             "weapon": self.weapon.name, "reach": self.weapon.reach,
             "xp": self.xp, "age": self.age, "years_left": self.years_left,
+            "team_id": self.team_id,
         }
 
 
@@ -99,46 +122,10 @@ class Fighter:
 class Team:
     id: int
     name: str
+    color: Tuple[int, int, int] | None = None
     fighters: List[Fighter] = field(default_factory=list)
 
     def alive(self) -> Iterable[Fighter]:
         return (f for f in self.fighters if f.is_alive())
 
-    def add(self, f: Fighter) -> None:
-        self.fighters.append(f)
-
-
-# ----------------------
-# Converters / Helpers
-# ----------------------
-def fighter_from_dict(d: Dict[str, Any]) -> Fighter:
-    """
-    Build a Fighter from a dict. Accepts weapon as string/dict/Weapon.
-    Required keys: id, name, cls, level, ovr, hp, atk, defense, speed.
-    Optional: weapon, xp, age, years_left.
-    """
-    weapon = _weapon_from_any(d.get("weapon", "Unarmed"))
-    return Fighter(
-        id=int(d["id"]),
-        name=str(d["name"]),
-        cls=str(d.get("cls", d.get("class", "Fighter"))),
-        level=int(d.get("level", 1)),
-        ovr=int(d.get("ovr", 1)),
-        hp=int(d.get("hp", 10)),
-        atk=int(d.get("atk", 1)),
-        defense=int(d.get("defense", d.get("def", 10))),
-        speed=int(d.get("speed", 0)),
-        weapon=weapon,
-        xp=int(d.get("xp", 0)),
-        age=int(d.get("age", 20)),
-        years_left=int(d.get("years_left", 2)),
-    )
-
-
-def team_from_dict(d: Dict[str, Any]) -> Team:
-    fighters = [fighter_from_dict(fd) for fd in d.get("fighters", [])]
-    return Team(
-        id=int(d.get("id", 0)),
-        name=str(d.get("name", "Team")),
-        fighters=fighters,
-    )
+    def add(s
