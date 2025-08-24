@@ -105,4 +105,85 @@ def _to_weapon(w: Any) -> Weapon:
         has_dice = ("d" in s.lower()) and any(ch.isdigit() for ch in s)
         if has_dice:
             return Weapon(name="Custom", damage=s, to_hit_bonus=0, crit_range=20, crit_mult=2, reach=1)
-        return Weapon(name=s, damage="1d4", to_hit_bonus=0, crit_range=20,
+        return Weapon(name=s, damage="1d4", to_hit_bonus=0, crit_range=20, crit_mult=2, reach=1)
+    return Weapon()
+
+
+def fighter_from_dict(d: Dict[str, Any]) -> Fighter:
+    """
+    Build a Fighter from flexible dicts used by tests/core.creator.
+    Accepted keys:
+      id/fighter_id, team_id, name, class, level/lvl, ac, hp/current_hp, max_hp
+      str/STR, dex, con, int/INT, wis, cha
+      weapon (dict/str) or weapon_* flattened fields
+      age (optional)
+    Unknown keys are ignored.
+    """
+    fid = _pick(d, "id", "fighter_id")
+    name = _pick(d, "name", default=f"Fighter {fid}" if fid is not None else "Fighter")
+    team_id = int(_pick(d, "team_id", "team", default=0))
+    level = int(_pick(d, "level", "lvl", default=1))
+    ac = int(_pick(d, "ac", default=10))
+    age = _pick(d, "age", default=None)
+    cls = _pick(d, "class", "cls", default=None)
+
+    # stats (case-insensitive + aliasing for 'str'/'int')
+    def _stat(key: str, default=10) -> int:
+        return int(_pick(d, key, key.upper(), default=default))
+
+    STR = _stat("str")
+    DEX = _stat("dex")
+    CON = _stat("con")
+    INT = _stat("int")
+    WIS = _stat("wis")
+    CHA = _stat("cha")
+
+    # HP
+    max_hp = int(_pick(d, "max_hp", "maxHP", default=_pick(d, "hp", "HP", default=10)))
+    hp = int(_pick(d, "hp", "current_hp", "HP", default=max_hp))
+
+    # weapon: accept dict/str; or flattened weapon_* fields
+    wdict = _pick(d, "weapon", default=None)
+    if wdict is None:
+        maybe: Dict[str, Any] = {}
+        if "weapon_name" in d:   maybe["name"] = d["weapon_name"]
+        if "weapon_damage" in d: maybe["damage"] = d["weapon_damage"]
+        if "damage" in d and "weapon_damage" not in maybe: maybe["damage"] = d["damage"]
+        if any(k in d for k in ("to_hit_bonus", "to_hit", "atk_mod")):
+            maybe["to_hit_bonus"] = _pick(d, "to_hit_bonus", "to_hit", "atk_mod", default=0)
+        if "reach" in d: maybe["reach"] = d["reach"]
+        wdict = maybe or None
+    weapon = _to_weapon(wdict)
+
+    # optional global atk_mod merges into weapon
+    atk_mod = _pick(d, "atk_mod")
+    if atk_mod is not None:
+        weapon = Weapon(
+            name=weapon.name,
+            damage=weapon.damage,
+            to_hit_bonus=int(weapon.to_hit_bonus) + int(atk_mod),
+            crit_range=weapon.crit_range,
+            crit_mult=weapon.crit_mult,
+            reach=weapon.reach,
+        )
+
+    # Build fighter with safe field names
+    f = Fighter(
+        id=fid,
+        team_id=team_id,
+        name=name,
+        level=level,
+        ac=ac,
+        hp=hp,
+        max_hp=max_hp,
+        str_=STR,
+        dex=DEX,
+        con=CON,
+        int_=INT,
+        wis=WIS,
+        cha=CHA,
+        age=age,
+        cls=cls,
+        weapon=weapon,
+    )
+    return f
