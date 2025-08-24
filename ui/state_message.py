@@ -1,7 +1,7 @@
 # ui/state_message.py
 from __future__ import annotations
 
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
 try:
     import pygame
@@ -11,17 +11,17 @@ except Exception:
 
 class MessageState:
     """
-    Simple popup message state.
+    Simple popup message.
 
     Controls:
-      - ENTER / ESC closes the popup.
-      - Clicking the overlay also closes it (optional).
-
+      - ENTER / ESC: close
+      - Mouse click: close
     Usage:
-      app.push_state(MessageState(text="Hello!"))
+      app.push_state(MessageState(app=self, text="Hello"))
     """
 
-    def __init__(self, text: str, on_close: Optional[callable] = None) -> None:
+    def __init__(self, app, text: str, on_close: Optional[callable] = None) -> None:
+        self.app = app
         self.text = text
         self.on_close = on_close
         self._font = None
@@ -50,12 +50,10 @@ class MessageState:
             return False
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
-                # Pop ourselves off
-                self._pop()
+                self.app.pop_state()
                 return True
         if event.type == pygame.MOUSEBUTTONDOWN:
-            # Clicking anywhere closes
-            self._pop()
+            self.app.pop_state()
             return True
         return False
 
@@ -97,11 +95,26 @@ class MessageState:
         hint = self._small.render("ENTER / ESC to close", True, (200, 200, 200))  # type: ignore
         surface.blit(hint, (box_x + 16, box_y + box_h - 28))
 
-    # ----- internals -----
 
-    def _pop(self) -> None:
-        try:
-            # Pop this state from whatever app pushed it
-            import inspect
-            # Find 'app' by walking the call stack to the App methods (best-effort)
-            # But most of your code will have self.app available on the pare
+# --- helpers ---
+
+def _wrap_text(text: str, font, max_width: int) -> List[str]:
+    """Very small word-wrapper using pygame font metrics."""
+    if not text:
+        return []
+    parts = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out: List[str] = []
+    for para in parts:
+        words = para.split(" ")
+        line = ""
+        for w in words:
+            test = (line + " " + w).strip()
+            if font.size(test)[0] <= max_width:
+                line = test
+            else:
+                if line:
+                    out.append(line)
+                line = w
+        if line:
+            out.append(line)
+    return out
