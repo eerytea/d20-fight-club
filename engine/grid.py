@@ -1,12 +1,11 @@
 # engine/grid.py
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Iterable
 
 from .model import Team, Fighter
 
 
-# You can change these defaults; tests generally only care that the function exists
 DEFAULT_WIDTH = 10
 DEFAULT_HEIGHT = 8
 LEFT_X = 1
@@ -22,7 +21,6 @@ def _spread_rows(n: int, height: int) -> List[int]:
         return []
     rows = list(range(height))
     mid = height // 2
-    # simple interleave around center: mid, mid-1, mid+1, mid-2, mid+2, ...
     order: List[int] = []
     i = 0
     while len(order) < height:
@@ -36,17 +34,42 @@ def _spread_rows(n: int, height: int) -> List[int]:
     return order[:n]
 
 
+def _flatten_fighters(objs: Iterable) -> List[Fighter]:
+    """
+    Accept either:
+      - a flat iterable of Fighters, or
+      - two Teams (Team, Team), or
+      - any iterable containing Fighters and/or Teams.
+    Returns a flat fighter list.
+    """
+    fighters: List[Fighter] = []
+    items = list(objs)
+    if len(items) == 2 and all(isinstance(x, Team) for x in items):
+        # Two-team form
+        for t in items:  # type: ignore[assignment]
+            fighters.extend(t.fighters)
+        return fighters
+    # Generic flatten
+    for x in items:
+        if isinstance(x, Fighter):
+            fighters.append(x)
+        elif isinstance(x, Team):
+            fighters.extend(x.fighters)
+        elif isinstance(x, (list, tuple)):
+            fighters.extend(_flatten_fighters(x))
+    return fighters
+
+
 def layout_teams_tiles(
-    team_a: Team,
-    team_b: Team,
+    objs,
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
-) -> Tuple[Dict[int, Tuple[int, int]], Dict[int, Tuple[int, int]]]:
+) -> Dict[int, Tuple[int, int]]:
     """
-    Lay out two teams on a grid. Returns two dicts: {fighter_id: (x, y)} for team A and team B.
-    - Team A placed near the left edge (x = LEFT_X)
-    - Team B placed near the right edge (x = width - RIGHT_X_OFFSET)
-    - Rows are spread out to avoid stacking where possible
+    Flexible layout to match tests:
+      - If given a FLAT LIST of fighters (each with .team_id in {0,1}),
+        return {fighter_id: (x, y)} with team 0 on the left and team 1 on the right.
+      - If given (TeamA, TeamB), also supported.
     Deterministic and stateless for easy testing.
     """
     if width < 3:
@@ -54,19 +77,21 @@ def layout_teams_tiles(
     if height < 1:
         raise ValueError("Grid height must be >= 1.")
 
+    fighters = _flatten_fighters(objs)
+    # bucket by team_id
+    team0 = [f for f in fighters if getattr(f, "team_id", 0) == 0]
+    team1 = [f for f in fighters if getattr(f, "team_id", 0) == 1]
+
     xa = LEFT_X
     xb = max(0, width - RIGHT_X_OFFSET)
 
-    ra = _spread_rows(len(team_a.fighters), height)
-    rb = _spread_rows(len(team_b.fighters), height)
+    ra = _spread_rows(len(team0), height)
+    rb = _spread_rows(len(team1), height)
 
-    pos_a: Dict[int, Tuple[int, int]] = {}
-    pos_b: Dict[int, Tuple[int, int]] = {}
+    pos: Dict[int, Tuple[int, int]] = {}
+    for f, y in zip(team0, ra):
+        pos[f.id] = (xa, y)
+    for f, y in zip(team1, rb):
+        pos[f.id] = (xb, y)
 
-    for fighter, y in zip(team_a.fighters, ra):
-        pos_a[fighter.id] = (xa, y)
-
-    for fighter, y in zip(team_b.fighters, rb):
-        pos_b[fighter.id] = (xb, y)
-
-    return pos_a, pos_b
+    return pos
