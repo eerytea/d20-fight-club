@@ -19,12 +19,27 @@ def _weapon_damage_str(wpn) -> str:
         return getattr(wpn, "damage_die")
     return "1d6"
 
-_DIE_RE = re.compile(r"^\s*(\d+)[dD](\d+)\s*$")
+import re
+_DIE_FULL = re.compile(r"^\s*(\d+)[dD](\d+)(?:\+(\d+))?\s*$")
+
 def _roll_damage(dmg_str: str, rng: random.Random) -> int:
-    m = _DIE_RE.match(dmg_str or "1d6")
-    if not m: return 1
-    n, s = int(m.group(1)), int(m.group(2))
-    return sum(rng.randint(1, s) for _ in range(max(1, n)))
+    """
+    Supports 'XdY', 'XdY+Z', or a flat integer like '4'.
+    """
+    s = (dmg_str or "1d6").strip()
+    m = _DIE_FULL.match(s)
+    if m:
+        n = int(m.group(1))
+        sides = int(m.group(2))
+        bonus = int(m.group(3) or 0)
+        total = sum(rng.randint(1, sides) for _ in range(max(1, n))) + bonus
+        return max(1, total)
+    # fall back: flat integer
+    try:
+        return max(1, int(s))
+    except Exception:
+        return 1
+
 
 # optional ratings hook
 try:
