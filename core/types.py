@@ -19,6 +19,10 @@ class TableRow:
     def to_json(self) -> str:
         return json.dumps(asdict(self))
 
+    @classmethod
+    def from_json(cls, s: str) -> "TableRow":
+        return cls(**json.loads(s))
+
 @dataclass
 class Fixture:
     week: int
@@ -31,6 +35,10 @@ class Fixture:
     def to_json(self) -> str:
         return json.dumps(asdict(self))
 
+    @classmethod
+    def from_json(cls, s: str) -> "Fixture":
+        return cls(**json.loads(s))
+
 @dataclass
 class Career:
     seed: int
@@ -42,4 +50,13 @@ class Career:
     table: Dict[int, TableRow]
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self))
+        # Convert nested dataclasses to dicts
+        d = asdict(self)
+        return json.dumps(d)
+
+    @classmethod
+    def from_json(cls, s: str) -> "Career":
+        d = json.loads(s)
+        d["fixtures"] = [Fixture(**fx) for fx in d.get("fixtures", [])]
+        d["table"] = {int(k): TableRow(**v) for k, v in d.get("table", {}).items()}
+        return cls(**d)
