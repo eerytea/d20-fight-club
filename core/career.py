@@ -139,10 +139,18 @@ class Career:
         )
         fixtures = [Fixture(**f) for f in fixtures_dicts]
 
+        # --- Normalize weeks to start at 1 (some builders are 0-based) -------
+        if fixtures:
+            min_week = min(f.week for f in fixtures)
+            if min_week <= 0:
+                shift = 1 - min_week
+                for f in fixtures:
+                    f.week = int(f.week) + shift
+
         table, h2h = new_table(team_ids)
         return cls(
             seed=seed,
-            week=1,  # <-- start at Week 1 (tests expect this)
+            week=1,  # Week counter is 1-based
             teams=teams,
             fixtures=fixtures,
             table=table,
@@ -155,8 +163,8 @@ class Career:
         return next(t for t in self.teams if t["tid"] == tid)
 
     def fixtures_in_week(self, week: Optional[int] = None) -> List[Fixture]:
-        w = self.week if week is None else week
-        return [fx for fx in self.fixtures if fx.week == w]
+        w = self.week if week is None else int(week)
+        return [fx for fx in self.fixtures if int(fx.week) == w]
 
     def find_fixture(self, fixture_id: str) -> Fixture:
         return next(fx for fx in self.fixtures if fx.id == fixture_id)
