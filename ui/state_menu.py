@@ -1,105 +1,154 @@
 # ui/state_menu.py
 from __future__ import annotations
 
-from typing import List, Optional
+import pygame
+from typing import Optional, Callable, List
 
+# UI kit (with simple fallbacks if needed)
 try:
-    import pygame
-except Exception:  # pragma: no cover
-    pygame = None  # type: ignore
+    from .uiutil import Theme, Button, draw_text
+    HAS_UIKIT = True
+except Exception:
+    HAS_UIKIT = False
+    class Theme:
+        def __init__(self):
+            self.bg = (20, 24, 28)
+            self.btn_bg = (50, 55, 64)
+            self.btn_bg_hover = (70, 75, 84)
+            self.btn_text = (240, 240, 245)
+        @staticmethod
+        def default():
+            return Theme()
+    def draw_text(surf, text, pos, color=(230,230,235), size=28):
+        font = pygame.font.SysFont(None, size)
+        surf.blit(font.render(text, True, color), pos)
+    class Button:
+        def __init__(self, rect, text, on_click=None, enabled=True):
+            self.rect = pygame.Rect(rect)
+            self.text = text
+            self.on_click = on_click
+            self.enabled = enabled
+            self._hover = False
+            self._font = pygame.font.SysFont(None, 24)
+        def handle_event(self, ev):
+            if not self.enabled: return
+            if ev.type == pygame.MOUSEMOTION:
+                self._hover = self.rect.collidepoint(ev.pos)
+            elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
+                if self.rect.collidepoint(ev.pos) and callable(self.on_click):
+                    self.on_click()
+        def draw(self, surf, theme: Theme):
+            col = (100,100,110) if not self.enabled else (theme.btn_bg_hover if self._hover else theme.btn_bg)
+            pygame.draw.rect(surf, col, self.rect, border_radius=10)
+            txt = self._font.render(self.text, True, theme.btn_text)
+            surf.blit(txt, txt.get_rect(center=self.rect.center))
 
-from .uiutil import Theme, Button, draw_text
-from .app import App
+# Import optional states if present
+try:
+    from .state_team_select import TeamSelectState
+except Exception:
+    TeamSelectState = None
+try:
+    from .state_exhibition_picker import ExhibitionPickerState
+except Exception:
+    ExhibitionPickerState = None
+try:
+    from .state_settings import SettingsState
+except Exception:
+    SettingsState = None
+
+# Our new state
+from .state_roster_browser import RosterBrowserState
 
 
 class MenuState:
-    def __init__(self, app: Optional[App] = None) -> None:
-        self.app: App | None = app
-        self._buttons: List[Button] = []
+    def __init__(self, app):
+        self.app = app
+        self.theme: Theme = Theme.default() if hasattr(Theme, "default") else Theme()
+        self.screen = app.screen
+        self.W, self.H = self.screen.get_size()
 
-    # ------------- lifecycle -------------
+        self.title_font = pygame.font.SysFont(None, 48)
+        self._build_ui()
 
-    def enter(self) -> None:
-        if pygame is None or self.app is None:
+    def _push(self, state_cls, *args, **kwargs):
+        if hasattr(self.app, "push_state"):
+            self.app.push_state(state_cls(self.app, *args, **kwargs))
+
+    def _build_ui(self):
+        # Vertical button stack
+        btn_w, btn_h = 340, 54
+        gap = 14
+        total_h = 6 * btn_h + 5 * gap  # 6 buttons including Roster
+        x = (self.W - btn_w) // 2
+        y = (self.H - total_h) // 2 + 30
+
+        def maybe(label: str, rect: pygame.Rect, state_cls: Optional[type], builder: Optional[Callable]=None):
+            enabled = state_cls is not None or builder is not None
+            if not enabled:
+                return Button(rect, f"{label} (missing)", None, enabled=False)
+            def go():
+                if builder:
+                    builder()
+                else:
+                    self._push(state_cls)
+            return Button(rect, label, go, enabled=True)
+
+        self.buttons: List[Button] = []
+
+        # New Game
+        self.buttons.append(
+            maybe("New Game", pygame.Rect(x, y, btn_w, btn_h), TeamSelectState)
+        ); y += btn_h + gap
+
+        # Load
+        # If you have a Load state, wire it here; otherwise disable for now.
+        try:
+            from .state_load import LoadState  # optional
+            self.buttons.append(maybe("Load", pygame.Rect(x, y, btn_w, btn_h), LoadState))
+        except Exception:
+            self.buttons.append(Button(pygame.Rect(x, y, btn_w, btn_h), "Load (coming soon)", None, enabled=False))
+        y += btn_h + gap
+
+        # Exhibition
+        self.buttons.append(
+            maybe("Exhibition", pygame.Rect(x, y, btn_w, btn_h), ExhibitionPickerState)
+        ); y += btn_h + gap
+
+        # Roster (new)
+        self.buttons.append(
+            Button(pygame.Rect(x, y, btn_w, btn_h), "Roster", lambda: self._push(RosterBrowserState))
+        ); y += btn_h + gap
+
+        # Settings
+        self.buttons.append(
+            maybe("Settings", pygame.Rect(x, y, btn_w, btn_h), SettingsState)
+        ); y += btn_h + gap
+
+        # Quit
+        self.buttons.append(
+            Button(pygame.Rect(x, y, btn_w, btn_h), "Quit", self._quit)
+        )
+
+    def _quit(self):
+        if hasattr(self.app, "quit"):
+            self.app.quit()
+        else:
+            pygame.event.post(pygame.event.Event(pygame.QUIT))
+
+    # ---- State API ----
+    def handle_event(self, ev):
+        if ev.type == pygame.KEYUP and ev.key in (pygame.K_ESCAPE, pygame.K_q):
+            self._quit()
             return
-        W, H = self.app.width, self.app.height
+        for b in self.buttons:
+            b.handle_event(ev)
 
-        btn_w, btn_h = 300, 48
-        gap = 16
-        left = (W - btn_w) // 2
-        top = H // 3
-
-        def rect_at(row: int) -> "pygame.Rect":
-            return pygame.Rect(left, top + row * (btn_h + gap), btn_w, btn_h)
-
-        def push_team_select():
-            try:
-                from .state_team_select import TeamSelectState
-                self.app.safe_push(TeamSelectState)
-            except Exception:
-                self._show_msg("Team Select not available")
-
-        def push_exhibition():
-            try:
-                from .state_exhibition_picker import ExhibitionPickerState
-                self.app.safe_push(ExhibitionPickerState)
-            except Exception:
-                self._show_msg("Exhibition Picker not available")
-
-        def push_settings():
-            try:
-                from .state_settings import SettingsState
-                self.app.safe_push(SettingsState)
-            except Exception:
-                self._show_msg("Settings coming soon")
-
-        def push_load():
-            try:
-                from core.save import load_latest
-                career = load_latest()
-                if career is None:
-                    self._show_msg("No save found")
-                    return
-                self.app.data["career"] = career
-                from .state_season_hub import SeasonHubState
-                self.app.safe_push(SeasonHubState, career=career)
-            except Exception:
-                self._show_msg("Load game not wired yet")
-
-        self._buttons = [
-            Button(rect_at(0), "New Game", on_click=push_team_select),
-            Button(rect_at(1), "Load Game", on_click=push_load),
-            Button(rect_at(2), "Exhibition", on_click=push_exhibition),
-            Button(rect_at(3), "Settings", on_click=push_settings),
-            Button(rect_at(4), "Quit", on_click=self.app.quit if self.app else None),
-        ]
-
-    def exit(self) -> None:
-        self._buttons.clear()
-
-    # ------------- events -------------
-
-    def handle_event(self, event: "pygame.event.Event") -> bool:
-        for b in self._buttons:
-            if b.handle_event(event):
-                return True
-        return False
-
-    def update(self, dt: float) -> None:
+    def update(self, dt: float):
         pass
 
-    def draw(self, surface: "pygame.Surface") -> None:
-        th = Theme()
-        surface.fill(th.bg)
-        draw_text(surface, "D20 Fight Club", (surface.get_width() // 2, 80), size=48, align="center")
-        for b in self._buttons:
-            b.draw(surface)
-
-    # ------------- helpers -------------
-
-    def _show_msg(self, text: str) -> None:
-        try:
-            from .state_message import MessageState
-            self.app.safe_push(MessageState, message=text)
-        except Exception:
-            print(text)
+    def draw(self, surf):
+        surf.fill(self.theme.bg if hasattr(self.theme, "bg") else (20, 24, 28))
+        draw_text(surf, "D20 Fight Club", (40, 40), (220, 225, 230), 48)
+        for b in self.buttons:
+            b.draw(surf, self.theme)
