@@ -1,9 +1,8 @@
 # core/career.py
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Any
-import itertools
 
 from .config import (
     TEAM_SIZE,
@@ -18,7 +17,6 @@ from .standings import new_table, Table, H2HMap, sort_table
 # --- Creation helpers ---------------------------------------------------------
 
 def _default_team_name(i: int) -> str:
-    # Simple deterministic names; replace with your namebank if desired.
     animals = [
         "Dragons", "Wolves", "Griffins", "Titans",
         "Phantoms", "Knights", "Rangers", "Serpents",
@@ -32,15 +30,10 @@ def _generate_teams(
     seed: int,
     provided_names: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Uses core.creator.generate_team if available; otherwise falls back to a stub generator.
-    Returns a list of team dicts, each with:
-      tid, name, color, budget, wage_bill, roster: [fighter dicts ...]
-    """
     teams: List[Dict[str, Any]] = []
 
     try:
-        from . import creator  # your v1/v2 fighter+team generator
+        from . import creator
         have_creator = hasattr(creator, "generate_team")
     except Exception:
         creator = None
@@ -57,7 +50,6 @@ def _generate_teams(
                 seed=seed + 31 * tid,
             )
         else:
-            # Minimal fallback—keeps repo runnable if creator isn't present
             roster = []
             for slot in range(team_size):
                 roster.append({
@@ -67,7 +59,7 @@ def _generate_teams(
                     "class": "Fighter",
                     "hp": 10,
                     "ac": 12,
-                    "spd": 5,
+                    "speed": 6,
                     "ovr": 40 + (slot % 5),
                     "xp": 0,
                 })
@@ -75,12 +67,11 @@ def _generate_teams(
                 "tid": tid,
                 "name": name,
                 "color": (180, 180, 220),
-                "budget": 1000_000,
+                "budget": 1_000_000,
                 "wage_bill": 0,
                 "roster": roster,
             }
 
-        # Normalize the minimal fields UI/engine depend on
         team.setdefault("tid", tid)
         team.setdefault("name", name)
         team.setdefault("roster", [])
@@ -98,10 +89,9 @@ class Fixture:
     home_id: int
     away_id: int
     played: bool = False
-    # Result fields (filled after played)
     kills_home: int = 0
     kills_away: int = 0
-    winner_tid: Optional[int] = None  # home_id / away_id / None (draw)
+    winner_tid: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -178,7 +168,6 @@ class Career:
 
     # --- Mutation --------------------------------------------------------------
     def record_result(self, fixture_id: str, kills_home: int, kills_away: int) -> None:
-        """Mark fixture as played and update standings; winner tid or None on draw."""
         fx = self.find_fixture(fixture_id)
         fx.kills_home = int(kills_home)
         fx.kills_away = int(kills_away)
@@ -191,7 +180,6 @@ class Career:
         else:
             fx.winner_tid = None
 
-        # Standings
         from .standings import apply_result
         apply_result(self.table, self.h2h, fx.home_id, fx.away_id, fx.kills_home, fx.kills_away)
 
@@ -201,11 +189,9 @@ class Career:
 
     # --- Views for UI ----------------------------------------------------------
     def standings_sorted(self) -> List[Tuple[int, Dict[str, int]]]:
-        """Returns list of (tid, row) sorted by PTS, Kill Diff, Head-to-Head."""
         return sort_table(self.table, self.h2h)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to a JSON-friendly dict (for save file)."""
         return {
             "seed": self.seed,
             "week": self.week,
@@ -218,9 +204,7 @@ class Career:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Career":
-        # Basic tolerant loader; upgrade as save schema evolves.
         fixtures = [Fixture(**fx) for fx in data.get("fixtures", [])]
-        # Rehydrate h2h keys
         raw_h2h = data.get("h2h", {})
         h2h: H2HMap = {}
         for k, v in raw_h2h.items():
@@ -235,3 +219,20 @@ class Career:
             h2h=h2h,
             user_team_id=data.get("user_team_id"),
         )
+
+# --- Back-compat convenience expected by some tests ---------------------------
+
+def new_career(
+    seed: int = DEFAULT_SEED,
+    n_teams: int = LEAGUE_TEAMS,
+    team_size: int = TEAM_SIZE,
+    user_team_id: Optional[int] = 0,
+    team_names: Optional[List[str]] = None,
+) -> Career:
+    return Career.new(
+        seed=seed,
+        n_teams=n_teams,
+        team_size=team_size,
+        user_team_id=user_team_id,
+        team_names=team_names,
+    )
