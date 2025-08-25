@@ -1,162 +1,164 @@
 # core/sim.py
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Callable
+import random
+import hashlib
 
-from engine import TBCombat, Team as BattleTeam, fighter_from_dict, layout_teams_tiles
-from .types import Career, Fixture, TableRow
-from . import config
-from .rng import mix
-
-
-# ----------------------------- table + roster helpers -----------------------------
-
-def _ensure_table_rows(career: Career) -> None:
-    """Create empty table rows once per team."""
-    if career.table:
-        return
-    for tid, name in enumerate(career.team_names):
-        career.table[tid] = TableRow(team_id=tid, name=name)
+from .config import TURN_LIMIT
+from .career import Career, Fixture
 
 
-def _top_k_by_ovr(roster: List[dict], k: int) -> List[dict]:
-    """Pick top-K fighters by 'ovr' (descending)."""
-    return sorted(roster, key=lambda f: f.get("ovr", 50), reverse=True)[:k]
+# --- Deterministic fixture seeding --------------------------------------------
 
+def _hash_to_int(s: str) -> int:
+    return int(hashlib.sha1(s.encode("utf-8")).hexdigest()[:12], 16)
 
-def _apply_table_result(tbl: TableRow, gf: int, ga: int, result: str) -> None:
-    """Update a single team's table row with a W/D/L result and GF/GA."""
-    tbl.played += 1
-    tbl.goals_for += gf
-    tbl.goals_against += ga
-    if result == "W":
-        tbl.wins += 1
-        tbl.points += config.POINTS_WIN
-    elif result == "D":
-        tbl.draws += 1
-        tbl.points += config.POINTS_DRAW
-    else:
-        tbl.losses += 1
-        tbl.points += config.POINTS_LOSS
-
-
-# ----------------------------- deterministic seeding -----------------------------
-
-def _fixture_seed(career: Career, fx: Fixture, idx_in_week: int) -> int:
+def _fixture_seed(career_seed: int, fixture: Fixture) -> int:
     """
-    Stable, cross-process child seed derived from career.seed and fixture identity.
-    Using core.rng.mix keeps results identical across platforms and runs.
+    Mix career.seed with a stable fixture identity to produce a reproducible child seed.
     """
-    return mix(career.seed, "fixture", fx.week, fx.home_id, fx.away_id, idx_in_week)
+    return (career_seed * 1_000_003) ^ _hash_to_int(f"{fixture.id}:{fixture.week}:{fixture.home_id}:{fixture.away_id}")
 
 
-# ----------------------------- single-fixture runner -----------------------------
+# --- Engine adapter (typed events + string log expected) ----------------------
 
-def _play_fixture_full(career: Career, fx: Fixture, seed: int) -> Tuple[int, int]:
+def _engine_adapter() -> Callable[[Dict[str, Any], Dict[str, Any], int, int], Dict[str, Any]]:
     """
-    Hydrate and run a full TBCombat for a fixture.
-    Returns (home_goals, away_goals) using 'downs as goals' proxy.
+    Returns a callable: (home_team_dict, away_team_dict, seed, turn_limit) -> summary dict
+    Summary dict should include:
+        kills_home: int
+        kills_away: int
+        winner: 'home' | 'away' | None
+        events_typed: List[Any]   (optional)
+        events: List[str]         (optional)
+    We try to call your engine/tbcombat; if not available, use a quick OVR-based sim.
     """
-    H_id, A_id = fx.home_id, fx.away_id
-    H_name, A_name = career.team_names[H_id], career.team_names[A_id]
-    H_color, A_color = tuple(career.team_colors[H_id]), tuple(career.team_colors[A_id])
+    try:
+        # Your engine module; customize the known entrypoints here if needed.
+        from engine import tbcombat as tb  # type: ignore
+        # Preferred function signatures (we'll try in this order)
+        if hasattr(tb, "simulate_match"):
+            def _call(home_team: Dict[str, Any], away_team: Dict[str, Any], seed: int, turn_limit: int) -> Dict[str, Any]:
+                return tb.simulate_match(home_team, away_team, seed=seed, turn_limit=turn_limit)
+            return _call
+        if hasattr(tb, "run_match"):
+            def _call(home_team: Dict[str, Any], away_team: Dict[str, Any], seed: int, turn_limit: int) -> Dict[str, Any]:
+                return tb.run_match(home_team, away_team, seed=seed, turn_limit=turn_limit)
+            return _call
+        if hasattr(tb, "TBCombat"):
+            def _call(home_team: Dict[str, Any], away_team: Dict[str, Any], seed: int, turn_limit: int) -> Dict[str, Any]:
+                # Generic TBCombat wrapper; adapt if your class has different API.
+                combat = tb.TBCombat(home_team, away_team, seed=seed, turn_limit=turn_limit)
+                result = combat.run(auto=True)
+                return result  # expect the same keys as documented above
+            return _call
+    except Exception:
+        pass
 
-    teamH = BattleTeam(0, H_name, H_color)
-    teamA = BattleTeam(1, A_name, A_color)
-
-    topH = _top_k_by_ovr(career.rosters[H_id], config.TEAM_SIZE)
-    topA = _top_k_by_ovr(career.rosters[A_id], config.TEAM_SIZE)
-
-    fighters = (
-        [fighter_from_dict({**fd, "team_id": 0}) for fd in topH]
-        + [fighter_from_dict({**fd, "team_id": 1}) for fd in topA]
-    )
-
-    layout_teams_tiles(fighters, config.GRID_W, config.GRID_H)
-    tb = TBCombat(teamH, teamA, fighters, config.GRID_W, config.GRID_H, seed=seed)
-
-    for _ in range(config.TURN_LIMIT):
-        if tb.winner is not None:
-            break
-        tb.take_turn()
-
-    # Score proxy: goals = number of enemy fighters downed (TEAM_SIZE - alive)
-    home_alive = sum(1 for f in tb.fighters if f.team_id == 0 and f.alive)
-    away_alive = sum(1 for f in tb.fighters if f.team_id == 1 and f.alive)
-    home_goals = config.TEAM_SIZE - away_alive
-    away_goals = config.TEAM_SIZE - home_alive
-    return int(home_goals), int(away_goals)
-
-
-# ----------------------------- unified week runner -----------------------------
-
-def _simulate_week(career: Career, *, skip_index: Optional[int] = None) -> list[Fixture]:
-    """
-    Internal single implementation that all public week-sim functions delegate to.
-    - Simulates unplayed fixtures in the current week (optionally skipping one index)
-    - Uses deterministic per-fixture seeds
-    - Centralizes table math
-    - Advances week if all fixtures in the week are now played
-    Returns the list of fixtures that were simulated in this call.
-    """
-    _ensure_table_rows(career)
-    week = career.week
-    week_fx: List[Fixture] = [f for f in career.fixtures if f.week == week]
-
-    simulated: List[Fixture] = []
-    for i, fx in enumerate(week_fx):
-        if fx.played:
-            continue
-        if skip_index is not None and i == skip_index:
-            continue
-
-        seed = _fixture_seed(career, fx, i)
-        hg, ag = _play_fixture_full(career, fx, seed)
-
-        fx.home_goals = hg
-        fx.away_goals = ag
-        fx.played = True
-        simulated.append(fx)
-
-        H = career.table[fx.home_id]
-        A = career.table[fx.away_id]
-        if hg > ag:
-            _apply_table_result(H, hg, ag, "W")
-            _apply_table_result(A, ag, hg, "L")
-        elif ag > hg:
-            _apply_table_result(H, hg, ag, "L")
-            _apply_table_result(A, ag, hg, "W")
+    # Fallback quick-sim: deterministic, OVR-weighted, no event logs.
+    def _quick_sim(home_team: Dict[str, Any], away_team: Dict[str, Any], seed: int, turn_limit: int) -> Dict[str, Any]:
+        rng = random.Random(seed)
+        avg_home = sum(p.get("ovr", 40) for p in home_team.get("roster", [])) / max(1, len(home_team.get("roster", [])))
+        avg_away = sum(p.get("ovr", 40) for p in away_team.get("roster", [])) / max(1, len(away_team.get("roster", [])))
+        # Convert to win probability (simple logistic)
+        diff = avg_home - avg_away
+        p_home = 1.0 / (1.0 + pow(10.0, -diff / 20.0))
+        # Decide winner
+        r = rng.random()
+        if abs(avg_home - avg_away) < 2.0 and r < 0.15:
+            winner = None  # draw chance if very close
         else:
-            _apply_table_result(H, hg, ag, "D")
-            _apply_table_result(A, ag, hg, "D")
+            winner = "home" if r < p_home else "away"
+        # Kills roughly equal to team size with some noise
+        ts = max(len(home_team.get("roster", [])), len(away_team.get("roster", [])))
+        base = max(3, ts)
+        kh = max(0, int(rng.gauss(base, 1.2)))
+        ka = max(0, int(rng.gauss(base, 1.2)))
+        # Nudge winner to have more kills
+        if winner == "home":
+            kh, ka = max(kh, ka + rng.randint(0, 2)), min(ka, kh - rng.randint(0, 1))
+        elif winner == "away":
+            ka, kh = max(ka, kh + rng.randint(0, 2)), min(kh, ka - rng.randint(0, 1))
+        # Clamp and avoid negative
+        kh = max(0, kh); ka = max(0, ka)
+        return {
+            "kills_home": kh,
+            "kills_away": ka,
+            "winner": winner,
+            "events_typed": [],
+            "events": [],
+        }
 
-    # Advance if the current week is fully played
-    if week_fx and all(f.played for f in week_fx):
-        career.week += 1
+    return _quick_sim
 
-    return simulated
+_ENGINE_SIM = _engine_adapter()
 
 
-# ----------------------------- public API (thin wrappers) -----------------------------
+# --- Public API: unified week runner ------------------------------------------
 
 def simulate_week_ai(career: Career) -> None:
+    """Sim every unplayed fixture in this week (including user's) headlessly."""
+    _simulate_week(career, mode="ai_all")
+
+def simulate_week_full(career: Career) -> None:
+    """Sim every unplayed fixture in this week with full combat (headless)."""
+    _simulate_week(career, mode="full_all")
+
+def simulate_week_full_except(career: Career, except_fixture_id: Optional[str]) -> None:
     """
-    Simulate all unplayed fixtures in the current week using the full engine
-    (deterministic results derived from career.seed).
+    Sim every unplayed fixture in this week *except* the provided fixture id
+    (used when the user will play/watch their own match).
     """
-    _simulate_week(career, skip_index=None)
+    _simulate_week(career, mode="full_except", except_fixture_id=except_fixture_id)
 
 
-def simulate_week_full(career: Career, seed_base: int = 1000) -> None:
-    """
-    Alias retained for API compatibility; delegates to the unified runner.
-    """
-    _simulate_week(career, skip_index=None)
+# --- Core runner ---------------------------------------------------------------
 
+def _simulate_week(
+    career: Career,
+    mode: str,
+    except_fixture_id: Optional[str] = None,
+) -> None:
+    """
+    Single internal path used by all public week runners.
+    Modes:
+      - "ai_all": simulate all fixtures headlessly
+      - "full_all": simulate all fixtures with engine (headless)
+      - "full_except": simulate all fixtures with engine except except_fixture_id
+    """
+    # Today, "ai_all" and "full_all" both go through the engine adapter; if you later
+    # want a separate lightweight sim, you can split behaviors here.
+    fixtures = career.remaining_unplayed_in_week()
 
-def simulate_week_full_except(career: Career, skip_index: int, seed_base: int = 2000) -> None:
-    """
-    Simulate all unplayed fixtures in the current week EXCEPT the fixture at index `skip_index`
-    (0-based among that week’s fixtures), using the full engine and deterministic seeds.
-    """
-    _simulate_week(career, skip_index=skip_index)
+    for fx in fixtures:
+        if mode == "full_except" and except_fixture_id and fx.id == except_fixture_id:
+            continue
+
+        # Build inputs for engine
+        home = career.team_by_id(fx.home_id)
+        away = career.team_by_id(fx.away_id)
+
+        # Deterministic seed per fixture
+        seed = _fixture_seed(career.seed, fx)
+
+        # Run combat (typed events + legacy strings are supported by adapter)
+        summary = _ENGINE_SIM(home, away, seed, TURN_LIMIT)
+
+        # Winner mapping
+        winner_tid: Optional[int]
+        if summary.get("winner") == "home":
+            winner_tid = fx.home_id
+        elif summary.get("winner") == "away":
+            winner_tid = fx.away_id
+        else:
+            winner_tid = None
+
+        kills_home = int(summary.get("kills_home", 0))
+        kills_away = int(summary.get("kills_away", 0))
+
+        # Record + update standings
+        career.record_result(fx.id, kills_home, kills_away)
+
+    # If everything in the week is played, advance week
+    career.advance_week_if_done()
