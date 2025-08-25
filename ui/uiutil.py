@@ -8,18 +8,48 @@ import pygame
 
 # --- Fonts & text ------------------------------------------------------------
 
-_font_cache = {}
+_font_cache: dict[int, pygame.font.Font] = {}
 
 def get_font(size: int) -> pygame.font.Font:
+    size = int(size)
     f = _font_cache.get(size)
     if f is None:
-        _font_cache[size] = f = pygame.font.SysFont(None, int(size))
+        _font_cache[size] = f = pygame.font.SysFont(None, size)
     return f
 
-def draw_text(surf: pygame.Surface, text: str, pos: Tuple[int, int], size: int = 24, color=(230, 232, 236)) -> None:
+def draw_text(
+    surf: pygame.Surface,
+    text: str,
+    pos: Tuple[int, int],
+    size: int = 24,
+    color=(230, 232, 236),
+    align: Optional[str] = None,
+) -> None:
+    """
+    Draw text with optional alignment.
+      align=None or "topleft"  -> pos is top-left (default)
+      align="center"           -> centerx=pos[0], top=pos[1]
+      also supports any pygame.Rect anchor name:
+        "center","midtop","midleft","midright","midbottom",
+        "topleft","topright","bottomleft","bottomright"
+    """
     font = get_font(size)
     img = font.render(str(text), True, color)
-    surf.blit(img, pos)
+    r = img.get_rect()
+
+    if not align or align == "topleft":
+        r.topleft = pos
+    elif align == "center":
+        # common pattern in states: x = surf.get_width()//2, y = some_top
+        r.midtop = (pos[0], pos[1])
+    elif hasattr(r, align):
+        # generic anchor support
+        setattr(r, align, pos)
+    else:
+        # fallback
+        r.topleft = pos
+
+    surf.blit(img, r)
 
 # --- Simple theme ------------------------------------------------------------
 
@@ -40,7 +70,7 @@ def draw_panel(surf: pygame.Surface, rect: pygame.Rect, theme: Theme) -> None:
 # --- Widgets ----------------------------------------------------------------
 
 class Button:
-    def __init__(self, rect: pygame.Rect, label: str, on_click: Callable[[], None]):
+    def __init__(self, rect: pygame.Rect, label: str, on_click: Callable[[], None] | None):
         self.rect = pygame.Rect(rect)
         self.label = label
         self.on_click = on_click
@@ -51,10 +81,16 @@ class Button:
         self._hover = self.rect.collidepoint(mouse_pos)
 
     def handle(self, event) -> None:
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._hover:
-            self._pressed = True
+        # Keep hover accurate even if update() hasn't run yet this frame
+        if event.type == pygame.MOUSEMOTION:
+            self._hover = self.rect.collidepoint(event.pos)
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self._hover = self.rect.collidepoint(event.pos)
+            if self._hover:
+                self._pressed = True
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            if self._pressed and self._hover:
+            self._hover = self.rect.collidepoint(event.pos)
+            if self._pressed and self._hover and callable(self.on_click):
                 try:
                     self.on_click()
                 finally:
@@ -72,12 +108,15 @@ class Button:
         r = img.get_rect(center=self.rect.center)
         surf.blit(img, r)
 
-# Lightweight scrollable list (not used on menu, kept for other states)
 class ListView:
     def __init__(self, rect: pygame.Rect, items: List[str], row_h: int = 26):
         self.rect = pygame.Rect(rect)
-        self.items = items
+        self.items = items[:]
         self.row_h = row_h
+        self.scroll = 0
+
+    def set_items(self, items: List[str]):
+        self.items = items[:]
         self.scroll = 0
 
     def handle(self, event) -> None:
