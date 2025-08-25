@@ -17,7 +17,8 @@ except Exception:
             self.btn_text = (240, 240, 245)
         @staticmethod
         def default(): return Theme()
-    def draw_text(surf, text, pos, color=(230,230,235), size=28):
+    # match ui/uiutil API: size first, then color
+    def draw_text(surf, text, pos, size=28, color=(230,230,235)):
         font = pygame.font.SysFont(None, size)
         surf.blit(font.render(text, True, color), pos)
     class Button:
@@ -54,8 +55,6 @@ try:
     from .state_settings import SettingsState
 except Exception:
     SettingsState = None
-
-# Our new roster browser
 try:
     from .state_roster_browser import RosterBrowserState
 except Exception:
@@ -63,33 +62,15 @@ except Exception:
 
 
 class MenuState:
-    """
-    Allows construction with no args (tests do MenuState()).
-    App will be attached later via app.push_state(...).
-    """
+    """Allow construction with no args (tests do MenuState())."""
     def __init__(self, app: Optional[object] = None):
         self.app = app
         self.theme: Theme = Theme.default() if hasattr(Theme, "default") else Theme()
-        self.screen = None  # filled when app is attached
-        self.W, self.H = 800, 600  # safe defaults
+        self.screen = getattr(app, "screen", None)
+        self.W, self.H = (self.screen.get_size() if self.screen else (800, 600))
         self.title_font = pygame.font.SysFont(None, 48)
         self.buttons: List[Button] = []
-        self._built = False
-        if self.app is not None:
-            self._attach_app(self.app)
-
-    # App/framework may set state.app directly; build lazily on first draw/update.
-    def _attach_app(self, app):
-        self.app = app
-        if hasattr(app, "screen"):
-            self.screen = app.screen
-            self.W, self.H = self.screen.get_size()
         self._build_ui()
-        self._built = True
-
-    def _ensure_built(self):
-        if not self._built and getattr(self, "app", None) is not None:
-            self._attach_app(self.app)
 
     def _push(self, state_cls, *args, **kwargs):
         if hasattr(self.app, "push_state"):
@@ -98,7 +79,7 @@ class MenuState:
     def _build_ui(self):
         btn_w, btn_h = 340, 54
         gap = 14
-        total_h = 6 * btn_h + 5 * gap  # 6 buttons including Roster
+        total_h = 6 * btn_h + 5 * gap
         x = (self.W - btn_w) // 2
         y = (self.H - total_h) // 2 + 30
 
@@ -135,24 +116,18 @@ class MenuState:
         else:
             pygame.event.post(pygame.event.Event(pygame.QUIT))
 
-    # ---- state api ----
     def handle_event(self, ev):
-        self._ensure_built()
         if ev.type == pygame.KEYUP and ev.key in (pygame.K_ESCAPE, pygame.K_q):
             self._quit(); return
         for b in self.buttons:
             b.handle_event(ev)
 
     def update(self, dt: float):
-        self._ensure_built()
+        pass
 
     def draw(self, surf):
-        self._ensure_built()
-        if surf is None and self.screen is not None:
-            surf = self.screen
-        if surf is None:
-            return
         surf.fill(self.theme.bg if hasattr(self.theme, "bg") else (20, 24, 28))
-        draw_text(surf, "D20 Fight Club", (40, 40), (220, 225, 230), 48)
+        # ui/uiutil.draw_text signature expects size first, then color
+        draw_text(surf, "D20 Fight Club", (40, 40), 48, (220, 225, 230))
         for b in self.buttons:
             b.draw(surf, self.theme)
