@@ -197,7 +197,7 @@ class TBCombat:
         self.grid_h = int(kwargs.pop("grid_h", 9))
 
         self.round_no = 1
-        self.winner: Optional[str] = None  # <- tests expect this attribute
+        self.winner: Optional[str] = None
         self.events_typed: List[Dict] = []
         self.events_str: List[str] = []
         self.k_home = 0
@@ -275,7 +275,7 @@ class TBCombat:
                         self.events_str.append(format_event({"type":"down","target":tgt.name}))
                         _award_xp([me], tgt.ref, self.events_typed, self.events_str)
                 else:
-                    self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
+                    self.events_typed.append({"type":"miss","name":"%s" % me.name,"target":tgt.name})
                     self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
         maybe = self._end_if_done()
         if maybe is not None:
@@ -284,7 +284,11 @@ class TBCombat:
             self.events_str.append(format_event({"type":"end","winner":maybe}))
         self.round_no += 1
         if self.round_no > self.turn_limit and self.winner is None:
-            self.winner = None  # draw (already None)
+            self.winner = None  # draw
+
+    # alias expected by tests
+    def take_turn(self) -> None:
+        self.step()
 
     # ---- run-to-completion convenience ----
     def run(self, auto: bool = True) -> Dict[str, Any]:
