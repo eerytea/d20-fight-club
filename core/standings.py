@@ -5,30 +5,20 @@ from collections import defaultdict
 from .config import POINTS_WIN, POINTS_DRAW, POINTS_LOSS
 
 TableRow = Dict[str, int]
-Table = Dict[int, TableRow]          # tid -> row
-H2HMap = Dict[Tuple[int, int], Dict[str, int]]  # (a,b) ordered -> {"a_pts":..., "b_pts":..., "a_k":..., "b_k":...}
+Table = Dict[int, TableRow]
+H2HMap = Dict[Tuple[int, int], Dict[str, int]]
 
-def new_table(team_ids: Iterable[int]) -> Tuple[Table, H2HMap]:
-    table: Table = {}
-    for tid in team_ids:
-        table[tid] = {
-            "P": 0,     # played
-            "W": 0,
-            "D": 0,
-            "L": 0,
-            "K": 0,     # kills for (PF)
-            "KA": 0,    # kills against (PA)
-            "PTS": 0,
-        }
-    return table, defaultdict(lambda: {"a_pts":0,"b_pts":0,"a_k":0,"b_k":0})
+def new_table(team_ids: Iterable[int]):
+    table: Table = {tid: {"P":0,"W":0,"D":0,"L":0,"K":0,"KA":0,"PTS":0} for tid in team_ids}
+    h2h: H2HMap = defaultdict(lambda: {"a_pts":0,"b_pts":0,"a_k":0,"b_k":0})
+    return table, h2h
 
 def _ordered_pair(a: int, b: int) -> Tuple[int, int, bool]:
-    if a < b: return (a, b, True)
-    if a > b: return (b, a, False)
-    return (a, b, True)
+    if a < b: return a, b, True
+    if a > b: return b, a, False
+    return a, b, True
 
 def apply_result(table: Table, h2h: H2HMap, home: int, away: int, k_home: int, k_away: int) -> None:
-    # update table
     th, ta = table[home], table[away]
     th["P"] += 1; ta["P"] += 1
     th["K"] += k_home; th["KA"] += k_away
@@ -47,7 +37,6 @@ def apply_result(table: Table, h2h: H2HMap, home: int, away: int, k_home: int, k
         th["PTS"] += POINTS_DRAW; ta["PTS"] += POINTS_DRAW
         a_pts = b_pts = POINTS_DRAW
 
-    # update head-to-head mini-table
     a, b, ab = _ordered_pair(home, away)
     rec = h2h[(a, b)]
     if ab:
@@ -61,29 +50,15 @@ def kill_diff(row: TableRow) -> int:
     return row["K"] - row["KA"]
 
 def sort_table(table: Table, h2h: H2HMap) -> List[Tuple[int, TableRow]]:
-    """
-    Sort by: Points, Kill Diff, Head-to-Head points (among tied cluster), then total K (for stability).
-    Returns a list of (tid, row) sorted descending.
-    """
-    # group by points
     by_pts: Dict[int, List[int]] = defaultdict(list)
     for tid, row in table.items():
         by_pts[row["PTS"]].append(tid)
-
-    sorted_pts = sorted(by_pts.keys(), reverse=True)
     out: List[Tuple[int, TableRow]] = []
-
-    for pts in sorted_pts:
+    for pts in sorted(by_pts.keys(), reverse=True):
         cluster = by_pts[pts]
         if len(cluster) == 1:
-            tid = cluster[0]
-            out.append((tid, table[tid]))
-            continue
-
-        # tie-break among cluster by Kill Diff
+            tid = cluster[0]; out.append((tid, table[tid])); continue
         cluster.sort(key=lambda t: kill_diff(table[t]), reverse=True)
-
-        # find sub-clusters that still tie on KD
         i = 0
         while i < len(cluster):
             j = i + 1
@@ -92,23 +67,28 @@ def sort_table(table: Table, h2h: H2HMap) -> List[Tuple[int, TableRow]]:
                 j += 1
             sub = cluster[i:j]
             if len(sub) == 1:
-                out.append((sub[0], table[sub[0]]))
+                t = sub[0]; out.append((t, table[t]))
             else:
-                # Head-to-Head points across the tied subset
                 def h2h_points(tid: int) -> int:
                     pts_sum = 0
                     for other in sub:
                         if other == tid: continue
                         a, b, ab = _ordered_pair(tid, other)
                         rec = h2h[(a, b)]
-                        if ab:
-                            pts_sum += rec["a_pts"]
-                        else:
-                            pts_sum += rec["b_pts"]
+                        pts_sum += rec["a_pts"] if ab else rec["b_pts"]
                     return pts_sum
                 sub.sort(key=lambda t: (h2h_points(t), table[t]["K"]), reverse=True)
                 for t in sub:
                     out.append((t, table[t]))
             i = j
-
     return out
+
+def table_rows_sorted(table: Table, h2h: H2HMap) -> List[Dict]:
+    """UI helper: returns a list of dicts with GD included and rank order applied."""
+    rows: List[Dict] = []
+    for rank, (tid, row) in enumerate(sort_table(table, h2h), start=1):
+        rows.append({
+            "rank": rank, "tid": tid, "P": row["P"], "W": row["W"], "D": row["D"], "L": row["L"],
+            "K": row["K"], "KA": row["KA"], "GD": row["K"] - row["KA"], "PTS": row["PTS"],
+        })
+    return rows
