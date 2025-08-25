@@ -2,52 +2,57 @@
 from __future__ import annotations
 
 import random
-from typing import Any, List, Optional
+from typing import List, Optional, Any, Tuple
 
-from .model import Fighter, Team, Weapon, WEAPON_CATALOG
-from .grid import layout_teams_tiles
-
-
-# --- helpers -------------------------------------------------------------
-
-def _normalize_weapon(wpn: Any) -> Weapon:
-    """Accept Weapon | dict | str and return a Weapon."""
-    if isinstance(wpn, Weapon):
-        return wpn
-    if isinstance(wpn, dict):
-        name = wpn.get("name", "Unarmed")
-        # allow either tuple dmg or "XdY(+/-)Z" strings in other parts of the codebase
-        dmg = tuple(wpn.get("dmg", (1, 4, 0)))
-        reach = int(wpn.get("reach", 1))
-        crit = tuple(wpn.get("crit", (20, 2)))
-        return Weapon(name=name, dmg=dmg, reach=reach, crit=crit)  # type: ignore[arg-type]
-    if isinstance(wpn, str):
-        if wpn in WEAPON_CATALOG:
-            return WEAPON_CATALOG[wpn]
-        for v in WEAPON_CATALOG.values():
-            if getattr(v, "name", None) == wpn:
-                return v
-    return WEAPON_CATALOG["Unarmed"]
+from .model import Fighter, Team, fighter_from_dict, Weapon  # re-exported in engine/__init__
+from core.config import TURN_LIMIT, CRIT_NAT, CRIT_MULTIPLIER
 
 
-def _roll_damage(rng: random.Random, dmg_tuple: tuple[int, int, int]) -> int:
-    n, sides, bonus = dmg_tuple
-    total = sum(rng.randint(1, sides) for _ in range(max(1, n)))
-    return total + int(bonus)
+def _roll_dice(rng: random.Random, spec: str) -> int:
+    """
+    Very small dice parser: "XdY+Z" | "XdY" | "Y" | int-like.
+    """
+    s = str(spec).lower().strip()
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    total = 0
+    mod = 0
+    if "+" in s:
+        s, mod_s = s.split("+", 1)
+        try:
+            mod = int(mod_s)
+        except Exception:
+            mod = 0
+    if "d" in s:
+        x_s, y_s = s.split("d", 1)
+        try:
+            x = int(x_s) if x_s else 1
+        except Exception:
+            x = 1
+        try:
+            y = int(y_s)
+        except Exception:
+            y = 6
+        for _ in range(max(1, x)):
+            total += rng.randint(1, max(2, y))
+    else:
+        try:
+            total += int(s)
+        except Exception:
+            total += 1
+    return total + mod
 
-
-# --- main engine ---------------------------------------------------------
 
 class TBCombat:
     """
-    Minimal, test-friendly turn-based combat engine.
-
-    Expected constructor by tests:
-        TBCombat(team_home, team_away, fighters, grid_w, grid_h, seed=...)
-
-    Where:
-      - fighters: flat list of Fighter with team_id in {0,1}
-      - layout_teams_tiles has already set f.tx/f.ty, but we don't require it
+    Minimal, deterministic-enough TB engine to satisfy tests and exhibition.
+    - Fighters act in simple initiative order per round (by 'speed' then id)
+    - On a turn: try to attack nearest enemy within reach; otherwise 'move' (no pathing yet)
+    - Attack: d20 + atk vs target.ac; crit on natural CRIT_NAT; damage from weapon spec
+    - Downed fighters set alive=False, hp<=0; winner is team that still has alive units
+    - Awards small XP on down (attacker + team-wide small bonus at end)
     """
 
     def __init__(
@@ -57,141 +62,150 @@ class TBCombat:
         fighters: List[Fighter],
         grid_w: int,
         grid_h: int,
+        *,
         seed: Optional[int] = None,
-    ):
+    ) -> None:
         self.team_home = team_home
         self.team_away = team_away
         self.grid_w = grid_w
         self.grid_h = grid_h
-        self.fighters: List[Fighter] = fighters
-        self.rng = random.Random(seed)
-        self._turn_idx = 0
-        self._round = 0
-        self._initiative: List[int] = []  # store indices into self.fighters
-        self.event_log: List[str] = []
-        self._winner: Optional[int] = None  # 0=home, 1=away, None=in progress
+        self.rng = random.Random(seed if seed is not None else 12345)
 
-        # If positions not already set, lay them out (safe no-op if already set)
-        try:
-            # test calls layout_teams_tiles before creating TBCombat
-            # but if not, do it here for safety
-            if not hasattr(self.fighters[0], "tx"):
-                layout_teams_tiles(self.fighters, grid_w, grid_h)
-        except Exception:
-            pass
+        # Fighters already hydrated & laid out
+        self.fighters: List[Fighter] = list(fighters)
 
-        self._roll_initiative()
+        # Event log as simple strings (UI can show/filter if desired)
+        self.events: List[str] = []
 
-    # --- public surface used by tests -----------------------------------
+        # Winner: 0 (home), 1 (away), or None while ongoing
+        self.winner: Optional[int] = None
 
-    @property
-    def winner(self) -> Optional[int]:
-        """
-        Test reads .winner and expects None until a side is eliminated,
-        then 0 for home or 1 for away.
-        """
-        return self._winner
+        # Track who downed whom for XP
+        self._last_attacker_by_target: dict[int, int] = {}  # key = target.id, val = attacker.id
+
+        # Per-round initiative order (recomputed each round)
+        self._round_order: List[int] = []
+        self._turn_index: int = 0
+        self._round: int = 0
+
+        self._rebuild_round_order()
+
+    # ------------------- core loop -------------------
 
     def take_turn(self) -> None:
-        """Advance combat by one fighter action."""
-        if self._winner is not None:
+        if self.winner is not None:
             return
 
-        # skip dead actors automatically
-        for _ in range(len(self._initiative) + 2):
-            if not self._initiative:
-                self._start_round()
-            idx = self._initiative[self._turn_idx]
-            if self.fighters[idx].is_alive():
-                break
-            self._advance_turn()
-
-        actor = self.fighters[self._initiative[self._turn_idx]]
-        if not actor.is_alive():
-            self._advance_turn()
+        # Safety: if state is degenerate or we've exceeded a cap, end it
+        if self._round > TURN_LIMIT:
+            self._end_in_draw()
+            return
+        if not any(f.alive and f.team_id == 0 for f in self.fighters):
+            self._end(1)
+            return
+        if not any(f.alive and f.team_id == 1 for f in self.fighters):
+            self._end(0)
             return
 
-        # choose a living enemy
-        enemy_tid = 1 if actor.team_id == 0 else 0
-        targets = [f for f in self.fighters if f.team_id == enemy_tid and f.is_alive()]
-        if not targets:
-            self._resolve_winner()
+        # If we've consumed the current round, start a new one
+        if self._turn_index >= len(self._round_order):
+            self._rebuild_round_order()
+
+        # Next actor
+        idx = self._round_order[self._turn_index]
+        self._turn_index += 1
+        actor = self.fighters[idx]
+        if not actor.alive:
             return
-        target = self.rng.choice(targets)
 
-        # basic attack roll: d20 + atk vs target.defense
-        w = _normalize_weapon(getattr(actor, "weapon", WEAPON_CATALOG["Unarmed"]))
-        roll = self.rng.randint(1, 20)
-        total = roll + int(actor.atk)
+        # Find target
+        target_idx = self._choose_target(actor)
+        if target_idx is None:
+            self.events.append(f"{actor.name} waits.")
+            return
+        target = self.fighters[target_idx]
 
-        if roll >= w.crit[0]:  # crit threat met
-            dmg = _roll_damage(self.rng, w.dmg) + int(actor.atk)
-            dmg *= int(w.crit[1])
-            target.hp -= max(1, dmg)
-            self.event_log.append(f"{actor.name} crits {target.name} for {dmg}.")
-            self._award_xp(actor, 10)
-        elif total >= int(target.defense):
-            dmg = _roll_damage(self.rng, w.dmg) + int(actor.atk)
-            target.hp -= max(1, dmg)
-            self.event_log.append(f"{actor.name} hits {target.name} for {dmg}.")
-            self._award_xp(actor, 5)
+        # Attack attempt
+        d20 = self.rng.randint(1, 20)
+        attack_total = d20 + max(0, getattr(actor, "atk", 0))
+        crit = (d20 == CRIT_NAT)
+        hit = crit or (attack_total >= getattr(target, "ac", 10))
+
+        if hit:
+            base = _roll_dice(self.rng, getattr(actor.weapon, "damage", "1d6"))
+            dmg = base * (CRIT_MULTIPLIER if crit else 1)
+            target.hp -= max(1, int(dmg))
+            self._last_attacker_by_target[target.id] = actor.id
+            self.events.append(
+                f"{actor.name} hits {target.name} for {dmg}{' (crit)' if crit else ''}"
+            )
+            if target.hp <= 0 and target.alive:
+                target.alive = False
+                self.events.append(f"{target.name} is down!")
+                self._award_on_down(target_id=target.id)
         else:
-            self.event_log.append(f"{actor.name} misses {target.name}.")
+            self.events.append(f"{actor.name} misses {target.name}")
 
-        if target.hp <= 0:
-            target.hp = 0
-            self.event_log.append(f"{target.name} is down!")
-            self._award_xp(actor, 10)
+        # Check victory
+        if not any(f.alive and f.team_id == 0 for f in self.fighters):
+            self._end(1)
+        elif not any(f.alive and f.team_id == 1 for f in self.fighters):
+            self._end(0)
 
-        self._check_end()
-        self._advance_turn()
+    # ------------------- helpers -------------------
 
-    # --- internals ------------------------------------------------------
-
-    def _roll_initiative(self) -> None:
-        # initiative = sorted by (d20 + speed), desc
-        rolls = []
-        for i, f in enumerate(self.fighters):
-            if f.is_alive():
-                rolls.append((self.rng.randint(1, 20) + int(f.speed), i))
-        rolls.sort(key=lambda t: t[0], reverse=True)
-        self._initiative = [i for _, i in rolls]
-        self._turn_idx = 0
+    def _rebuild_round_order(self) -> None:
         self._round += 1
-        self.event_log.append(f"Init round {self._round}.")
+        alive_indices = [i for i, f in enumerate(self.fighters) if f.alive]
+        # Sort by 'speed' desc then id for determinism
+        alive_indices.sort(key=lambda i: (-int(getattr(self.fighters[i], "speed", 0)), int(self.fighters[i].id)))
+        self._round_order = alive_indices
+        self._turn_index = 0
+        self.events.append(f"--- Round {self._round} ---")
 
-    def _start_round(self) -> None:
-        self._roll_initiative()
+    def _choose_target(self, actor: Fighter) -> Optional[int]:
+        # naive nearest enemy by Manhattan distance; if in reach, pick that one
+        enemies = [ (i, f) for i, f in enumerate(self.fighters) if f.alive and f.team_id != actor.team_id ]
+        if not enemies:
+            return None
 
-    def _advance_turn(self) -> None:
-        if not self._initiative:
-            self._roll_initiative()
+        def dist(a: Fighter, b: Fighter) -> int:
+            ax, ay = getattr(a, "tx", 0), getattr(a, "ty", 0)
+            bx, by = getattr(b, "tx", 0), getattr(b, "ty", 0)
+            return abs(ax - bx) + abs(ay - by)
+
+        reach = int(getattr(actor.weapon, "reach", 1))
+        # Prefer enemies already in reach
+        in_reach = [ (i, f) for (i, f) in enemies if dist(actor, f) <= reach ]
+        if in_reach:
+            # choose lowest hp then nearest then lowest id (deterministic)
+            in_reach.sort(key=lambda t: (int(t[1].hp), dist(actor, t[1]), int(t[1].id)))
+            return in_reach[0][0]
+
+        # Otherwise "move" closer (abstract, no pathing); we just log it
+        # (Movement not required for tests; could adjust tx/ty to step closer later)
+        nearest = sorted(enemies, key=lambda t: (dist(actor, t[1]), int(t[1].id)))[0]
+        self.events.append(f"{actor.name} closes on {nearest[1].name}")
+        return nearest[0]
+
+    def _award_on_down(self, target_id: int) -> None:
+        # Small XP award to the attacker that downed target
+        attacker_id = self._last_attacker_by_target.get(target_id)
+        if attacker_id is None:
             return
-        self._turn_idx += 1
-        if self._turn_idx >= len(self._initiative):
-            self._start_round()
+        for f in self.fighters:
+            if f.id == attacker_id:
+                f.xp = int(getattr(f, "xp", 0)) + 10
 
-    def _award_xp(self, fighter: Fighter, xp: int) -> None:
-        fighter.xp += xp
-        # simple level up: every 100 XP
-        while fighter.xp >= fighter.next_level_xp:
-            fighter.level_up()
-            self.event_log.append(f"{fighter.name} leveled to {fighter.level}.")
+    def _end_in_draw(self) -> None:
+        self.winner = None
+        self.events.append("Match ended in a draw (turn cap).")
 
-    def _check_end(self) -> None:
-        home_alive = any(f.is_alive() for f in self.fighters if f.team_id == 0)
-        away_alive = any(f.is_alive() for f in self.fighters if f.team_id == 1)
-        if home_alive and away_alive:
-            return
-        self._resolve_winner()
-
-    def _resolve_winner(self) -> None:
-        home_alive = any(f.is_alive() for f in self.fighters if f.team_id == 0)
-        away_alive = any(f.is_alive() for f in self.fighters if f.team_id == 1)
-        if home_alive and not away_alive:
-            self._winner = 0
-        elif away_alive and not home_alive:
-            self._winner = 1
-        else:
-            # simultaneous wipe—treat as no winner (could be -1 if you prefer)
-            self._winner = 0  # pick home for determinism
+    def _end(self, winner_team_id_rel: int) -> None:
+        # winner_team_id_rel is team_id relative to combat (0=home, 1=away)
+        self.winner = winner_team_id_rel
+        self.events.append(f"Winner: {'Home' if winner_team_id_rel == 0 else 'Away'}")
+        # Team-wide small XP bonus
+        for f in self.fighters:
+            if f.alive and f.team_id == winner_team_id_rel:
+                f.xp = int(getattr(f, "xp", 0)) + 5
