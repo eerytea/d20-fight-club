@@ -1,207 +1,303 @@
 # engine/tbcombat.py
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, Tuple
 import random
-from typing import List, Optional, Any
 
-from .model import Fighter, Team, fighter_from_dict, Weapon
-from core.config import TURN_LIMIT, CRIT_NAT, CRIT_MULTIPLIER
-from .events import (
-    Event, StartRound, Move, Hit, Miss, Down, End, format_event
-)
+# Try to use your typed events module; fall back to simple dicts if missing.
+try:
+    from .events import format_event  # type: ignore
+except Exception:
+    def format_event(e) -> str:
+        t = e.get("type", "?")
+        if t == "move":
+            return f"{e['name']} moves to {e['to']}"
+        if t == "hit":
+            return f"{e['name']} hits {e['target']} for {e['dmg']}!"
+        if t == "miss":
+            return f"{e['name']} misses {e['target']}"
+        if t == "down":
+            return f"{e['target']} is down!"
+        if t == "level_up":
+            return f"{e['name']} reached level {e['level']}!"
+        if t == "round":
+            return f"— Round {e['round']} —"
+        if t == "end":
+            return f"Match ended: {e.get('winner','draw')}"
+        return str(e)
 
+# Ratings hooks (level_up refreshes OVR etc.)
+try:
+    from core.ratings import level_up
+except Exception:
+    def level_up(f):  # no-op if ratings not present
+        f["level"] = f.get("level", 1) + 1
 
-def _roll_dice(rng: random.Random, spec: str) -> int:
-    """
-    Very small dice parser: "XdY+Z" | "XdY" | "Y" | int-like.
-    """
-    s = str(spec).lower().strip()
+def ability_mod(score: int) -> int:
+    return (int(score) - 10) // 2
+
+def d20(rng: random.Random) -> int:
+    return rng.randint(1, 20)
+
+def expected_hp(f: Dict) -> int:
+    return int(f.get("hp", 10))
+
+def attack_bonus(f: Dict) -> int:
+    prof = int(f.get("prof", 2))
+    atk_mod = int(f.get("atk_mod", ability_mod(f.get("str", 10)) + prof))
+    return atk_mod
+
+def target_ac(f: Dict) -> int:
+    return int(f.get("ac", 12))
+
+def damage_roll(f: Dict, crit: bool, rng: random.Random) -> int:
+    # Read a simple "1dX" from weapon, else fallback
+    dmg = 0
+    w = f.get("weapon", {"damage": "1d6"})
     try:
-        return int(s)
-    except ValueError:
-        pass
-    total = 0
-    mod = 0
-    if "+" in s:
-        s, mod_s = s.split("+", 1)
-        try:
-            mod = int(mod_s)
-        except Exception:
-            mod = 0
-    if "d" in s:
-        x_s, y_s = s.split("d", 1)
-        try:
-            x = int(x_s) if x_s else 1
-        except Exception:
-            x = 1
-        try:
-            y = int(y_s)
-        except Exception:
-            y = 6
-        for _ in range(max(1, x)):
-            total += rng.randint(1, max(2, y))
-    else:
-        try:
-            total += int(s)
-        except Exception:
-            total += 1
-    return total + mod
+        s = w.get("damage", "1d6").lower()
+        n, s = s.split("d")
+        n = int(n) * (2 if crit else 1)
+        s = int(s)
+        dmg = sum(rng.randint(1, s) for _ in range(max(1, n)))
+    except Exception:
+        dmg = rng.randint(1, 6) * (2 if crit else 1)
+    # add ability bonus
+    # prefer STR; some classes in ratings use DEX for damage—keep simple for v1
+    dmg += max(0, ability_mod(int(f.get("str", 10))))
+    return max(0, dmg)
 
+@dataclass
+class _F:
+    name: str
+    tid: int
+    tx: int
+    ty: int
+    hp: int
+    ac: int
+    spd: int
+    alive: bool
+    ref: Dict             # back-reference to roster dict
+    xp: int
+    level: int
+
+def _mk_fighters(team: Dict, tid: int, grid_w: int, grid_h: int) -> List[_F]:
+    roster = team.get("roster") or team.get("fighters") or []
+    roster = roster[:]
+    # lay them out: left team near x=1, right team near x=max-2
+    fs: List[_F] = []
+    gap = grid_h // (len(roster) + 1) if roster else grid_h // 2
+    base_x = 1 if tid == 0 else max(0, grid_w - 2)
+    for i, rd in enumerate(roster, start=1):
+        fs.append(_F(
+            name=rd.get("name", f"P{tid}-{i}"),
+            tid=tid,
+            tx=base_x,
+            ty=min(grid_h - 1, i * gap),
+            hp=expected_hp(rd),
+            ac=target_ac(rd),
+            spd=int(rd.get("speed", 6)),
+            alive=True,
+            ref=rd,
+            xp=int(rd.get("xp", 0)),
+            level=int(rd.get("level", 1)),
+        ))
+    return fs
+
+def _nearest_enemy(me: _F, fighters: List[_F]) -> Optional[_F]:
+    enemies = [f for f in fighters if f.alive and f.tid != me.tid]
+    if not enemies:
+        return None
+    return min(enemies, key=lambda e: abs(e.tx - me.tx) + abs(e.ty - me.ty))
+
+def _step_toward(me: _F, tgt: _F, fighters: List[_F], grid_w: int, grid_h: int) -> None:
+    if not tgt:
+        return
+    def free(nx, ny) -> bool:
+        if nx < 0 or ny < 0 or nx >= grid_w or ny >= grid_h:
+            return False
+        for o in fighters:
+            if o.alive and o.tx == nx and o.ty == ny:
+                return False
+        return True
+
+    dx = 1 if tgt.tx > me.tx else -1 if tgt.tx < me.tx else 0
+    dy = 1 if tgt.ty > me.ty else -1 if tgt.ty < me.ty else 0
+
+    # try x then y; if blocked, try y then x
+    nx, ny = me.tx + dx, me.ty
+    if dx != 0 and free(nx, ny):
+        me.tx, me.ty = nx, ny
+        return
+    nx, ny = me.tx, me.ty + dy
+    if dy != 0 and free(nx, ny):
+        me.tx, me.ty = nx, ny
+
+def _adjacent(a: _F, b: _F) -> bool:
+    return abs(a.tx - b.tx) + abs(a.ty - b.ty) == 1
+
+def _challenge_xp_for_ovr(ovr: int) -> int:
+    if ovr < 35:   return 25
+    if ovr < 45:   return 50
+    if ovr < 55:   return 100
+    if ovr < 65:   return 200
+    if ovr < 70:   return 450
+    if ovr < 75:   return 700
+    if ovr < 80:   return 1100
+    if ovr < 85:   return 1800
+    return 2300
+
+def _next_level_threshold(lvl: int) -> int:
+    # 5e-like thresholds
+    thresholds = [0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000]
+    return thresholds[min(max(lvl, 0), len(thresholds) - 1)]
+
+def _award_xp(contributors: List[_F], defeated_ref: Dict, events_typed: List[Dict], events_str: List[str]) -> None:
+    xp_val = _challenge_xp_for_ovr(int(defeated_ref.get("ovr", 50)))
+    if not contributors:
+        return
+    share = max(1, xp_val // len(contributors))
+    for f in contributors:
+        # ensure progress fields exist
+        f.xp = int(getattr(f, "xp", 0)) + share
+        f.ref["xp"] = f.xp
+        # multiple level ups if needed
+        before = f.level
+        while f.xp >= _next_level_threshold(f.level):
+            # ratings.level_up will bump stats + refresh OVR/value/wage
+            level_up(f.ref)
+            f.level = int(f.ref.get("level", f.level + 1))
+            events_typed.append({"type": "level_up", "name": f.name, "level": f.level})
+            events_str.append(format_event({"type": "level_up", "name": f.name, "level": f.level}))
+            if f.level - before > 10:
+                break
 
 class TBCombat:
     """
-    Deterministic TB engine with both string and typed event logs.
-    API preserved:
-      - .fighters: List[Fighter]
-      - .events: List[str]
-      - .winner: Optional[int]  (0=home, 1=away, None=draw/in-progress)
-      - take_turn(): advances the simulation by one actor
-    New:
-      - .events_typed: List[Event]
+    Minimal d20 vs AC engine with typed + string logs.
+    run(auto=True) returns:
+      {
+        "kills_home": int, "kills_away": int, "winner": "home"|"away"|None,
+        "events_typed": [...], "events": [...]
+      }
     """
+    def __init__(self, home_team: Dict, away_team: Dict, seed: int, turn_limit: int = 100,
+                 grid_w: int = 15, grid_h: int = 9):
+        self.seed = int(seed)
+        self.turn_limit = int(turn_limit)
+        self.grid_w = int(grid_w)
+        self.grid_h = int(grid_h)
+        self.rng = random.Random(self.seed)
 
-    def __init__(
-        self,
-        team_home: Team,
-        team_away: Team,
-        fighters: List[Fighter],
-        grid_w: int,
-        grid_h: int,
-        *,
-        seed: Optional[int] = None,
-    ) -> None:
-        self.team_home = team_home
-        self.team_away = team_away
-        self.grid_w = grid_w
-        self.grid_h = grid_h
-        self.rng = random.Random(seed if seed is not None else 12345)
+        self.home = _mk_fighters(home_team, 0, grid_w, grid_h)
+        self.away = _mk_fighters(away_team, 1, grid_w, grid_h)
+        self.fighters: List[_F] = self.home + self.away
 
-        self.fighters: List[Fighter] = list(fighters)
+        self.events_typed: List[Dict] = []
+        self.events_str: List[str] = []
 
-        # Logs (existing string log kept for compatibility; typed log added)
-        self.events: List[str] = []
-        self.events_typed: List[Event] = []
+        self.k_home = 0
+        self.k_away = 0
 
-        self.winner: Optional[int] = None
-        self._last_attacker_by_target: dict[int, int] = {}
+    def _alive_team(self, tid: int) -> bool:
+        return any(f.alive and f.tid == tid for f in self.fighters)
 
-        self._round_order: List[int] = []
-        self._turn_index: int = 0
-        self._round: int = 0
-
-        self._rebuild_round_order()
-
-    # ------------------- core loop -------------------
-
-    def take_turn(self) -> None:
-        if self.winner is not None:
-            return
-
-        if self._round > TURN_LIMIT:
-            self._end_in_draw()
-            return
-        if not any(f.alive and f.team_id == 0 for f in self.fighters):
-            self._end(1)
-            return
-        if not any(f.alive and f.team_id == 1 for f in self.fighters):
-            self._end(0)
-            return
-
-        if self._turn_index >= len(self._round_order):
-            self._rebuild_round_order()
-
-        idx = self._round_order[self._turn_index]
-        self._turn_index += 1
-        actor = self.fighters[idx]
-        if not actor.alive:
-            return
-
-        target_idx = self._choose_target(actor)
-        if target_idx is None:
-            self._log_str("wait", f"{actor.name} waits.")
-            return
-        target = self.fighters[target_idx]
-
-        d20 = self.rng.randint(1, 20)
-        attack_total = d20 + max(0, getattr(actor, "atk", 0))
-        crit = (d20 == CRIT_NAT)
-        hit = crit or (attack_total >= getattr(target, "ac", 10))
-
-        if hit:
-            base = _roll_dice(self.rng, getattr(actor.weapon, "damage", "1d6"))
-            dmg = base * (CRIT_MULTIPLIER if crit else 1)
-            target.hp -= max(1, int(dmg))
-            self._last_attacker_by_target[target.id] = actor.id
-            self._log_typed(Hit(attacker_id=actor.id, target_id=target.id, damage=int(dmg), crit=crit))
-            if target.hp <= 0 and target.alive:
-                target.alive = False
-                self._log_typed(Down(target_id=target.id, by_attacker_id=actor.id))
-        else:
-            self._log_typed(Miss(attacker_id=actor.id, target_id=target.id))
-
-        if not any(f.alive and f.team_id == 0 for f in self.fighters):
-            self._end(1)
-        elif not any(f.alive and f.team_id == 1 for f in self.fighters):
-            self._end(0)
-
-    # ------------------- helpers -------------------
-
-    def _rebuild_round_order(self) -> None:
-        self._round += 1
-        alive_indices = [i for i, f in enumerate(self.fighters) if f.alive]
-        alive_indices.sort(key=lambda i: (-int(getattr(self.fighters[i], "speed", 0)), int(self.fighters[i].id)))
-        self._round_order = alive_indices
-        self._turn_index = 0
-        self._log_typed(StartRound(round_no=self._round))
-
-    def _choose_target(self, actor: Fighter) -> Optional[int]:
-        enemies = [(i, f) for i, f in enumerate(self.fighters) if f.alive and f.team_id != actor.team_id]
-        if not enemies:
+    def _end_if_done(self) -> Optional[str]:
+        a = self._alive_team(0)
+        b = self._alive_team(1)
+        if a and b:
             return None
+        if a and not b:
+            return "home"
+        if b and not a:
+            return "away"
+        return None  # both eliminated simultaneously → draw
 
-        def dist(a: Fighter, b: Fighter) -> int:
-            ax, ay = getattr(a, "tx", 0), getattr(a, "ty", 0)
-            bx, by = getattr(b, "tx", 0), getattr(b, "ty", 0)
-            return abs(ax - bx) + abs(ay - by)
+    def run(self, auto: bool = True) -> Dict[str, Any]:
+        # Simple initiative: shuffle once per round
+        round_no = 1
+        while round_no <= self.turn_limit:
+            self.events_typed.append({"type": "round", "round": round_no})
+            self.events_str.append(format_event({"type": "round", "round": round_no}))
 
-        reach = int(getattr(actor.weapon, "reach", 1))
-        in_reach = [(i, f) for (i, f) in enemies if dist(actor, f) <= reach]
-        if in_reach:
-            in_reach.sort(key=lambda t: (int(t[1].hp), dist(actor, t[1]), int(t[1].id)))
-            return in_reach[0][0]
+            order = [f for f in self.fighters if f.alive]
+            self.rng.shuffle(order)
 
-        nearest = sorted(enemies, key=lambda t: (dist(actor, t[1]), int(t[1].id)))[0]
-        self._log_typed(Move(actor_id=actor.id, target_id=nearest[1].id))
-        return nearest[0]
+            for me in order:
+                if not me.alive:
+                    continue
+                # end early if one side eliminated during the round
+                maybe = self._end_if_done()
+                if maybe is not None:
+                    break
 
-    def _award_on_down(self, target_id: int) -> None:
-        attacker_id = self._last_attacker_by_target.get(target_id)
-        if attacker_id is None:
-            return
-        for f in self.fighters:
-            if f.id == attacker_id:
-                f.xp = int(getattr(f, "xp", 0)) + 10
+                # choose target and move/attack
+                tgt = _nearest_enemy(me, self.fighters)
+                if tgt is None:
+                    continue  # nothing to do
 
-    def _end_in_draw(self) -> None:
-        self.winner = None
-        self._log_typed(End(winner=None))
+                # if not adjacent, step toward (speed steps, but do it 1 step/action to keep logs short)
+                steps = max(1, int(me.spd))
+                for _ in range(steps):
+                    if _adjacent(me, tgt):
+                        break
+                    _step_toward(me, tgt, self.fighters, self.grid_w, self.grid_h)
+                    self.events_typed.append({"type":"move","name":me.name,"to":(me.tx,me.ty)})
+                    self.events_str.append(format_event({"type":"move","name":me.name,"to":(me.tx,me.ty)}))
+                    # target might have changed position due to earlier moves—refresh pointer
+                    tgt = _nearest_enemy(me, self.fighters)
+                    if tgt is None:
+                        break
 
-    def _end(self, winner_team_id_rel: int) -> None:
-        self.winner = winner_team_id_rel
-        self._log_typed(End(winner=winner_team_id_rel))
-        for f in self.fighters:
-            if f.alive and f.team_id == winner_team_id_rel:
-                f.xp = int(getattr(f, "xp", 0)) + 5
+                if tgt is None:
+                    continue
 
-    # ------------------- logging bridges -------------------
+                if _adjacent(me, tgt):
+                    # attack!
+                    roll = d20(self.rng)
+                    crit = (roll == 20)
+                    total = roll + attack_bonus(me.ref)
+                    if crit or total >= tgt.ac:
+                        dmg = damage_roll(me.ref, crit, self.rng)
+                        tgt.hp -= dmg
+                        self.events_typed.append({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit})
+                        self.events_str.append(format_event({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit}))
+                        if tgt.hp <= 0 and tgt.alive:
+                            tgt.alive = False
+                            # map KO to team kill
+                            if tgt.tid == 0:
+                                self.k_away += 1
+                            else:
+                                self.k_home += 1
+                            self.events_typed.append({"type":"down","target":tgt.name})
+                            self.events_str.append(format_event({"type":"down","target":tgt.name}))
+                            # credit XP to the attacker only (simple rule for now)
+                            _award_xp([me], tgt.ref, self.events_typed, self.events_str)
+                    else:
+                        self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
+                        self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
 
-    def _log_typed(self, ev: Event) -> None:
-        """Append to typed log and keep the legacy string log in sync."""
-        self.events_typed.append(ev)
-        # Synthesize a plain string using id->name map when possible
-        names = {f.id: getattr(f, "name", f"F#{f.id}") for f in self.fighters}
-        self.events.append(format_event(ev, name_of=names.get))
+            winner = self._end_if_done()
+            if winner is not None:
+                self.events_typed.append({"type":"end","winner":winner})
+                self.events_str.append(format_event({"type":"end","winner":winner}))
+                return {
+                    "kills_home": self.k_home,
+                    "kills_away": self.k_away,
+                    "winner": winner,
+                    "events_typed": self.events_typed,
+                    "events": self.events_str,
+                }
+            round_no += 1
 
-    def _log_str(self, _tag: str, msg: str) -> None:
-        """Only for rare legacy messages; also mirror to typed Move/Hit/Miss if possible."""
-        self.events.append(msg)
+        # Turn limit → draw
+        self.events_typed.append({"type":"end","winner":None})
+        self.events_str.append(format_event({"type":"end","winner":None}))
+        return {
+            "kills_home": self.k_home,
+            "kills_away": self.k_away,
+            "winner": None,
+            "events_typed": self.events_typed,
+            "events": self.events_str,
+        }
