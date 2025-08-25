@@ -1,8 +1,11 @@
 # core/types.py
 from __future__ import annotations
-from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Tuple
-import json
+from typing import Dict, Tuple
+
+from .career import Career, Fixture
+from .standings import TableRow  # Dict[str, int]
+
+__all__ = ["Career", "Fixture", "TableRow"]
 
 @dataclass
 class Fixture:
