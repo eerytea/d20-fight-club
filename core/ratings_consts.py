@@ -2,11 +2,11 @@
 from __future__ import annotations
 from typing import Dict
 
-# Canonical class data used by both creator and ratings.
+# Canonical class data used by creator and ratings.
 
 CLASS_PROFILES: Dict[str, Dict] = {
     "Fighter": {
-        "weights": (0.45, 0.40, 0.15),      # offense, defense, mobility
+        "weights": (0.45, 0.40, 0.15),
         "primaries": ["str", "con"],
         "secondaries": ["dex"],
         "attack_stat_priority": ["str", "dex"],
@@ -41,7 +41,25 @@ CLASS_PROFILES: Dict[str, Dict] = {
         "weapon": {"name": "Wand", "damage": "1d6"},
         "armor_ac": 12,
     },
-    # You can add Wizard/Cleric later when their rules arrive.
+    # Minimal profiles so class selection never KeyErrors
+    "Wizard": {
+        "weights": (0.50, 0.25, 0.25),
+        "primaries": ["int"],
+        "secondaries": ["con", "dex"],
+        "attack_stat_priority": ["int"],
+        "spell_damage_stat": "int",
+        "weapon": {"name": "Staff", "damage": "1d6"},
+        "armor_ac": 12,
+    },
+    "Cleric": {
+        "weights": (0.40, 0.40, 0.20),
+        "primaries": ["wis", "con"],
+        "secondaries": ["str"],
+        "attack_stat_priority": ["wis", "str"],
+        "melee_damage_stat": "str",
+        "weapon": {"name": "Mace", "damage": "1d6"},
+        "armor_ac": 16,
+    },
 }
 
 CLASS_WEIGHTS: Dict[str, Dict[str, int]] = {
