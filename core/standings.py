@@ -82,7 +82,7 @@ def _h2h_points_for(a: int, b: int, h2h: H2HMap) -> int:
         pts += int(rec_ab.get("a_pts", 0))
     rec_ba = h2h.get((b, a))
     if rec_ba:
-        pts += int(rec_ba.get("b_pts", 0))  # when b was 'a' in that key, 'b_pts' are a's points
+        pts += int(rec_ba.get("b_pts", 0))  # when b was 'a', its b_pts are a's points
     return pts
 
 
@@ -152,15 +152,26 @@ def sort_table(table: Table, h2h: H2HMap) -> List[tuple[int, Dict[str, int]]]:
     return [(tid, asdict(table[tid])) for tid in ordered_ids]
 
 
-# Back-compat name used by tests — returns a list of dicts with "tid" key
+# Back-compat name used by tests — returns a list of dicts with "tid" and uppercase fields like "PTS"
 def table_rows_sorted(table: Table, h2h: H2HMap) -> List[Dict[str, int]]:
     """
-    Tests expect a list of dicts, each having a 'tid' key.
+    Tests expect a list of dicts, each having a 'tid' key and uppercase scoreboard keys like 'PTS'.
     """
     ordered_ids = _sorted_with_tiebreakers(table, h2h)
     rows: List[Dict[str, int]] = []
     for tid in ordered_ids:
         d = asdict(table[tid])
-        # Provide both 'tid' (for tests) and the dataclass fields (team_id, points, etc.)
-        rows.append({"tid": tid, **d})
+        gd = int(d["goals_for"]) - int(d["goals_against"])
+        # Provide scoreboard keys alongside the dataclass fields.
+        rows.append({
+            "tid": tid,
+            "name": d.get("name"),
+            "PTS": int(d["points"]),
+            "GF": int(d["goals_for"]),
+            "GA": int(d["goals_against"]),
+            "GD": gd,
+            "P": int(d["played"]),
+            "W": int(d["wins"]),
+            **d,  # also include original fields for UI/other callers
+        })
     return rows
