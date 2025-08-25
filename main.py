@@ -1,39 +1,26 @@
 # main.py
-# main.py (add right after you import/create App)
-from ui.seedshim import patch_app_seed
-patch_app_seed(App)  # now app.derive_seed("preview") is available
-
 from __future__ import annotations
+import os, traceback
 
-import os
-import traceback
-
+# Adjust this import if your App lives elsewhere:
 from ui.app import App
-from ui.state_menu import MenuState
 
+# Ensure App has derive_seed() for deterministic previews
+from ui.seedshim import patch_app_seed
+patch_app_seed(App)
 
-def _write_crash_log(text: str) -> None:
+def main() -> int:
     try:
-        os.makedirs("saves", exist_ok=True)
-        with open(os.path.join("saves", "crash.log"), "w", encoding="utf-8") as f:
-            f.write(text)
-        print(f"Crash written to: {os.path.abspath(os.path.join('saves','crash.log'))}")
-    except Exception:
-        # last resort: to console
-        print(text)
-
-
-def main() -> None:
-    try:
-        app = App(title="D20 Fight Club")
-        app.push_state(MenuState())  # MenuState should tolerate being created without 'app'
+        app = App()
         app.run()
+        return 0
     except Exception:
-        tb = traceback.format_exc()
-        _write_crash_log(tb)
-        # Avoid re-raising in release runs; in dev you can uncomment:
-        # raise
-
+        os.makedirs("saves", exist_ok=True)
+        with open(os.path.join("saves", "crash.log"), "a", encoding="utf-8") as f:
+            f.write("\n=== Crash ===\n")
+            traceback.print_exc(file=f)
+        traceback.print_exc()
+        return 1
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
