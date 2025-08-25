@@ -1,37 +1,27 @@
 # core/config.py
 from __future__ import annotations
 
-# ---- Grid / Match ----
-GRID_W: int = 10
-GRID_H: int = 8
-TURN_LIMIT: int = 3000           # global safety cap for any full-combat sim
-TEAM_SIZE: int = 4               # fighters per side that start a match
+# -------- League / Season --------
+LEAGUE_TEAMS: int = 8            # total teams in the league (adjust as you like)
+TEAM_SIZE: int = 5               # << your request
+ROUNDS_DOUBLE_ROUND_ROBIN: int = 2  # each opponent twice (home/away)
 
-# ---- League / Table ----
-LEAGUE_TEAMS: int = 20
+# Points (W-D-L = 3-1-0)
 POINTS_WIN: int = 3
 POINTS_DRAW: int = 1
 POINTS_LOSS: int = 0
 
-# ---- Combat ----
-CRIT_NAT: int = 20               # natural d20 that is a critical hit
-CRIT_MULTIPLIER: int = 2         # simple crit model (x2 damage)
+# Tiebreakers (in order):
+# 1) Kill Difference (PF - PA), 2) Head-to-Head (mini-table over tied teams)
+TIEBREAKERS = ("KILL_DIFF", "HEAD_TO_HEAD")
 
-# ---- Progression (design levers; used where applicable) ----
-AGE_BRACKETS = {                 # inclusive ranges
-    "young": (18, 23),
-    "prime": (24, 28),
-    "veteran": (29, 60),
-}
-AGE_XP_MULT = {
-    "young": 1.25,
-    "prime": 1.00,
-    "veteran": 0.75,
-}
-DEV_TRAIT_MULT = {
-    "bad": 0.85,
-    "normal": 1.00,
-    "star": 1.15,
-    "superstar": 1.30,
-}
-POTENTIAL_LEVEL: int = 20
+# -------- Match / Grid --------
+GRID_W: int = 15
+GRID_H: int = 9
+TURN_LIMIT: int = 100  # allow draws if we hit this
+
+# -------- RNG / Seeds --------
+DEFAULT_SEED: int = 1337
+
+# -------- UI / Misc --------
+SAVE_DIR = "saves"
