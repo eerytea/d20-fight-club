@@ -1,98 +1,42 @@
 # engine/grid.py
 from __future__ import annotations
-
-from typing import Dict, List, Tuple, Iterable
-
-from .model import Team, Fighter
+from typing import List, Any
 
 
-DEFAULT_WIDTH = 10
-DEFAULT_HEIGHT = 8
-LEFT_X = 1
-RIGHT_X_OFFSET = 2  # right team starts at width - RIGHT_X_OFFSET
-
-
-def _spread_rows(n: int, height: int) -> List[int]:
+def layout_teams_tiles(fighters: List[Any], grid_w: int, grid_h: int) -> None:
     """
-    Returns a list of 'n' distinct row indices (0..height-1) spread as evenly as possible,
-    centered around the middle rows. Deterministic for test stability.
+    Assign tile coords (tx, ty) in-bounds and separated by team.
+    Assumes fighters have a .team_id attribute (0 for home, 1 for away).
+    This function mutates fighters: sets f.tx and f.ty.
     """
-    if n <= 0:
-        return []
-    rows = list(range(height))
-    mid = height // 2
-    order: List[int] = []
-    i = 0
-    while len(order) < height:
-        a = mid - i
-        b = mid + i
-        if 0 <= a < height:
-            order.append(a)
-        if b != a and 0 <= b < height:
-            order.append(b)
-        i += 1
-    return order[:n]
-
-
-def _flatten_fighters(objs: Iterable) -> List[Fighter]:
-    """
-    Accept either:
-      - a flat iterable of Fighters, or
-      - two Teams (Team, Team), or
-      - any iterable containing Fighters and/or Teams.
-    Returns a flat fighter list.
-    """
-    fighters: List[Fighter] = []
-    items = list(objs)
-    if len(items) == 2 and all(isinstance(x, Team) for x in items):
-        for t in items:  # type: ignore[assignment]
-            fighters.extend(t.fighters)
-        return fighters
-    for x in items:
-        if isinstance(x, Fighter):
-            fighters.append(x)
-        elif isinstance(x, Team):
-            fighters.extend(x.fighters)
-        elif isinstance(x, (list, tuple)):
-            fighters.extend(_flatten_fighters(x))
-    return fighters
-
-
-def layout_teams_tiles(
-    objs,
-    width: int = DEFAULT_WIDTH,
-    height: int = DEFAULT_HEIGHT,
-) -> Dict[int, Tuple[int, int]]:
-    """
-    Flexible layout to match tests:
-      - If given a FLAT LIST of fighters (each with .team_id in {0,1}),
-        set f.tx/f.ty and return {fighter_id: (x, y)} with team 0 on the left
-        and team 1 on the right.
-      - If given (TeamA, TeamB), also supported.
-    Deterministic and stateless for easy testing.
-    """
-    if width < 3:
-        raise ValueError("Grid width too small to layout two teams.")
-    if height < 1:
-        raise ValueError("Grid height must be >= 1.")
-
-    fighters = _flatten_fighters(objs)
+    # Split by team id
     team0 = [f for f in fighters if getattr(f, "team_id", 0) == 0]
     team1 = [f for f in fighters if getattr(f, "team_id", 0) == 1]
 
-    xa = LEFT_X
-    xb = max(0, width - RIGHT_X_OFFSET)
+    # Left and right bands (leave a column of padding)
+    left_min_x = 1
+    left_max_x = max(left_min_x, grid_w // 3)
+    right_min_x = max(grid_w - (grid_w // 3) - 1, 0)
+    right_max_x = max(grid_w - 2, right_min_x)
 
-    ra = _spread_rows(len(team0), height)
-    rb = _spread_rows(len(team1), height)
+    def place_line(fs: List[Any], x_band_min: int, x_band_max: int) -> None:
+        if not fs:
+            return
+        # Use up to two columns within the band for spacing
+        cols = [max(x_band_min, 0), min(x_band_max, grid_w - 1)]
+        y = 1
+        col_idx = 0
+        for f in fs:
+            x = cols[col_idx % len(cols)]
+            # Clamp y
+            if y >= grid_h - 1:
+                y = 1
+                col_idx += 1
+                x = cols[col_idx % len(cols)]
+            # Set attributes (be robust if Fighter doesn't define tx/ty)
+            setattr(f, "tx", int(max(0, min(grid_w - 1, x))))
+            setattr(f, "ty", int(max(0, min(grid_h - 1, y))))
+            y += 2  # vertical spacing
 
-    pos: Dict[int, Tuple[int, int]] = {}
-
-    for f, y in zip(team0, ra):
-        f.tx, f.ty = xa, y  # <-- tests rely on these attributes
-        pos[f.id] = (f.tx, f.ty)
-    for f, y in zip(team1, rb):
-        f.tx, f.ty = xb, y
-        pos[f.id] = (f.tx, f.ty)
-
-    return pos
+    place_line(team0, left_min_x, left_max_x)
+    place_line(team1, right_min_x, right_max_x)
