@@ -1,60 +1,139 @@
 # core/creator.py
-from __future__ import annotations
+# Random standard array (no min-max), Human +1 random among top stats,
+# Class selection supports: weighted / pure_random (+ misfit_prob).
+# Optional negative traits scaffold to create more "bad characters".
+
+from typing import Dict, List, Optional, Tuple
 import random
-from typing import List, Dict, Tuple
-from .ratings import ovr_from_stats, project_potential_l20
 
-STD_ARRAY = [15,14,13,12,10,8]
-CLASSES = ["Fighter","Cleric","Wizard","Rogue","Barbarian","Sorcerer"]
+from .ratings import CLASS_PROFILES, refresh_fighter_ratings
 
-def _assign_standard_array(rng: random.Random) -> Dict[str,int]:
-    stats = ["str","dex","con","int","wis","cha"]
-    arr = STD_ARRAY[:]
-    rng.shuffle(arr)
-    return {k:v for k,v in zip(stats,arr)}
+FIRST_NAMES = [
+    "Alex","Jordan","Riley","Casey","Morgan","Taylor","Jess","Drew","Parker","Sam",
+    "Avery","Quinn","Cameron","Shawn","Jamie","Charlie","Sage","Rowan","Elliot","Skyler"
+]
+LAST_NAMES  = [
+    "Stone","Brooks","Miller","Reeves","Hayes","Cole","Ford","Wells","Blake","Hale",
+    "Rhodes","Kane","Page","Cross","York","Hart","Lake","Wade","Gates","Quill"
+]
 
-def _human_bonus(stats: Dict[str,int], rng: random.Random) -> None:
-    best = max(stats, key=lambda k: stats[k])
-    # tie-break random: find all max keys then pick one
-    mx = stats[best]
-    cands = [k for k,v in stats.items() if v==mx]
-    stats[rng.choice(cands)] += 1
+STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
+ABILITY_KEYS = ["str","dex","con","int","wis","cha"]
 
-def make_random_fighter(team_id: int, fid: int, rng: random.Random) -> Dict:
-    stats = _assign_standard_array(rng)
-    _human_bonus(stats, rng)
-    cls = rng.choice(CLASSES)
-    level = 1
-    ac = 10 + (stats["dex"]-10)//2
-    max_hp = 8 + (stats["con"]-10)//2  # crude baseline
-    hp = max_hp
-    age = rng.randint(18,32)
-    # very simple weapon palette
-    weapons = [
-        {"name":"Shortsword","damage":"1d6","to_hit_bonus":1,"reach":1},
-        {"name":"Spear","damage":"1d6","to_hit_bonus":0,"reach":2},
-        {"name":"Mace","damage":"1d6","to_hit_bonus":1,"reach":1},
-        {"name":"Dagger","damage":"1d4","to_hit_bonus":2,"reach":1},
-    ]
-    weapon = rng.choice(weapons)
+CLASS_WEIGHTS: Dict[str, Dict[str, int]] = {
+    "Fighter":   {"str": 3, "dex": 1, "con": 2, "int": 0, "wis": 0, "cha": 0},
+    "Barbarian": {"str": 3, "dex": 0, "con": 3, "int": 0, "wis": 0, "cha": 0},
+    "Rogue":     {"str": 0, "dex": 3, "con": 1, "int": 1, "wis": 0, "cha": 1},
+    "Wizard":    {"str": 0, "dex": 1, "con": 1, "int": 3, "wis": 0, "cha": 0},
+    "Cleric":    {"str": 0, "dex": 0, "con": 2, "int": 0, "wis": 3, "cha": 0},
+    "Sorcerer":  {"str": 0, "dex": 1, "con": 1, "int": 0, "wis": 0, "cha": 3},
+}
+ALL_CLASSES = list(CLASS_WEIGHTS.keys())
 
-    fighter = {
-        "fighter_id": fid,
-        "team_id": team_id,
-        "name": f"{cls} #{fid}",
+# Optional negative traits scaffold
+NEG_TRAITS_POOL: List[Tuple[str, Dict[str, float]]] = [
+    ("Glass Jaw", {"def_mult": 0.92}),
+    ("Clumsy",    {"mob_mult": 0.94}),
+    ("Timid",     {"off_mult": 0.93}),
+    ("Injury-Prone", {"ovr_mult": 0.96}),
+]
+
+def assign_standard_array(r: random.Random) -> Dict[str,int]:
+    scores = STANDARD_ARRAY[:]
+    r.shuffle(scores)  # true random mapping (no min-max)
+    return {k: v for k, v in zip(ABILITY_KEYS, scores)}
+
+def apply_human_bonus(stats: Dict[str,int], r: random.Random) -> None:
+    max_val = max(stats.values())
+    tied = [k for k, v in stats.items() if v == max_val]
+    stats[r.choice(tied)] += 1  # random among highest
+
+def class_score(stats: Dict[str,int], cls: str, r: random.Random) -> float:
+    w = CLASS_WEIGHTS.get(cls, {})
+    base = sum(stats.get(k,10) * w.get(k,0) for k in ABILITY_KEYS)
+    return base * r.uniform(0.9, 1.1)  # jitter ±10%
+
+def pick_class(stats: Dict[str,int], r: random.Random, class_mode: str, misfit_prob: float) -> str:
+    if class_mode == "pure_random":
+        # equal chance for any class
+        return r.choice(ALL_CLASSES)
+
+    # weighted (default)
+    best_cls, best_score = None, float("-inf")
+    for cls in ALL_CLASSES:
+        sc = class_score(stats, cls, r)
+        if sc > best_score:
+            best_cls, best_score = cls, sc
+
+    # allow "misfit" spice
+    if r.random() < misfit_prob:
+        others = [c for c in ALL_CLASSES if c != best_cls]
+        return r.choice(others)
+    return best_cls
+
+def maybe_negative_trait(r: random.Random, prob: float = 0.2) -> Optional[Tuple[str, Dict[str, float]]]:
+    if r.random() < prob:
+        return r.choice(NEG_TRAITS_POOL)
+    return None
+
+def generate_fighter(level: int = 1, rng: Optional[random.Random] = None,
+                     class_mode: str = "weighted", misfit_prob: float = 0.15,
+                     neg_trait_prob: float = 0.25) -> Dict:
+    r = rng or random.Random()
+    stats = assign_standard_array(r)
+    apply_human_bonus(stats, r)
+    cls = pick_class(stats, r, class_mode=class_mode, misfit_prob=misfit_prob)
+    prof = CLASS_PROFILES[cls]
+
+    # Simple base combat (class armor baseline, etc.)
+    hp = 6 + stats["con"]
+    ac = int(prof.get("armor_ac", 12))
+    speed = r.randint(5, 8)
+    weapon = dict(prof.get("weapon", {"name":"Club","damage":"1d4"}))
+
+    f: Dict = {
+        "pid": "",
+        "name": f"{r.choice(FIRST_NAMES)} {r.choice(LAST_NAMES)}",
+        "race": "Human",
         "class": cls,
-        "level": level,
-        "ac": ac,
-        "hp": hp,
-        "max_hp": max_hp,
-        "age": age,
-        **stats,
-        "weapon": weapon,
-        "ovr": ovr_from_stats(stats),
-        "potential": project_potential_l20(stats),
-        "dev_trait": rng.choice(["Bad","Normal","Normal","Star","Superstar"]),
+        "level": int(level),
+        "age": r.randint(18, 34),
+        "potential": r.randint(55, 96),  # allow some lemons
+        # Abilities
+        "str": stats["str"], "dex": stats["dex"], "con": stats["con"],
+        "int": stats["int"], "wis": stats["wis"], "cha": stats["cha"],
+        # Combat
+        "hp": hp, "ac": ac, "speed": speed, "weapon": weapon,
+        # Progress
+        "xp": 0,
     }
-    return fighter
 
-def make_random_team(team_id: int, name: str, color: Tuple[int,int,int], rng: random.Random, size: int = 6) -> List[Dict]:
-    return [make_random_fighter(team_id, team_id*100 + i, rng) for i in range(size)]
+    # Optional negative trait
+    trait = maybe_negative_trait(r, prob=neg_trait_prob)
+    if trait:
+        f.setdefault("traits", []).append(trait[0])
+        f["_trait_mods"] = trait[1]  # used by ratings
+
+    # Initial ratings
+    refresh_fighter_ratings(f)
+    return f
+
+def generate_team(tid: int, name: str, size: int, seed: int,
+                  class_mode: str = "weighted", misfit_prob: float = 0.15,
+                  neg_trait_prob: float = 0.25, rng: Optional[random.Random] = None,
+                  color: Tuple[int,int,int] = (180, 180, 220)) -> Dict:
+    r = rng or random.Random(seed)
+    fighters: List[Dict] = [
+        generate_fighter(level=r.randint(1, 3), rng=r, class_mode=class_mode, misfit_prob=misfit_prob, neg_trait_prob=neg_trait_prob)
+        for _ in range(size)
+    ]
+    team = {
+        "tid": tid,
+        "name": name,
+        "color": list(color),
+        "fighters": fighters,   # v1 naming (kept for backwards compat)
+        "roster": fighters,     # v2 naming (used by new core)
+        "budget": r.randint(250_000, 2_000_000),
+        "wage_bill": sum(f.get("wage", 0) for f in fighters)
+    }
+    return team
