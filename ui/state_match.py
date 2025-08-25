@@ -1,402 +1,251 @@
 # ui/state_match.py
 from __future__ import annotations
 
-from typing import Callable, Optional, List, Any, Tuple
+from typing import Optional, List, Dict, Tuple
 
 try:
     import pygame
-except Exception:
+except Exception:  # pragma: no cover
     pygame = None  # type: ignore
 
-# Prefer your shared Button; fall back to a tiny built-in button
-try:
-    from .uiutil import Button  # expected: Button(pygame.Rect, label, on_click=callable)
-except Exception:
-    Button = None  # type: ignore
-
-
-class _SimpleButton:  # fallback if uiutil.Button isn't available
-    def __init__(self, rect, label, on_click):
-        self.rect = rect
-        self.label = label
-        self.on_click = on_click
-        self.hover = False
-        self._font = pygame.font.SysFont("consolas", 20) if pygame else None
-
-    def handle_event(self, e):
-        if pygame is None:
-            return False
-        if e.type == pygame.MOUSEMOTION:
-            self.hover = self.rect.collidepoint(e.pos)
-        elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and self.rect.collidepoint(e.pos):
-            self.on_click()
-            return True
-        return False
-
-    def draw(self, surf):
-        if pygame is None:
-            return
-        bg = (120, 120, 120) if self.hover else (98, 98, 98)
-        pygame.draw.rect(surf, bg, self.rect, border_radius=6)
-        pygame.draw.rect(surf, (50, 50, 50), self.rect, 2, border_radius=6)
-        t = self._font.render(self.label, True, (20, 20, 20))
-        surf.blit(
-            t,
-            (self.rect.x + (self.rect.w - t.get_width()) // 2,
-             self.rect.y + (self.rect.h - t.get_height()) // 2),
-        )
-
-
-def _draw_panel(surface, rect, title: Optional[str] = None, title_font=None):
-    pygame.draw.rect(surface, (30, 34, 42), rect, border_radius=8)
-    pygame.draw.rect(surface, (70, 78, 92), rect, 2, border_radius=8)
-    if title and title_font:
-        t = title_font.render(title, True, (235, 235, 235))
-        surface.blit(t, (rect.x + 10, rect.y + 10))
+from .uiutil import Theme, Button, draw_panel, draw_text
+from .app import App
+from core import config
+from engine import TBCombat, Team as BattleTeam, fighter_from_dict, layout_teams_tiles
+from engine.events import format_event
 
 
 class MatchState:
     """
-    Polished match viewer:
-      - Left: grid with fighters + HP bars
-      - Right: Turn Log (auto scroll, mouse wheel scroll)
-      - Bottom: Back, Reset, Next Turn, Auto ON/OFF
-
-    Args:
-      tbcombat: the running TBCombat instance
-      title:   text shown at top
-      scheduled: if True, caller is a season fixture (we'll call on_result at the end)
-      on_result(winner_tid_rel, home_goals, away_goals, tb): optional callback when winner is decided
-      rebuild(): optional callable to rebuild a fresh TBCombat for Reset
+    Watchable match viewer using the typed event log.
+    Construct one of:
+      - MatchState(app, career=<Career>, home_team_id=<int>, away_team_id=<int>, seed=<int|None>)
+      - Or for exhibition: provide home_team_id & away_team_id without career, and pass rosters explicitly
     """
-
     def __init__(
         self,
-        app,
-        tbcombat,
+        app: Optional[App] = None,
+        *,
+        career=None,
+        home_team_id: Optional[int] = None,
+        away_team_id: Optional[int] = None,
+        seed: Optional[int] = None,
+        # Optional direct rosters for exhibition: list[dict] fighter dicts
+        home_roster: Optional[List[dict]] = None,
+        away_roster: Optional[List[dict]] = None,
         title: str = "Match",
-        scheduled: bool = False,
-        on_result: Optional[Callable[[int, int, int, Any], None]] = None,
-        rebuild: Optional[Callable[[], Any]] = None,
     ) -> None:
-        self.app = app
-        self.tb = tbcombat
+        self.app: App | None = app
+        self.career = career
+        self.home_team_id = home_team_id
+        self.away_team_id = away_team_id
+        self.seed = seed
+        self.home_roster_raw = home_roster
+        self.away_roster_raw = away_roster
         self.title = title
-        self.scheduled = scheduled
-        self.on_result = on_result
-        self.rebuild = rebuild
 
-        # UI
-        self._title_font = None
-        self._font = None
-        self._small = None
+        self.combat: TBCombat | None = None
+        self._buttons: List[Button] = []
+        self._auto: bool = False
 
-        # Panels
-        self._grid_rect = None
-        self._log_rect = None
-        self._buttons: List[Any] = []
+        self._grid_rect: Optional["pygame.Rect"] = None
+        self._log_rect: Optional["pygame.Rect"] = None
+        self._hud_rect: Optional["pygame.Rect"] = None
 
-        # Log
-        self.log_lines: List[str] = []
-        self._log_scroll = 0
-        self._last_event_idx = 0
-        self._max_log = 400
+        self._names: Dict[int, str] = {}
 
-        # Auto play
-        self.auto_play = False
-        self._step_delay = 0.25
-        self._accum = 0.0
-
-        # Cache teams/colors/dims
-        self._teams = self._detect_teams()
-        self._grid_w, self._grid_h = self._detect_grid_dims()
-
-        self._finished = False
-
-    # -------- lifecycle --------
+    # ---------------- lifecycle ----------------
 
     def enter(self) -> None:
-        if pygame is None:
+        if pygame is None or self.app is None:
             return
-        pygame.font.init()
-        self._title_font = pygame.font.SysFont("consolas", 26)
-        self._font = pygame.font.SysFont("consolas", 18)
-        self._small = pygame.font.SysFont("consolas", 14)
-        self._layout()
-        self._pull_new_events()  # prime log
+
+        # Build teams + fighters
+        teamH, teamA, fighters = self._build_teams_and_fighters()
+        layout_teams_tiles(fighters, config.GRID_W, config.GRID_H)
+        self.combat = TBCombat(teamH, teamA, fighters, config.GRID_W, config.GRID_H, seed=self.seed)
+
+        # cache id->name for logs
+        self._names = {f.id: getattr(f, "name", f"F#{f.id}") for f in self.combat.fighters}
+
+        # Layout
+        W, H = self.app.width, self.app.height
+        pad = 16
+        grid_size = min(W - pad * 3 - 320, H - pad * 3)  # square area for grid
+        grid_size = max(420, grid_size)
+        self._grid_rect = pygame.Rect(pad, pad, grid_size, grid_size)
+
+        right_w = W - self._grid_rect.right - pad * 2
+        self._log_rect = pygame.Rect(self._grid_rect.right + pad, pad, right_w, int(grid_size * 0.65))
+        self._hud_rect = pygame.Rect(self._grid_rect.right + pad, self._log_rect.bottom + pad, right_w, grid_size - self._log_rect.height - pad)
+
+        # Buttons under the grid
+        btn_w, btn_h = 140, 40
+        b_step = Button(pygame.Rect(pad, self._grid_rect.bottom + pad, btn_w, btn_h), "Step", on_click=self._step_once)
+        b_auto = Button(pygame.Rect(pad + btn_w + 10, self._grid_rect.bottom + pad, btn_w, btn_h), "Auto: Off", on_click=self._toggle_auto)
+        b_back = Button(pygame.Rect(pad + (btn_w + 10) * 2, self._grid_rect.bottom + pad, btn_w, btn_h), "Back", on_click=lambda: self.app.pop_state())
+        self._buttons = [b_step, b_auto, b_back]
 
     def exit(self) -> None:
-        pass
-
-    # -------- helpers (engine introspection) --------
-
-    def _detect_teams(self) -> Tuple[Optional[Any], Optional[Any]]:
-        tb = self.tb
-        for a, b in (("teamA", "teamB"), ("team_home", "team_away")):
-            if hasattr(tb, a) and hasattr(tb, b):
-                return getattr(tb, a), getattr(tb, b)
-        if hasattr(tb, "teams") and isinstance(tb.teams, (list, tuple)) and len(tb.teams) >= 2:
-            return tb.teams[0], tb.teams[1]  # type: ignore
-        return None, None
-
-    def _detect_grid_dims(self) -> Tuple[int, int]:
-        tb = self.tb
-        for w_name, h_name in (("grid_w", "grid_h"), ("width", "height")):
-            if hasattr(tb, w_name) and hasattr(tb, h_name):
-                return int(getattr(tb, w_name)), int(getattr(tb, h_name))
-        return 10, 8
-
-    def _get_events_container(self) -> Optional[List[Any]]:
-        for attr in ("event_log", "events", "log"):
-            if hasattr(self.tb, attr):
-                obj = getattr(self.tb, attr)
-                if isinstance(obj, list):
-                    return obj
-        return None
-
-    # -------- UI layout --------
-
-    def _layout(self) -> None:
-        w, h = self.app.width, self.app.height
-        pad = 16
-        title_h = 54
-        buttons_h = 60
-
-        grid_w = int(w * 0.68)
-        self._grid_rect = pygame.Rect(pad, title_h + pad, grid_w - pad * 2, h - (title_h + buttons_h + pad * 3))
-        self._log_rect = pygame.Rect(grid_w, title_h + pad, w - grid_w - pad, h - (title_h + buttons_h + pad * 3))
-
-        # Buttons row (right-aligned)
-        btn_w, btn_h, gap = 160, 42, 12
-        by = h - (buttons_h - (buttons_h - btn_h) // 2)
-        bx = w - pad - btn_w
-
-        def mk(label: str, fn):
-            rect = pygame.Rect(bx, by, btn_w, btn_h)
-            if Button is not None:
-                self._buttons.append(Button(rect, label, on_click=fn))  # type: ignore
-            else:
-                self._buttons.append(_SimpleButton(rect, label, fn))
-
         self._buttons.clear()
-        mk("Back", self._back); bx -= (btn_w + gap)
-        self._buttons.append(
-            (Button(pygame.Rect(bx, by, btn_w, btn_h), "Reset", self._reset))
-            if Button is not None else _SimpleButton(pygame.Rect(bx, by, btn_w, btn_h), "Reset", self._reset)
-        ); bx -= (btn_w + gap)
-        self._buttons.append(
-            (Button(pygame.Rect(bx, by, btn_w, btn_h), "Next Turn", self._next))
-            if Button is not None else _SimpleButton(pygame.Rect(bx, by, btn_w, btn_h), "Next Turn", self._next)
-        ); bx -= (btn_w + gap)
-        self._btn_auto_rect = pygame.Rect(bx, by, btn_w, btn_h)
-        self._btn_auto = (
-            Button(self._btn_auto_rect, "Auto: OFF", on_click=self._toggle_auto)
-            if Button is not None else _SimpleButton(self._btn_auto_rect, "Auto: OFF", self._toggle_auto)
-        )
-        self._buttons.append(self._btn_auto)
 
-    # -------- events / update / draw --------
+    # ---------------- events & update ----------------
 
-    def handle_event(self, event) -> bool:
-        if pygame is None:
-            return False
-
+    def handle_event(self, event: "pygame.event.Event") -> bool:
         for b in self._buttons:
-            if hasattr(b, "handle_event") and b.handle_event(event):
+            if b.handle_event(event):
+                # keep the auto label in sync, if toggled
+                if "Auto" in b.label:
+                    b.label = f"Auto: {'On' if self._auto else 'Off'}"
                 return True
-
-        if event.type == pygame.MOUSEWHEEL:
-            if self._log_rect.collidepoint(pygame.mouse.get_pos()):
-                self._log_scroll = max(0, self._log_scroll - event.y * 3)
-                return True
-
         return False
 
     def update(self, dt: float) -> None:
-        if self.auto_play and not self._finished:
-            self._accum += dt
-            while self._accum >= self._step_delay and not self._finished:
-                self._accum -= self._step_delay
-                self._step_one_turn()
+        if self._auto and self.combat and self.combat.winner is None:
+            # run a few steps per frame for smoother viewing
+            for _ in range(4):
+                if self.combat.winner is not None:
+                    break
+                self.combat.take_turn()
 
-    def draw(self, surface) -> None:
-        if pygame is None:
-            return
+    # ---------------- drawing ----------------
 
-        title = self._title_font.render(self.title, True, (255, 255, 255))  # type: ignore
-        surface.blit(title, (16, 12))
+    def draw(self, surface: "pygame.Surface") -> None:
+        th = Theme()
+        surface.fill(th.bg)
+        draw_text(surface, self.title, (surface.get_width() // 2, 10), size=28, align="center")
 
-        _draw_panel(surface, self._grid_rect, None, self._title_font)
-        _draw_panel(surface, self._log_rect, "Turn Log", self._title_font)
+        # Grid panel
+        draw_panel(surface, self._grid_rect, title=f"Grid {config.GRID_W}×{config.GRID_H}")
+        self._draw_grid(surface)
+        self._draw_fighters(surface)
 
-        self._draw_grid(surface, self._grid_rect)
-        self._draw_fighters(surface, self._grid_rect)
-        self._draw_log(surface, self._log_rect)
+        # Log panel
+        draw_panel(surface, self._log_rect, title="Log")
+        self._draw_log(surface)
 
-        label = f"Auto: {'ON' if self.auto_play else 'OFF'}"
-        if hasattr(self._btn_auto, "label"):
-            self._btn_auto.label = label  # type: ignore
+        # HUD panel (teams, score-ish)
+        draw_panel(surface, self._hud_rect, title="HUD")
+        self._draw_hud(surface)
+
+        # Buttons
         for b in self._buttons:
-            if hasattr(b, "draw"):
-                b.draw(surface)
+            b.draw(surface)
 
-    # -------- actions --------
+    # ---------------- internal helpers ----------------
 
-    def _back(self) -> None:
-        self.app.pop_state()
-
-    def _reset(self) -> None:
-        if callable(self.rebuild):
-            try:
-                self.tb = self.rebuild()
-                self._teams = self._detect_teams()
-                self._grid_w, self._grid_h = self._detect_grid_dims()
-                self.log_lines.clear()
-                self._log_scroll = 0
-                self._last_event_idx = 0
-                self._finished = False
-                self.auto_play = False
-                self._accum = 0.0
-                self._pull_new_events()
-            except Exception as e:
-                self._push_msg(f"Reset failed:\n{e}")
+    def _build_teams_and_fighters(self):
+        # Determine source rosters
+        if self.career is not None and self.home_team_id is not None and self.away_team_id is not None:
+            H_id, A_id = self.home_team_id, self.away_team_id
+            H_name = self.career.team_names[H_id]
+            A_name = self.career.team_names[A_id]
+            H_color = tuple(self.career.team_colors[H_id])
+            A_color = tuple(self.career.team_colors[A_id])
+            rosterH = sorted(self.career.rosters[H_id], key=lambda r: r.get("ovr", 50), reverse=True)[:config.TEAM_SIZE]
+            rosterA = sorted(self.career.rosters[A_id], key=lambda r: r.get("ovr", 50), reverse=True)[:config.TEAM_SIZE]
         else:
-            self._push_msg("Reset unavailable (no rebuild function).")
+            # Exhibition with direct rosters OR fallback stub
+            H_name, A_name = "Home", "Away"
+            H_color, A_color = (80, 150, 255), (255, 120, 80)
+            rosterH = self.home_roster_raw or []
+            rosterA = self.away_roster_raw or []
+            if not rosterH or not rosterA:
+                # Minimal stub fighters if none provided (shouldn't happen in practice)
+                def stub(i, tid): return {"fighter_id": i, "team_id": tid, "name": f"T{tid}-{i}", "hp": 10, "max_hp": 10, "ac": 12, "str": 12, "dex": 12, "con": 12}
+                rosterH = [stub(i, 0) for i in range(config.TEAM_SIZE)]
+                rosterA = [stub(i, 1) for i in range(config.TEAM_SIZE)]
 
-    def _next(self) -> None:
-        if not self._finished:
-            self._step_one_turn()
+        teamH = BattleTeam(0, H_name, H_color)
+        teamA = BattleTeam(1, A_name, A_color)
+        fighters = [fighter_from_dict({**fd, "team_id": 0}) for fd in rosterH] + \
+                   [fighter_from_dict({**fd, "team_id": 1}) for fd in rosterA]
+        return teamH, teamA, fighters
 
     def _toggle_auto(self) -> None:
-        self.auto_play = not self.auto_play
+        self._auto = not self._auto
 
-    # -------- stepping --------
+    def _step_once(self) -> None:
+        if self.combat and self.combat.winner is None:
+            self.combat.take_turn()
 
-    def _step_one_turn(self) -> None:
-        try:
-            before_len = self._events_len()
-            self.tb.take_turn()
-            self._pull_new_events(start=before_len)
-            if getattr(self.tb, "winner", None) is not None and not self._finished:
-                self._finished = True
-                self._on_finished()
-        except Exception as e:
-            self._push_msg(f"Engine step failed:\n{e}")
-            self.auto_play = False
-
-    def _events_len(self) -> int:
-        ev = self._get_events_container()
-        return len(ev) if ev is not None else len(self.log_lines)
-
-    def _pull_new_events(self, start: Optional[int] = None) -> None:
-        container = self._get_events_container()
-        if container is None:
+    def _draw_grid(self, surface: "pygame.Surface") -> None:
+        if self._grid_rect is None:
             return
-        if start is None:
-            start = self._last_event_idx
-        new = container[start:]
-        for e in new:
-            self.log_lines.append(str(e))
-        self._last_event_idx = start + len(new)
-        if len(self.log_lines) > self._max_log:
-            drop = len(self.log_lines) - self._max_log
-            self.log_lines = self.log_lines[drop:]
+        cell_w = self._grid_rect.width // config.GRID_W
+        cell_h = self._grid_rect.height // config.GRID_H
+        for y in range(config.GRID_H):
+            for x in range(config.GRID_W):
+                r = pygame.Rect(
+                    self._grid_rect.x + x * cell_w,
+                    self._grid_rect.y + y * cell_h,
+                    cell_w - 1, cell_h - 1
+                )
+                pygame.draw.rect(surface, (40, 43, 49), r)
 
-    def _on_finished(self) -> None:
-        fighters = getattr(self.tb, "fighters", [])
-        home_alive = sum(1 for f in fighters if getattr(f, "team_id", 0) == 0 and getattr(f, "alive", True))
-        away_alive = sum(1 for f in fighters if getattr(f, "team_id", 0) == 1 and getattr(f, "alive", True))
-        home_goals = max(0, 4 - away_alive)
-        away_goals = max(0, 4 - home_alive)
-        winner_rel = getattr(self.tb, "winner", -1)
+    def _draw_fighters(self, surface: "pygame.Surface") -> None:
+        if self._grid_rect is None or not self.combat:
+            return
+        cell_w = self._grid_rect.width // config.GRID_W
+        cell_h = self._grid_rect.height // config.GRID_H
 
-        if callable(self.on_result):
-            try:
-                self.on_result(int(winner_rel), int(home_goals), int(away_goals), self.tb)
-            except Exception:
-                pass
-
-        msg = f"Match finished!\nWinner: {'Home' if winner_rel == 0 else ('Away' if winner_rel == 1 else 'Draw')}\nScore (proxy): {home_goals}–{away_goals}"
-        self._push_msg(msg)
-
-    # -------- rendering --------
-
-    def _team_color(self, tid: int) -> Tuple[int, int, int]:
-        a, b = self._teams
-        if tid == 0 and a is not None and hasattr(a, "color"):
-            return tuple(getattr(a, "color"))
-        if tid == 1 and b is not None and hasattr(b, "color"):
-            return tuple(getattr(b, "color"))
-        return (180, 110, 110) if tid == 0 else (110, 140, 200)
-
-    def _draw_grid(self, surf, rect) -> None:
-        gw, gh = self._grid_w, self._grid_h
-        tw = rect.w / gw
-        th = rect.h / gh
-        pygame.draw.rect(surf, (22, 24, 30), rect, border_radius=6)
-        for x in range(gw + 1):
-            X = rect.x + int(x * tw)
-            pygame.draw.line(surf, (55, 60, 70), (X, rect.y), (X, rect.y + rect.h))
-        for y in range(gh + 1):
-            Y = rect.y + int(y * th)
-            pygame.draw.line(surf, (55, 60, 70), (rect.x, Y), (rect.x + rect.w, Y))
-
-    def _draw_fighters(self, surf, rect) -> None:
-        gw, gh = self._grid_w, self._grid_h
-        tw = rect.w / gw
-        th = rect.h / gh
-        fighters = getattr(self.tb, "fighters", [])
-
-        for f in fighters:
-            tx = getattr(f, "tx", None)
-            ty = getattr(f, "ty", None)
-            if tx is None or ty is None:
+        for f in self.combat.fighters:
+            if not hasattr(f, "tx"):
                 continue
-            cx = rect.x + int((tx + 0.5) * tw)
-            cy = rect.y + int((ty + 0.5) * th)
-            r = int(min(tw, th) * 0.35)
+            x = self._grid_rect.x + f.tx * cell_w + cell_w // 2
+            y = self._grid_rect.y + f.ty * cell_h + cell_h // 2
+            color = (80, 150, 255) if f.team_id == 0 else (255, 120, 80)
+            # body
+            pygame.draw.circle(surface, color if f.alive else (80, 80, 80), (x, y), max(8, min(cell_w, cell_h) // 3))
+            # HP bar
+            max_hp = getattr(f, "max_hp", getattr(f, "hp", 10))
+            cur_hp = max(0, getattr(f, "hp", 0))
+            w = max(24, cell_w - 12)
+            bar_rect = pygame.Rect(x - w // 2, y + (cell_h // 2) - 10, w, 6)
+            pygame.draw.rect(surface, (70, 70, 70), bar_rect, border_radius=3)
+            if max_hp > 0:
+                fill = pygame.Rect(bar_rect.x, bar_rect.y, int(w * (cur_hp / max_hp)), bar_rect.height)
+                pygame.draw.rect(surface, (80, 220, 120), fill, border_radius=3)
 
-            col = self._team_color(getattr(f, "team_id", 0))
-            alive = getattr(f, "alive", True)
-            body = col if alive else (90, 90, 90)
-            pygame.draw.circle(surf, body, (cx, cy), r)
-            pygame.draw.circle(surf, (30, 30, 30), (cx, cy), r, 2)
+    def _draw_log(self, surface: "pygame.Surface") -> None:
+        if not self.combat or not self._log_rect:
+            return
+        x = self._log_rect.x + 12
+        y = self._log_rect.y + 8
+        th = Theme()
 
-            name = str(getattr(f, "name", ""))
-            label = self._small.render(name[:8], True, (240, 240, 240))
-            surf.blit(label, (cx - label.get_width() // 2, cy - r - 16))
+        # Prefer typed events if present
+        if getattr(self.combat, "events_typed", None):
+            # Only render the last ~18 lines
+            events = self.combat.events_typed[-18:]
+            for ev in events:
+                line = format_event(ev, name_of=self._names.get)
+                draw_text(surface, line, (x, y), size=18, color=th.fg)
+                y += 20
+        else:
+            lines = self.combat.events[-18:]
+            for line in lines:
+                draw_text(surface, line, (x, y), size=18, color=th.fg)
+                y += 20
 
-            hp = float(getattr(f, "hp", 0))
-            max_hp = float(getattr(f, "max_hp", max(1, int(hp))))
-            pct = max(0.0, min(1.0, hp / max_hp))
-            bar_w = int(tw * 0.9)
-            bar_h = 6
-            bar_x = int(rect.x + tx * tw + (tw - bar_w) / 2)
-            bar_y = int(rect.y + (ty + 0.9) * th)
-            pygame.draw.rect(surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
-            pygame.draw.rect(surf, (80, 200, 80), (bar_x, bar_y, int(bar_w * pct), bar_h), border_radius=3)
+    def _draw_hud(self, surface: "pygame.Surface") -> None:
+        if not self.combat or not self._hud_rect:
+            return
+        x = self._hud_rect.x + 12
+        y = self._hud_rect.y + 8
+        th = Theme()
 
-    def _draw_log(self, surf, rect) -> None:
-        clip = surf.get_clip()
-        surf.set_clip(rect)
-        x, y = rect.x + 8, rect.y + 8
-        line_h = 18
+        home_alive = sum(1 for f in self.combat.fighters if f.team_id == 0 and f.alive)
+        away_alive = sum(1 for f in self.combat.fighters if f.team_id == 1 and f.alive)
+        home_goals = config.TEAM_SIZE - away_alive
+        away_goals = config.TEAM_SIZE - home_alive
 
-        lines_per = (rect.h - 16) // line_h
-        start = max(0, len(self.log_lines) - lines_per - self._log_scroll)
-        end = min(len(self.log_lines), start + lines_per)
-        for ln in self.log_lines[start:end]:
-            t = self._small.render(str(ln), True, (220, 220, 220))
-            surf.blit(t, (x, y))
-            y += line_h
-
-        surf.set_clip(clip)
-
-    # -------- misc --------
-
-    def _push_msg(self, text: str) -> None:
-        try:
-            from .state_message import MessageState
-            self.app.push_state(MessageState(app=self.app, text=text))
-        except Exception:
-            print(text)
+        draw_text(surface, f"{self.combat.team_home.name} vs {self.combat.team_away.name}", (x, y), size=20, color=th.fg)
+        y += 24
+        draw_text(surface, f"Score: {home_goals} - {away_goals}", (x, y), size=20, color=th.fg)
+        y += 24
+        if self.combat.winner is None:
+            draw_text(surface, "Status: In progress", (x, y), size=18, color=th.muted)
+        else:
+            result = "Draw" if self.combat.winner is None else ("Home" if self.combat.winner == 0 else "Away")
+            draw_text(surface, f"Result: {result}", (x, y), size=18, color=th.fg)
