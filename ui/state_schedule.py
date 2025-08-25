@@ -1,110 +1,87 @@
 # ui/state_schedule.py
 from __future__ import annotations
-from typing import List
+
+from typing import Optional, List
 
 try:
     import pygame
-except Exception:
+except Exception:  # pragma: no cover
     pygame = None  # type: ignore
 
-try:
-    from .uiutil import Button
-except Exception:
-    Button = None  # type: ignore
-
-from .state_message import MessageState
+from .uiutil import Theme, Button, ListView, draw_panel, draw_text
+from .app import App
 
 
 class ScheduleState:
-    def __init__(self, app, career=None):
-        self.app = app
-        self.career = career or app.data.get("career")
-        self._title_font = None
-        self._font = None
-        self._small = None
-        self._btn_prev = self._btn_next = self._btn_back = None
-        self._week = self.career.week if self.career else 0
+    def __init__(self, app: Optional[App] = None, *, career=None) -> None:
+        self.app: App | None = app
+        self.career = career
+        self.week: int = 0
+        self.list_view: ListView | None = None
+        self.btn_prev: Button | None = None
+        self.btn_next: Button | None = None
+        self.btn_back: Button | None = None
+        self._panel: "pygame.Rect" | None = None
 
-    def enter(self):
-        if pygame is None:
+    def enter(self) -> None:
+        if pygame is None or self.app is None:
             return
-        pygame.font.init()
-        self._title_font = pygame.font.SysFont("consolas", 26)
-        self._font = pygame.font.SysFont("consolas", 18)
-        self._small = pygame.font.SysFont("consolas", 14)
-        self._layout()
+        self.week = self.career.week
 
-    def _layout(self):
-        w, h = self.app.width, self.app.height
-        btn_w, btn_h, gap = 150, 40, 10
-        by = h - 64
-        bx = w - 24 - btn_w
-        mk = lambda label, fn, x: (Button(pygame.Rect(x, by, btn_w, btn_h), label, on_click=fn)
-                                   if Button else _SimpleButton(pygame.Rect(x, by, btn_w, btn_h), label, fn))
-        self._btn_back = mk("Back", self._back, bx); bx -= (btn_w + gap)
-        self._btn_next = mk("Next Week", self._next_week, bx); bx -= (btn_w + gap)
-        self._btn_prev = mk("Prev Week", self._prev_week, bx)
+        pad = 16
+        self._panel = pygame.Rect(pad, pad, self.app.width - pad * 2, self.app.height - 80)
+        self.list_view = ListView(pygame.Rect(self._panel.x + 8, self._panel.y + 32, self._panel.width - 16, self._panel.height - 40), [], row_h=28)
 
-    def handle_event(self, e):
-        if pygame is None:
-            return False
-        for b in (self._btn_prev, self._btn_next, self._btn_back):
-            if b and b.handle_event(e):
-                return True
+        def prev_w():
+            self.week = max(0, self.week - 1)
+            self._refresh()
+
+        def next_w():
+            self.week = min(max(f.week for f in self.career.fixtures), self.week + 1)
+            self._refresh()
+
+        self.btn_prev = Button(pygame.Rect(pad, self.app.height - 56, 120, 40), "< Week", on_click=prev_w)
+        self.btn_next = Button(pygame.Rect(pad + 130, self.app.height - 56, 120, 40), "Week >", on_click=next_w)
+        self.btn_back = Button(pygame.Rect(self.app.width - pad - 160, self.app.height - 56, 160, 40), "Back", on_click=lambda: self.app.pop_state())
+
+        self._refresh()
+
+    def exit(self) -> None:
+        pass
+
+    def handle_event(self, event: "pygame.event.Event") -> bool:
+        if self.list_view and self.list_view.handle_event(event):
+            return True
+        if self.btn_prev.handle_event(event):
+            return True
+        if self.btn_next.handle_event(event):
+            return True
+        if self.btn_back.handle_event(event):
+            return True
         return False
 
-    def update(self, dt): pass
+    def update(self, dt: float) -> None:
+        pass
 
-    def draw(self, surf):
-        if pygame is None: return
-        w, h = surf.get_size()
-        title = self._title_font.render(f"Schedule — Week {self._week+1}", True, (255,255,255))
-        surf.blit(title, (24, 24))
+    def draw(self, surface: "pygame.Surface") -> None:
+        th = Theme()
+        surface.fill(th.bg)
+        draw_text(surface, f"Schedule — Week {self.week}", (surface.get_width() // 2, 12), size=28, align="center")
+        draw_panel(surface, self._panel, title="Fixtures")
+        self.list_view.draw(surface)
+        self.btn_prev.draw(surface)
+        self.btn_next.draw(surface)
+        self.btn_back.draw(surface)
 
-        lines = []
-        if self.career:
-            you = self.career.user_team_id
-            for fx in self.career.fixtures:
-                if fx.week != self._week: continue
-                H = self.career.team_names[fx.home_id]
-                A = self.career.team_names[fx.away_id]
-                you_tag = []
-                if fx.home_id == you: you_tag.append("(YOU)")
-                if fx.away_id == you: you_tag.append("(YOU)")
-                tag = " ".join(you_tag)
-                if fx.played:
-                    lines.append(f"[P] {H} {fx.home_goals}-{fx.away_goals} {A} {tag}")
-                else:
-                    lines.append(f"[ ] {H} vs {A} {tag}")
-        y = 80
-        for s in lines:
-            surf.blit(self._font.render(s, True, (230,230,230)), (40, y))
-            y += 24
-
-        for b in (self._btn_prev, self._btn_next, self._btn_back):
-            if b: b.draw(surf)
-
-    # actions
-    def _back(self): self.app.pop_state()
-    def _prev_week(self): self._week = max(0, self._week-1)
-    def _next_week(self):
-        if self.career:
-            maxw = max(f.week for f in self.career.fixtures)
-            self._week = min(maxw, self._week+1)
-
-
-class _SimpleButton:
-    def __init__(self, rect, label, on_click):
-        self.rect, self.label, self.on_click = rect, label, on_click
-        self.hover=False; self._font=pygame.font.SysFont("consolas",18) if pygame else None
-    def handle_event(self,e):
-        if e.type==pygame.MOUSEMOTION: self.hover=self.rect.collidepoint(e.pos)
-        elif e.type==pygame.MOUSEBUTTONDOWN and e.button==1 and self.rect.collidepoint(e.pos):
-            self.on_click(); return True
-        return False
-    def draw(self,surf):
-        bg=(120,120,120) if self.hover else (98,98,98)
-        pygame.draw.rect(surf,bg,self.rect,border_radius=6)
-        pygame.draw.rect(surf,(50,50,50),self.rect,2,border_radius=6)
-        t=self._font.render(self.label,True,(20,20,20))
-        surf.blit(t,(self.rect.x+(self.rect.w-t.get_width())//2,self.rect.y+(self.rect.h-t.get_height())//2))
+    # ---- helpers ----
+    def _refresh(self) -> None:
+        week_fx = [f for f in self.career.fixtures if f.week == self.week]
+        labels = []
+        for fx in week_fx:
+            hn = self.career.team_names[fx.home_id]
+            an = self.career.team_names[fx.away_id]
+            if fx.played:
+                labels.append(f"{hn} {fx.home_goals}-{fx.away_goals} {an}")
+            else:
+                labels.append(f"{hn} vs {an} (not played)")
+        self.list_view.set_items(labels)
