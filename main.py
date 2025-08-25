@@ -1,4 +1,8 @@
 # main.py
+# main.py (add right after you import/create App)
+from ui.seedshim import patch_app_seed
+patch_app_seed(App)  # now app.derive_seed("preview") is available
+
 from __future__ import annotations
 
 import os
