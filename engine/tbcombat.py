@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterable
 import random
 
+# Try typed event formatter; fall back to simple strings.
 try:
     from .events import format_event  # type: ignore
 except Exception:
@@ -26,6 +27,7 @@ except Exception:
             return f"Match ended: {e.get('winner','draw')}"
         return str(e)
 
+# Ratings hook
 try:
     from core.ratings import level_up
 except Exception:
@@ -77,7 +79,32 @@ class _F:
     xp: int
     level: int
 
-def _mk_fighters(team: Dict, tid: int, grid_w: int, grid_h: int) -> List[_F]:
+def _mk_from_external(ob: Any, default_tx: int = 0, default_ty: int = 0) -> _F:
+    """Map a test/legacy fighter object or dict → internal _F."""
+    get = lambda k, d=None: (getattr(ob, k, None) if not isinstance(ob, dict) else ob.get(k, None)) or d
+    name = get("name", "F")
+    tid = int(get("team_id", 0))
+    # positions may be x/y or tx/ty in tests
+    tx = int(get("x", get("tx", default_tx)))
+    ty = int(get("y", get("ty", default_ty)))
+    hp = int(get("hp", 10))
+    ac = int(get("ac", 12))
+    spd = int(get("speed", 6))
+    lvl = int(get("level", 1))
+    xp  = int(get("xp", 0))
+    # back-ref dict so XP/level can mutate if it's a dict; otherwise create one
+    if isinstance(ob, dict):
+        ref = ob
+    else:
+        ref = {
+            "name": name, "team_id": tid, "hp": hp, "ac": ac, "speed": spd,
+            "level": lvl, "xp": xp, "str": getattr(ob, "str", 10),
+            "prof": getattr(ob, "prof", 2), "atk_mod": getattr(ob, "atk_mod", ability_mod(getattr(ob, "str", 10)) + 2),
+            "weapon": getattr(ob, "weapon", {"damage": "1d6"}),
+        }
+    return _F(name=name, tid=tid, tx=tx, ty=ty, hp=hp, ac=ac, spd=spd, alive=True, ref=ref, xp=xp, level=lvl)
+
+def _mk_from_team_dict(team: Dict, tid: int, grid_w: int, grid_h: int) -> List[_F]:
     roster = team.get("roster") or team.get("fighters") or []
     roster = roster[:]
     fs: List[_F] = []
@@ -162,18 +189,60 @@ def _award_xp(contributors: List[_F], defeated_ref: Dict, events_typed: List[Dic
                 break
 
 class TBCombat:
-    def __init__(self, home_team: Dict, away_team: Dict, seed: int, turn_limit: int = 100,
-                 grid_w: int = 15, grid_h: int = 9):
-        self.seed = int(seed)
-        self.turn_limit = int(turn_limit)
-        self.grid_w = int(grid_w)
-        self.grid_h = int(grid_h)
+    """
+    Flexible ctor:
+      (1) New path:
+          TBCombat(home_team_dict, away_team_dict, seed: int, turn_limit=100, grid_w=15, grid_h=9)
+      (2) Legacy test path:
+          TBCombat(teamA, teamB, fighters_list, GRID_W, GRID_H, seed=999)
+    """
+    def __init__(self, home_team: Any, away_team: Any, *args, **kwargs):
+        # Defaults
+        self.turn_limit = int(kwargs.pop("turn_limit", 100))
+        self.grid_w = int(kwargs.pop("grid_w", 15))
+        self.grid_h = int(kwargs.pop("grid_h", 9))
+
+        # Detect legacy signature: third positional is a list/iterable of fighters
+        if args and isinstance(args[0], (list, tuple)):
+            fighters_in: Iterable[Any] = args[0]
+            if len(args) >= 3:
+                self.grid_w = int(args[1])
+                self.grid_h = int(args[2])
+            seed = int(kwargs.get("seed", 0))
+            self.seed = seed
+            self.rng = random.Random(self.seed)
+            # Map external fighters directly
+            self.fighters: List[_F] = []
+            for idx, ob in enumerate(fighters_in):
+                # try to preserve pre-set positions (tests call layout_teams_tiles)
+                self.fighters.append(_mk_from_external(ob, 0, idx))
+            # track kills
+            self.k_home = 0
+            self.k_away = 0
+            self.events_typed: List[Dict] = []
+            self.events_str: List[str] = []
+            return
+
+        # Otherwise, use new path with team dicts and per-side auto layout
+        if args:
+            # Back-compat if someone passed seed positionally
+            seed = int(args[0])
+        else:
+            seed = int(kwargs.get("seed", 0))
+        self.seed = seed
         self.rng = random.Random(self.seed)
-        self.home = _mk_fighters(home_team, 0, grid_w, grid_h)
-        self.away = _mk_fighters(away_team, 1, grid_w, grid_h)
+
+        self.grid_w = int(kwargs.get("grid_w", self.grid_w))
+        self.grid_h = int(kwargs.get("grid_h", self.grid_h))
+
+        # Build fighters from team dicts
+        self.home = _mk_from_team_dict(home_team, 0, self.grid_w, self.grid_h)
+        self.away = _mk_from_team_dict(away_team, 1, self.grid_w, self.grid_h)
         self.fighters: List[_F] = self.home + self.away
+
         self.events_typed: List[Dict] = []
         self.events_str: List[str] = []
+
         self.k_home = 0
         self.k_away = 0
 
