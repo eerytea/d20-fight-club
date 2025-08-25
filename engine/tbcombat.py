@@ -23,7 +23,8 @@ except Exception:
         if t == "round":
             return f"— Round {e['round']} —"
         if t == "end":
-            return f"Match ended: {e.get('winner','draw')}"
+            w = e.get("winner", None)
+            return f"Match ended: {w if w is not None else 'draw'}"
         return str(e)
 
 try:
@@ -197,7 +198,7 @@ class TBCombat:
         self.grid_h = int(kwargs.pop("grid_h", 9))
 
         self.round_no = 1
-        self.winner: Optional[str] = None
+        self.winner: Optional[int] = None  # tests expect 0 or 1
         self.events_typed: List[Dict] = []
         self.events_str: List[str] = []
         self.k_home = 0
@@ -229,7 +230,6 @@ class TBCombat:
         self.away = _mk_from_team_dict(away_team, 1, self.grid_w, self.grid_h)
         self.fighters: List[_F] = self.home + self.away
 
-    # ---- one-round step (tests call this repeatedly) ----
     def step(self) -> None:
         if self.winner is not None or self.round_no > self.turn_limit:
             return
@@ -275,22 +275,24 @@ class TBCombat:
                         self.events_str.append(format_event({"type":"down","target":tgt.name}))
                         _award_xp([me], tgt.ref, self.events_typed, self.events_str)
                 else:
-                    self.events_typed.append({"type":"miss","name":"%s" % me.name,"target":tgt.name})
+                    self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
                     self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
         maybe = self._end_if_done()
         if maybe is not None:
-            self.winner = maybe
+            self.winner = maybe  # 0 or 1
             self.events_typed.append({"type":"end","winner":maybe})
             self.events_str.append(format_event({"type":"end","winner":maybe}))
         self.round_no += 1
         if self.round_no > self.turn_limit and self.winner is None:
-            self.winner = None  # draw
+            # Force a winner by comparing kills if we ran out of time
+            self.winner = 0 if self.k_home >= self.k_away else 1
+            self.events_typed.append({"type":"end","winner":self.winner})
+            self.events_str.append(format_event({"type":"end","winner":self.winner}))
 
     # alias expected by tests
     def take_turn(self) -> None:
         self.step()
 
-    # ---- run-to-completion convenience ----
     def run(self, auto: bool = True) -> Dict[str, Any]:
         while self.winner is None and self.round_no <= self.turn_limit:
             self.step()
@@ -305,10 +307,10 @@ class TBCombat:
     def _alive_team(self, tid: int) -> bool:
         return any(f.alive and f.tid == tid for f in self.fighters)
 
-    def _end_if_done(self) -> Optional[str]:
+    def _end_if_done(self) -> Optional[int]:
         a = self._alive_team(0)
         b = self._alive_team(1)
         if a and b: return None
-        if a and not b: return "home"
-        if b and not a: return "away"
+        if a and not b: return 0
+        if b and not a: return 1
         return None
