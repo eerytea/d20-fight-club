@@ -121,7 +121,12 @@ class Career:
         team_size: int = TEAM_SIZE,
         user_team_id: Optional[int] = 0,
         team_names: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> "Career":
+        # Accept alias used by some tests
+        if "team_count" in kwargs and kwargs["team_count"] is not None:
+            n_teams = int(kwargs["team_count"])
+
         teams = _generate_teams(n_teams, team_size, seed, team_names)
         team_ids = [t["tid"] for t in teams]
 
@@ -220,7 +225,7 @@ class Career:
             user_team_id=data.get("user_team_id"),
         )
 
-# --- Back-compat convenience expected by some tests ---------------------------
+# --- Back-compat convenience expected by tests --------------------------------
 
 def new_career(
     seed: int = DEFAULT_SEED,
@@ -228,7 +233,11 @@ def new_career(
     team_size: int = TEAM_SIZE,
     user_team_id: Optional[int] = 0,
     team_names: Optional[List[str]] = None,
+    **kwargs: Any,
 ) -> Career:
+    # Accept alias used by some tests
+    if "team_count" in kwargs and kwargs["team_count"] is not None:
+        n_teams = int(kwargs["team_count"])
     return Career.new(
         seed=seed,
         n_teams=n_teams,
