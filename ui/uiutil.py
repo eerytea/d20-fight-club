@@ -40,13 +40,10 @@ def draw_text(
     if not align or align == "topleft":
         r.topleft = pos
     elif align == "center":
-        # common pattern in states: x = surf.get_width()//2, y = some_top
         r.midtop = (pos[0], pos[1])
     elif hasattr(r, align):
-        # generic anchor support
         setattr(r, align, pos)
     else:
-        # fallback
         r.topleft = pos
 
     surf.blit(img, r)
@@ -59,9 +56,11 @@ class Theme:
     panel: Tuple[int, int, int] = (30, 35, 40)
     panel_border: Tuple[int, int, int] = (50, 55, 60)
     text: Tuple[int, int, int] = (220, 225, 230)
+    subt: Tuple[int, int, int] = (190, 195, 205)
     button_bg: Tuple[int, int, int] = (45, 50, 58)
     button_hover: Tuple[int, int, int] = (65, 72, 84)
     button_text: Tuple[int, int, int] = (230, 232, 236)
+    sel_row: Tuple[int, int, int] = (55, 60, 75)
 
 def draw_panel(surf: pygame.Surface, rect: pygame.Rect, theme: Theme) -> None:
     pygame.draw.rect(surf, theme.panel, rect, border_radius=10)
@@ -109,26 +108,60 @@ class Button:
         surf.blit(img, r)
 
 class ListView:
-    def __init__(self, rect: pygame.Rect, items: List[str], row_h: int = 26):
+    """
+    Simple scrollable, selectable list.
+    """
+    def __init__(
+        self,
+        rect: pygame.Rect,
+        items: List[str],
+        row_h: int = 28,
+        on_select: Callable[[int], None] | None = None
+    ):
         self.rect = pygame.Rect(rect)
         self.items = items[:]
-        self.row_h = row_h
+        self.row_h = int(row_h)
         self.scroll = 0
+        self.selected = 0 if items else -1
+        self.on_select = on_select
 
     def set_items(self, items: List[str]):
         self.items = items[:]
         self.scroll = 0
+        self.selected = 0 if items else -1
 
     def handle(self, event) -> None:
         if event.type == pygame.MOUSEWHEEL:
             self.scroll = max(0, self.scroll - event.y * self.row_h)
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                rel_y = event.pos[1] - self.rect.y + self.scroll
+                idx = rel_y // self.row_h
+                if 0 <= idx < len(self.items):
+                    self.selected = int(idx)
+                    if callable(self.on_select):
+                        self.on_select(self.selected)
 
-    def draw(self, surf: pygame.Surface, theme: Theme) -> None:
+    def draw(self, surf: pygame.Surface, theme: Theme, title: str | None = None) -> None:
         clip = surf.get_clip()
-        surf.set_clip(self.rect)
         draw_panel(surf, self.rect, theme)
-        y = self.rect.y + 8 - self.scroll
-        for it in self.items:
-            draw_text(surf, str(it), (self.rect.x + 12, y), 20, theme.text)
+        # Optional title
+        if title:
+            draw_text(surf, title, (self.rect.centerx, self.rect.y + 6), 20, theme.subt, align="center")
+            top = self.rect.y + 28
+        else:
+            top = self.rect.y + 8
+
+        # viewport
+        inner = pygame.Rect(self.rect.x + 8, top, self.rect.w - 16, self.rect.bottom - 8)
+        surf.set_clip(inner)
+
+        y = top - self.scroll
+        for i, it in enumerate(self.items):
+            row_rect = pygame.Rect(inner.x, y, inner.w, self.row_h)
+            if i == self.selected:
+                pygame.draw.rect(surf, theme.sel_row, row_rect, border_radius=6)
+            draw_text(surf, str(it), (row_rect.x + 8, row_rect.y + 5), 20, theme.text)
             y += self.row_h
+
         surf.set_clip(clip)
