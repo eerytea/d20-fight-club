@@ -1,10 +1,10 @@
 # core/types.py
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Dict, List, Tuple
+import json
 
-# These lightweight dataclasses exist solely to satisfy tests that
-# construct/serialize them; they are not used by the game engine.
+# Lightweight dataclasses used by tests (not the game engine).
 
 @dataclass
 class TableRow:
@@ -16,6 +16,9 @@ class TableRow:
     goals_against: int
     points: int
 
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
+
 @dataclass
 class Fixture:
     week: int
@@ -24,6 +27,9 @@ class Fixture:
     home_goals: int = 0
     away_goals: int = 0
     played: bool = False
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
 
 @dataclass
 class Career:
@@ -34,3 +40,6 @@ class Career:
     rosters: Dict[int, List[Dict]]
     fixtures: List[Fixture]
     table: Dict[int, TableRow]
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
