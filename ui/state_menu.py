@@ -4,7 +4,6 @@ from __future__ import annotations
 import pygame
 from typing import Optional, Callable, List
 
-# UI kit (with simple fallbacks if needed)
 try:
     from .uiutil import Theme, Button, draw_text
     HAS_UIKIT = True
@@ -17,8 +16,7 @@ except Exception:
             self.btn_bg_hover = (70, 75, 84)
             self.btn_text = (240, 240, 245)
         @staticmethod
-        def default():
-            return Theme()
+        def default(): return Theme()
     def draw_text(surf, text, pos, color=(230,230,235), size=28):
         font = pygame.font.SysFont(None, size)
         surf.blit(font.render(text, True, color), pos)
@@ -43,7 +41,7 @@ except Exception:
             txt = self._font.render(self.text, True, theme.btn_text)
             surf.blit(txt, txt.get_rect(center=self.rect.center))
 
-# Import optional states if present
+# Optional states
 try:
     from .state_team_select import TeamSelectState
 except Exception:
@@ -57,26 +55,47 @@ try:
 except Exception:
     SettingsState = None
 
-# Our new state
-from .state_roster_browser import RosterBrowserState
+# Our new roster browser
+try:
+    from .state_roster_browser import RosterBrowserState
+except Exception:
+    RosterBrowserState = None
 
 
 class MenuState:
-    def __init__(self, app):
+    """
+    Allows construction with no args (tests do MenuState()).
+    App will be attached later via app.push_state(...).
+    """
+    def __init__(self, app: Optional[object] = None):
         self.app = app
         self.theme: Theme = Theme.default() if hasattr(Theme, "default") else Theme()
-        self.screen = app.screen
-        self.W, self.H = self.screen.get_size()
-
+        self.screen = None  # filled when app is attached
+        self.W, self.H = 800, 600  # safe defaults
         self.title_font = pygame.font.SysFont(None, 48)
+        self.buttons: List[Button] = []
+        self._built = False
+        if self.app is not None:
+            self._attach_app(self.app)
+
+    # App/framework may set state.app directly; build lazily on first draw/update.
+    def _attach_app(self, app):
+        self.app = app
+        if hasattr(app, "screen"):
+            self.screen = app.screen
+            self.W, self.H = self.screen.get_size()
         self._build_ui()
+        self._built = True
+
+    def _ensure_built(self):
+        if not self._built and getattr(self, "app", None) is not None:
+            self._attach_app(self.app)
 
     def _push(self, state_cls, *args, **kwargs):
         if hasattr(self.app, "push_state"):
             self.app.push_state(state_cls(self.app, *args, **kwargs))
 
     def _build_ui(self):
-        # Vertical button stack
         btn_w, btn_h = 340, 54
         gap = 14
         total_h = 6 * btn_h + 5 * gap  # 6 buttons including Roster
@@ -88,47 +107,27 @@ class MenuState:
             if not enabled:
                 return Button(rect, f"{label} (missing)", None, enabled=False)
             def go():
-                if builder:
-                    builder()
-                else:
-                    self._push(state_cls)
+                if builder: builder()
+                else: self._push(state_cls)
             return Button(rect, label, go, enabled=True)
 
-        self.buttons: List[Button] = []
-
-        # New Game
-        self.buttons.append(
-            maybe("New Game", pygame.Rect(x, y, btn_w, btn_h), TeamSelectState)
-        ); y += btn_h + gap
-
-        # Load
-        # If you have a Load state, wire it here; otherwise disable for now.
+        self.buttons = []
+        self.buttons.append(maybe("New Game", pygame.Rect(x, y, btn_w, btn_h), TeamSelectState)); y += btn_h + gap
         try:
-            from .state_load import LoadState  # optional
+            from .state_load import LoadState
             self.buttons.append(maybe("Load", pygame.Rect(x, y, btn_w, btn_h), LoadState))
         except Exception:
             self.buttons.append(Button(pygame.Rect(x, y, btn_w, btn_h), "Load (coming soon)", None, enabled=False))
         y += btn_h + gap
-
-        # Exhibition
+        self.buttons.append(maybe("Exhibition", pygame.Rect(x, y, btn_w, btn_h), ExhibitionPickerState)); y += btn_h + gap
         self.buttons.append(
-            maybe("Exhibition", pygame.Rect(x, y, btn_w, btn_h), ExhibitionPickerState)
+            Button(pygame.Rect(x, y, btn_w, btn_h),
+                   "Roster",
+                   (lambda: self._push(RosterBrowserState)) if RosterBrowserState else None,
+                   enabled=bool(RosterBrowserState))
         ); y += btn_h + gap
-
-        # Roster (new)
-        self.buttons.append(
-            Button(pygame.Rect(x, y, btn_w, btn_h), "Roster", lambda: self._push(RosterBrowserState))
-        ); y += btn_h + gap
-
-        # Settings
-        self.buttons.append(
-            maybe("Settings", pygame.Rect(x, y, btn_w, btn_h), SettingsState)
-        ); y += btn_h + gap
-
-        # Quit
-        self.buttons.append(
-            Button(pygame.Rect(x, y, btn_w, btn_h), "Quit", self._quit)
-        )
+        self.buttons.append(maybe("Settings", pygame.Rect(x, y, btn_w, btn_h), SettingsState)); y += btn_h + gap
+        self.buttons.append(Button(pygame.Rect(x, y, btn_w, btn_h), "Quit", self._quit))
 
     def _quit(self):
         if hasattr(self.app, "quit"):
@@ -136,18 +135,23 @@ class MenuState:
         else:
             pygame.event.post(pygame.event.Event(pygame.QUIT))
 
-    # ---- State API ----
+    # ---- state api ----
     def handle_event(self, ev):
+        self._ensure_built()
         if ev.type == pygame.KEYUP and ev.key in (pygame.K_ESCAPE, pygame.K_q):
-            self._quit()
-            return
+            self._quit(); return
         for b in self.buttons:
             b.handle_event(ev)
 
     def update(self, dt: float):
-        pass
+        self._ensure_built()
 
     def draw(self, surf):
+        self._ensure_built()
+        if surf is None and self.screen is not None:
+            surf = self.screen
+        if surf is None:
+            return
         surf.fill(self.theme.bg if hasattr(self.theme, "bg") else (20, 24, 28))
         draw_text(surf, "D20 Fight Club", (40, 40), (220, 225, 230), 48)
         for b in self.buttons:
