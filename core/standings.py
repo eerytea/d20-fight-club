@@ -74,20 +74,87 @@ def _goal_diff(r: TableRow) -> int:
     return int(r.goals_for) - int(r.goals_against)
 
 
-def sort_table(table: Table, h2h: H2HMap) -> List[Tuple[int, Dict[str, int]]]:
+def _h2h_points_for(a: int, b: int, h2h: H2HMap) -> int:
+    """Total points team a earned vs team b across all meetings (home/away)."""
+    pts = 0
+    rec_ab = h2h.get((a, b))
+    if rec_ab:
+        pts += int(rec_ab.get("a_pts", 0))
+    rec_ba = h2h.get((b, a))
+    if rec_ba:
+        pts += int(rec_ba.get("b_pts", 0))  # when b was 'a' in that key, 'b_pts' are a's points
+    return pts
+
+
+def _group_h2h_rankings(tids: List[int], h2h: H2HMap) -> Dict[int, int]:
     """
-    Return a list of (team_id, row_as_dict) sorted by:
-      points DESC, goal difference DESC, goals_for DESC, team_id ASC.
-    (Head-to-head is tracked but omitted here to keep things simple and deterministic.)
+    For a tied group, compute head-to-head points each team earned against
+    other teams in the same group. Higher is better.
     """
-    rows = list(table.values())
-    rows.sort(
-        key=lambda r: (int(r.points), _goal_diff(r), int(r.goals_for), -int(r.team_id)),
+    scores: Dict[int, int] = {tid: 0 for tid in tids}
+    for i, a in enumerate(tids):
+        for b in tids:
+            if a == b:
+                continue
+            scores[a] += _h2h_points_for(a, b, h2h)
+    return scores
+
+
+def _sorted_with_tiebreakers(table: Table, h2h: H2HMap) -> List[int]:
+    """
+    Sort team IDs by:
+      1) Points (desc)
+      2) Goal difference (desc)
+      3) Head-to-head points within tied cluster (desc)
+      4) Goals for (desc)
+      5) Team id (asc) — stable final breaker
+    """
+    # First pass: sort by coarse metrics (points, GD, GF)
+    ids = list(table.keys())
+    ids.sort(
+        key=lambda tid: (int(table[tid].points), _goal_diff(table[tid]), int(table[tid].goals_for), -int(tid)),
         reverse=True,
     )
-    # Convert TableRow -> dict for callers that expect dict-like stats
-    out: List[Tuple[int, Dict[str, int]]] = []
-    for r in rows:
-        d = asdict(r)
-        out.append((r.team_id, d))
+
+    # Second pass: resolve clusters tied on (points, GD) using head-to-head mini-table
+    i = 0
+    out: List[int] = []
+    n = len(ids)
+    while i < n:
+        tid = ids[i]
+        r = table[tid]
+        cluster = [tid]
+        j = i + 1
+        while j < n:
+            t2 = ids[j]
+            r2 = table[t2]
+            if (r.points == r2.points) and (_goal_diff(r) == _goal_diff(r2)):
+                cluster.append(t2)
+                j += 1
+            else:
+                break
+        if len(cluster) > 1:
+            h2h_scores = _group_h2h_rankings(cluster, h2h)
+            cluster.sort(
+                key=lambda t: (h2h_scores[t], int(table[t].goals_for), -int(t)),
+                reverse=True,
+            )
+        out.extend(cluster)
+        i = j
     return out
+
+
+def sort_table(table: Table, h2h: H2HMap) -> List[tuple[int, Dict[str, int]]]:
+    """
+    Return a list of (team_id, row_as_dict) sorted with the tiebreakers above.
+    """
+    ordered_ids = _sorted_with_tiebreakers(table, h2h)
+    return [(tid, asdict(table[tid])) for tid in ordered_ids]
+
+
+# Back-compat name used by tests
+def table_rows_sorted(table: Table, h2h: H2HMap) -> List[tuple[int, Dict[str, int]]]:
+    """
+    Alias expected by tests: identical to sort_table.
+    """
+    return sort_table(table, h2h)
