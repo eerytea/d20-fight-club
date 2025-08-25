@@ -6,9 +6,7 @@ from typing import Optional, Callable, List
 
 try:
     from .uiutil import Theme, Button, draw_text
-    HAS_UIKIT = True
 except Exception:
-    HAS_UIKIT = False
     class Theme:
         def __init__(self):
             self.bg = (20, 24, 28)
@@ -17,7 +15,7 @@ except Exception:
             self.btn_text = (240, 240, 245)
         @staticmethod
         def default(): return Theme()
-    # match ui/uiutil API: size first, then color
+    # fallback draw_text: size first, then color (matches uiutil)
     def draw_text(surf, text, pos, size=28, color=(230,230,235)):
         font = pygame.font.SysFont(None, size)
         surf.blit(font.render(text, True, color), pos)
@@ -36,10 +34,10 @@ except Exception:
             elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
                 if self.rect.collidepoint(ev.pos) and callable(self.on_click):
                     self.on_click()
-        def draw(self, surf, theme: Theme):
-            col = (100,100,110) if not self.enabled else (theme.btn_bg_hover if self._hover else theme.btn_bg)
+        def draw(self, surf):
+            col = (100,100,110) if not self.enabled else ((70, 75, 84) if self._hover else (50, 55, 64))
             pygame.draw.rect(surf, col, self.rect, border_radius=10)
-            txt = self._font.render(self.text, True, theme.btn_text)
+            txt = self._font.render(self.text, True, (240,240,245))
             surf.blit(txt, txt.get_rect(center=self.rect.center))
 
 # Optional states
@@ -125,9 +123,20 @@ class MenuState:
     def update(self, dt: float):
         pass
 
+    def _draw_button(self, b: Button, surf):
+        # Support both signatures: draw(surf) and draw(surf, theme)
+        try:
+            b.draw(surf)
+        except TypeError:
+            try:
+                b.draw(surf, self.theme)
+            except TypeError:
+                # final fallback: ignore theme entirely
+                b.draw(surf)
+
     def draw(self, surf):
         surf.fill(self.theme.bg if hasattr(self.theme, "bg") else (20, 24, 28))
-        # ui/uiutil.draw_text signature expects size first, then color
+        # ui/uiutil.draw_text uses size first, then color
         draw_text(surf, "D20 Fight Club", (40, 40), 48, (220, 225, 230))
         for b in self.buttons:
-            b.draw(surf, self.theme)
+            self._draw_button(b, surf)
