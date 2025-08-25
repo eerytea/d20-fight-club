@@ -26,7 +26,7 @@ class App:
         height:  int = 720,
         title:   str = "D20 Fight Club",
         fps_cap: Optional[int] = 60,
-        seed:    Optional[int] = None,   # <-- NEW
+        seed:    Optional[int] = None,
     ) -> None:
         self.width = width
         self.height = height
@@ -40,15 +40,26 @@ class App:
         self.fps_cap = fps_cap or 60
 
         # Deterministic RNG for UI helpers (team lists, random previews, etc.)
-        self.seed: int = int(seed) if seed is not None else random.randint(1, 2_147_483_647)  # <-- NEW
-        self.rng = random.Random(self.seed)  # <-- NEW
+        self.seed: int = int(seed) if seed is not None else random.randint(1, 2_147_483_647)
+        self.rng = random.Random(self.seed)
 
         self._init_pygame()
+
+    # ---------- NEW: seed helpers ----------
+
+    def derive_seed(self, *parts: object) -> int:
+        """Stable child seed derived from app.seed and arbitrary parts (week, fixture idx, etc.)."""
+        from core.rng import mix  # local import to avoid hard coupling at import time
+        return mix(self.seed, *parts)
+
+    def rng_child(self, *parts: object) -> random.Random:
+        """Child RNG derived from app.seed and parts."""
+        from core.rng import child_rng
+        return child_rng(self.seed, *parts)
 
     # --------------- init / teardown ---------------
 
     def _init_pygame(self) -> None:
-        """Initialize pygame and a display surface. Fall back to 'dummy' if a video driver is unavailable."""
         if pygame is None:
             return
         try:
@@ -56,7 +67,6 @@ class App:
             pygame.display.set_caption(self.title)
             self.screen = pygame.display.set_mode((self.width, self.height))
         except Exception:
-            # Headless fallback for test environments / CI
             try:
                 pygame.quit()
             except Exception:
@@ -67,10 +77,8 @@ class App:
                 pygame.display.set_caption(self.title)
                 self.screen = pygame.display.set_mode((self.width, self.height))
             except Exception:
-                # Ensure event module is initialized to satisfy tests calling pygame.event.get()
                 pygame.display.init()
-                self.screen = None  # no window, but event queue works
-
+                self.screen = None
         self.clock = pygame.time.Clock()
 
     def quit(self) -> None:
@@ -79,7 +87,6 @@ class App:
     # --------------- state management ---------------
 
     def push_state(self, state: Any) -> None:
-        """Push an already-constructed state; inject app and call enter()."""
         if hasattr(state, "app") and getattr(state, "app") is None:
             state.app = self  # type: ignore
         elif not hasattr(state, "app"):
@@ -107,7 +114,6 @@ class App:
             self.pop_state()
         self.push_state(state)
 
-    # Safer helpers that construct the state for you (avoid import cycles at callsite)
     def safe_push(self, cls: Type[Any], **kwargs) -> None:
         st = cls(**kwargs)
         self.push_state(st)
@@ -116,17 +122,15 @@ class App:
         st = cls(**kwargs)
         self.replace_state(st)
 
-    # --------------- main loop utilities ---------------
+    # --------------- main loop ---------------
 
     def run(self) -> None:
-        """Simple loop; states are expected to implement handle_event/update/draw."""
         if pygame is None:
             return
         while self.running:
             cap = max(1, int(self.fps_cap)) if self.fps_cap else 60
             dt = self.clock.tick(cap) / 1000.0 if self.clock else 0.016
 
-            # Events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.quit()
@@ -138,7 +142,6 @@ class App:
                     except Exception:
                         pass
 
-            # Update / Draw
             if not self._stack:
                 continue
 
@@ -151,13 +154,11 @@ class App:
                     st.draw(self.screen)
                     pygame.display.flip()
             except Exception:
-                # Keep loop alive even if a state draw/update errors; useful during dev
                 pass
 
-    # --------------- misc helpers ---------------
+    # --------------- misc ---------------
 
     def apply_resolution(self, res: tuple[int, int]) -> None:
-        """Change resolution at runtime and update the surface."""
         if pygame is None:
             return
         self.width, self.height = res
@@ -173,5 +174,4 @@ class App:
 
     @property
     def state(self) -> Any | None:
-        """Return the current (top) UI state or None if empty."""
         return self._stack[-1] if self._stack else None
