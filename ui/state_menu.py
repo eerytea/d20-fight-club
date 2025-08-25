@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pygame
-
 from .app import BaseState
 from .uiutil import Theme, Button, draw_text
 
@@ -11,24 +10,33 @@ class MenuState(BaseState):
     def __init__(self):
         self.theme = Theme()
         self.buttons: list[Button] = []
+        self._layout_built = False
 
     def enter(self) -> None:
-        # Layout buttons in a column
-        x, y = 60, 140
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        self.buttons.clear()
+        W, H = self.app.screen.get_size()
         w, h = 260, 44
         gap = 14
+        labels = [
+            ("New Season", self._new_season),
+            ("Exhibition", self._exhibition),
+            ("Roster Browser", self._open_roster_browser),  # has Generate
+            ("Load Game (coming soon)", self._load_game),
+            ("Settings (coming soon)", self._settings),
+            ("Quit", self._quit),
+        ]
+        total_h = len(labels) * h + (len(labels) - 1) * gap
+        x = (W - w) // 2
+        y = max(90, (H - total_h) // 2)
 
-        def add(label, fn):
-            nonlocal y
+        for label, fn in labels:
             self.buttons.append(Button(pygame.Rect(x, y, w, h), label, fn))
             y += h + gap
 
-        add("New Season", self._new_season)
-        add("Exhibition", self._exhibition)
-        add("Roster Browser", self._open_roster_browser)  # <- shows all teams + Generate
-        add("Load Game", self._load_game)
-        add("Settings", self._settings)
-        add("Quit", self._quit)
+        self._layout_built = True
 
     # --- Button actions ------------------------------------------------------
     def _new_season(self):
@@ -36,7 +44,7 @@ class MenuState(BaseState):
             from .state_team_select import TeamSelectState
             self.app.push_state(TeamSelectState(self.app))
         except Exception:
-            # Safe fallback: just ignore if screen not present yet
+            # Silently ignore if not ready
             pass
 
     def _exhibition(self):
@@ -51,35 +59,37 @@ class MenuState(BaseState):
             from .state_roster_browser import RosterBrowserState
             self.app.push_state(RosterBrowserState(self.app))
         except Exception:
-            # If the file isn't present, silently ignore for now
             pass
 
     def _load_game(self):
-        try:
-            from .state_season_hub import SeasonHubState
-            self.app.push_state(SeasonHubState(self.app))  # placeholder
-        except Exception:
-            pass
+        # Placeholder — avoid pushing SeasonHub with None career (caused your crash)
+        print("[Load] Coming soon.")
 
     def _settings(self):
-        # Placeholder for a settings screen
-        pass
+        print("[Settings] Coming soon.")
 
     def _quit(self):
         self.app.quit()
 
     # --- State interface -----------------------------------------------------
     def handle(self, event) -> None:
+        if not self._layout_built:
+            return
         for b in self.buttons:
             b.handle(event)
 
     def update(self, dt: float) -> None:
+        if not self._layout_built:
+            self._build_layout()
         mx, my = pygame.mouse.get_pos()
         for b in self.buttons:
             b.update((mx, my))
 
     def draw(self, surf) -> None:
+        if not self._layout_built:
+            self._build_layout()
+        W, _ = surf.get_size()
         surf.fill(self.theme.bg)
-        draw_text(surf, "D20 Fight Club", (60, 60), 48, self.theme.text)
+        draw_text(surf, "D20 Fight Club", (W // 2, 40), 48, self.theme.text, align="center")
         for b in self.buttons:
             b.draw(surf, self.theme)
