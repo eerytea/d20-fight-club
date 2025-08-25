@@ -74,9 +74,10 @@ class _F:
     ac: int
     spd: int
     alive: bool
-    ref: Dict
+    ref: Dict                # dict snapshot for combat math
     xp: int
     level: int
+    origin: Optional[Any] = None  # original object to propagate XP/level to (if not dict)
 
 def _mk_from_external(ob: Any, default_tx: int = 0, default_ty: int = 0) -> _F:
     get = lambda k, d=None: (getattr(ob, k, None) if not isinstance(ob, dict) else ob.get(k, None)) or d
@@ -91,14 +92,18 @@ def _mk_from_external(ob: Any, default_tx: int = 0, default_ty: int = 0) -> _F:
     xp  = int(get("xp", 0))
     if isinstance(ob, dict):
         ref = ob
+        origin = None
     else:
+        # keep a dict for fast math but remember origin to propagate XP/level
         ref = {
             "name": name, "team_id": tid, "hp": hp, "ac": ac, "speed": spd,
             "level": lvl, "xp": xp, "str": getattr(ob, "str", 10),
             "prof": getattr(ob, "prof", 2), "atk_mod": getattr(ob, "atk_mod", ability_mod(getattr(ob, "str", 10)) + 2),
             "weapon": getattr(ob, "weapon", {"damage": "1d6"}),
+            "ovr": getattr(ob, "ovr", 50),
         }
-    return _F(name=name, tid=tid, tx=tx, ty=ty, hp=hp, ac=ac, spd=spd, alive=True, ref=ref, xp=xp, level=lvl)
+        origin = ob
+    return _F(name=name, tid=tid, tx=tx, ty=ty, hp=hp, ac=ac, spd=spd, alive=True, ref=ref, xp=xp, level=lvl, origin=origin)
 
 def _mk_from_team_dict(team: Dict, tid: int, grid_w: int, grid_h: int) -> List[_F]:
     roster = team.get("roster") or team.get("fighters") or []
@@ -119,6 +124,7 @@ def _mk_from_team_dict(team: Dict, tid: int, grid_w: int, grid_h: int) -> List[_
             ref=rd,
             xp=int(rd.get("xp", 0)),
             level=int(rd.get("level", 1)),
+            origin=None,
         ))
     return fs
 
@@ -183,6 +189,16 @@ def _award_xp(contributors: List[_F], defeated_ref: Dict, events_typed: List[Dic
             leveled += 1
             if leveled > 10:
                 break
+        # propagate XP/level back to original object if present
+        if f.origin is not None:
+            try:
+                setattr(f.origin, "xp", f.xp)
+            except Exception:
+                pass
+            try:
+                setattr(f.origin, "level", f.level)
+            except Exception:
+                pass
 
 class TBCombat:
     """
@@ -241,7 +257,9 @@ class TBCombat:
         for me in order:
             if not me.alive:
                 continue
-            if self._end_if_done() is not None:
+            maybe = self._end_if_done()
+            if maybe is not None:
+                self.winner = maybe
                 break
             tgt = _nearest_enemy(me, self.fighters)
             if tgt is None:
@@ -278,13 +296,13 @@ class TBCombat:
                     self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
                     self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
         maybe = self._end_if_done()
-        if maybe is not None:
+        if maybe is not None and self.winner is None:
             self.winner = maybe  # 0 or 1
             self.events_typed.append({"type":"end","winner":maybe})
             self.events_str.append(format_event({"type":"end","winner":maybe}))
         self.round_no += 1
         if self.round_no > self.turn_limit and self.winner is None:
-            # Force a winner by comparing kills if we ran out of time
+            # If somehow nobody died, force a winner by comparing kills
             self.winner = 0 if self.k_home >= self.k_away else 1
             self.events_typed.append({"type":"end","winner":self.winner})
             self.events_str.append(format_event({"type":"end","winner":self.winner}))
