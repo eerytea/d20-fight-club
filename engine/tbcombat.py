@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import random
 
-# Try typed event formatter; fall back to simple strings.
 try:
     from .events import format_event  # type: ignore
 except Exception:
@@ -27,11 +26,10 @@ except Exception:
             return f"Match ended: {e.get('winner','draw')}"
         return str(e)
 
-# Ratings hook
 try:
     from core.ratings import level_up
 except Exception:
-    def level_up(f):  # pragma: no cover
+    def level_up(f):
         f["level"] = f.get("level", 1) + 1
 
 def ability_mod(score: int) -> int:
@@ -164,14 +162,6 @@ def _award_xp(contributors: List[_F], defeated_ref: Dict, events_typed: List[Dic
                 break
 
 class TBCombat:
-    """
-    Minimal d20 vs AC engine with typed + string logs.
-    run(auto=True) returns:
-      {
-        "kills_home": int, "kills_away": int, "winner": "home"|"away"|None,
-        "events_typed": [...], "events": [...]
-      }
-    """
     def __init__(self, home_team: Dict, away_team: Dict, seed: int, turn_limit: int = 100,
                  grid_w: int = 15, grid_h: int = 9):
         self.seed = int(seed)
@@ -179,14 +169,11 @@ class TBCombat:
         self.grid_w = int(grid_w)
         self.grid_h = int(grid_h)
         self.rng = random.Random(self.seed)
-
         self.home = _mk_fighters(home_team, 0, grid_w, grid_h)
         self.away = _mk_fighters(away_team, 1, grid_w, grid_h)
         self.fighters: List[_F] = self.home + self.away
-
         self.events_typed: List[Dict] = []
         self.events_str: List[str] = []
-
         self.k_home = 0
         self.k_away = 0
 
@@ -196,34 +183,27 @@ class TBCombat:
     def _end_if_done(self) -> Optional[str]:
         a = self._alive_team(0)
         b = self._alive_team(1)
-        if a and b:
-            return None
-        if a and not b:
-            return "home"
-        if b and not a:
-            return "away"
-        return None  # simultaneous wipe → draw
+        if a and b: return None
+        if a and not b: return "home"
+        if b and not a: return "away"
+        return None
 
     def run(self, auto: bool = True) -> Dict[str, Any]:
         round_no = 1
         while round_no <= self.turn_limit:
             self.events_typed.append({"type": "round", "round": round_no})
             self.events_str.append(format_event({"type": "round", "round": round_no}))
-
             order = [f for f in self.fighters if f.alive]
             self.rng.shuffle(order)
-
             for me in order:
                 if not me.alive:
                     continue
                 maybe = self._end_if_done()
                 if maybe is not None:
                     break
-
                 tgt = _nearest_enemy(me, self.fighters)
                 if tgt is None:
                     continue
-
                 steps = max(1, int(me.spd))
                 for _ in range(steps):
                     if _adjacent(me, tgt):
@@ -234,10 +214,8 @@ class TBCombat:
                     tgt = _nearest_enemy(me, self.fighters)
                     if tgt is None:
                         break
-
                 if tgt is None:
                     continue
-
                 if _adjacent(me, tgt):
                     roll = d20(self.rng)
                     crit = (roll == 20)
@@ -249,36 +227,22 @@ class TBCombat:
                         self.events_str.append(format_event({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit}))
                         if tgt.hp <= 0 and tgt.alive:
                             tgt.alive = False
-                            if tgt.tid == 0:
-                                self.k_away += 1
-                            else:
-                                self.k_home += 1
+                            if tgt.tid == 0: self.k_away += 1
+                            else:            self.k_home += 1
                             self.events_typed.append({"type":"down","target":tgt.name})
                             self.events_str.append(format_event({"type":"down","target":tgt.name}))
                             _award_xp([me], tgt.ref, self.events_typed, self.events_str)
                     else:
                         self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
-                        self.events_str.append(format_event({"type":"miss","name":"%s"%me.name,"target":tgt.name}))
-
+                        self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
             winner = self._end_if_done()
             if winner is not None:
                 self.events_typed.append({"type":"end","winner":winner})
                 self.events_str.append(format_event({"type":"end","winner":winner}))
-                return {
-                    "kills_home": self.k_home,
-                    "kills_away": self.k_away,
-                    "winner": winner,
-                    "events_typed": self.events_typed,
-                    "events": self.events_str,
-                }
+                return {"kills_home": self.k_home, "kills_away": self.k_away, "winner": winner,
+                        "events_typed": self.events_typed, "events": self.events_str}
             round_no += 1
-
         self.events_typed.append({"type":"end","winner":None})
         self.events_str.append(format_event({"type":"end","winner":None}))
-        return {
-            "kills_home": self.k_home,
-            "kills_away": self.k_away,
-            "winner": None,
-            "events_typed": self.events_typed,
-            "events": self.events_str,
-        }
+        return {"kills_home": self.k_home, "kills_away": self.k_away, "winner": None,
+                "events_typed": self.events_typed, "events": self.events_str}
