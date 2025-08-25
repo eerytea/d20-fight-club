@@ -1,212 +1,135 @@
 # core/sim.py
 from __future__ import annotations
 
-from typing import List, Tuple, Optional
 import random
+from typing import List, Optional, Tuple
 
+from engine import TBCombat, Team as BattleTeam, fighter_from_dict, layout_teams_tiles
 from .types import Career, Fixture, TableRow
-
-# Keep these around in case other modules expect them
-GRID_W, GRID_H = 10, 8
+from . import config
 
 
-# ---------------------------
-# Seeding / Determinism
-# ---------------------------
-def set_seed(seed: Optional[int]) -> None:
-    """Optionally seed Python's global RNG for reproducible sims."""
-    if seed is not None:
-        random.seed(seed)
-
-
-def _seed_for_fixture(career: Career, fx: Fixture) -> int:
-    """Deterministic per-fixture seed derived from career + fixture fields."""
-    # Mix in career.seed, week, and team ids with different primes.
-    base = getattr(career, "seed", 0) or 0
-    return (base * 10007) ^ (fx.week * 997) ^ (fx.home_id * 31 + fx.away_id * 17)
-
-
-# ---------------------------
-# Table helpers
-# ---------------------------
 def _ensure_table_rows(career: Career) -> None:
-    """Ensure every team has a TableRow in the standings."""
     if career.table:
-        # assume already built
         return
     for tid, name in enumerate(career.team_names):
         career.table[tid] = TableRow(team_id=tid, name=name)
 
 
-def _apply_table_result(tbl: TableRow, gf: int, ga: int, res: str) -> None:
-    """Apply a single match result to a table row (3/1/0)."""
+def _top_k_by_ovr(roster: List[dict], k: int) -> List[dict]:
+    return sorted(roster, key=lambda f: f.get("ovr", 50), reverse=True)[:k]
+
+
+def _apply_table_result(tbl: TableRow, gf: int, ga: int, result: str) -> None:
     tbl.played += 1
     tbl.goals_for += gf
     tbl.goals_against += ga
-    if res == "W":
+    if result == "W":
         tbl.wins += 1
-        tbl.points += 3
-    elif res == "D":
+        tbl.points += config.POINTS_WIN
+    elif result == "D":
         tbl.draws += 1
-        tbl.points += 1
+        tbl.points += config.POINTS_DRAW
     else:
         tbl.losses += 1
+        tbl.points += config.POINTS_LOSS
 
 
-# ---------------------------
-# Team strength / scoring
-# ---------------------------
-def _top_n_roster(roster: List[dict], n: int = 4) -> List[dict]:
-    """Pick the top-N fighters by 'ovr' from a roster dict list."""
-    return sorted(roster, key=lambda f: f.get("ovr", 50), reverse=True)[:n]
+def _fixture_seed(career: Career, fx: Fixture, idx_in_week: int) -> int:
+    # Deterministic but varied based on career seed + fixture identity
+    return (career.seed * 10007) ^ (fx.week * 997) ^ (fx.home_id * 31 + fx.away_id * 17 + idx_in_week)
 
 
-def _team_strength(career: Career, team_id: int, n: int = 4) -> int:
-    """Compute a simple team strength as the sum of top-N OVR."""
-    rs = career.rosters[team_id]
-    return sum(int(x.get("ovr", 50)) for x in _top_n_roster(rs, n=n))
+def _play_fixture_full(career: Career, fx: Fixture, seed: int) -> Tuple[int, int]:
+    # Build teams and hydrate top TEAM_SIZE fighters each side
+    H_id, A_id = fx.home_id, fx.away_id
+    H_name, A_name = career.team_names[H_id], career.team_names[A_id]
+    H_color, A_color = tuple(career.team_colors[H_id]), tuple(career.team_colors[A_id])
+    teamH = BattleTeam(0, H_name, H_color)
+    teamA = BattleTeam(1, A_name, A_color)
+
+    topH = _top_k_by_ovr(career.rosters[H_id], config.TEAM_SIZE)
+    topA = _top_k_by_ovr(career.rosters[A_id], config.TEAM_SIZE)
+    fighters = [fighter_from_dict({**fd, "team_id": 0}) for fd in topH] + \
+               [fighter_from_dict({**fd, "team_id": 1}) for fd in topA]
+
+    layout_teams_tiles(fighters, config.GRID_W, config.GRID_H)
+    tb = TBCombat(teamH, teamA, fighters, config.GRID_W, config.GRID_H, seed=seed)
+
+    # Run to completion with global cap
+    for _ in range(config.TURN_LIMIT):
+        if tb.winner is not None:
+            break
+        tb.take_turn()
+
+    # Score proxy: goals = number of enemies down (i.e., 4 - alive)
+    home_alive = sum(1 for f in tb.fighters if f.team_id == 0 and f.alive)
+    away_alive = sum(1 for f in tb.fighters if f.team_id == 1 and f.alive)
+    H_goals = config.TEAM_SIZE - away_alive
+    A_goals = config.TEAM_SIZE - home_alive
+    return int(H_goals), int(A_goals)
 
 
-def _quick_goals_for_pair(str_home: int, str_away: int, rng: random.Random) -> Tuple[int, int]:
-    """
-    Convert two strengths into plausible 'goals' (0–4 ish) with a bit of noise.
-    This is a deliberately simple, deterministic, and test-stable proxy.
-    """
-    # Base chances from relative strength
-    total = max(1, str_home + str_away)
-    p_home = str_home / total
-    p_away = str_away / total
-
-    # Draw 4 Bernoulli-like chances per side (cap at 4)
-    # You can tweak these multipliers for a different scoring profile.
-    trials = 4
-    h = sum(1 for _ in range(trials) if rng.random() < (0.35 + 0.4 * p_home))
-    a = sum(1 for _ in range(trials) if rng.random() < (0.35 + 0.4 * p_away))
-
-    # keep within a reasonable cap
-    return min(h, 4), min(a, 4)
-
-
-def _play_fixture_quick(career: Career, fx: Fixture, seed: int) -> None:
-    """
-    Quick, RNG-based simulation for a single fixture.
-    Updates fx.home_goals, fx.away_goals, fx.played.
-    """
-    rng = random.Random(seed)
-
-    str_home = _team_strength(career, fx.home_id)
-    str_away = _team_strength(career, fx.away_id)
-    hg, ag = _quick_goals_for_pair(str_home, str_away, rng)
-
-    fx.home_goals = int(hg)
-    fx.away_goals = int(ag)
-    fx.played = True
-
-
-# ---------------------------
-# Public APIs
-# ---------------------------
 def simulate_week_ai(career: Career) -> None:
     """
-    Simulate all unplayed fixtures in the current week using a quick, deterministic model.
-    Updates the table and advances the week if all fixtures are played.
+    Public entry: simulate all *unplayed* fixtures in the current week with full engine.
+    (Historically 'AI' referred to quick sims; we unify here to always use engine for parity.)
     """
     _ensure_table_rows(career)
-    wk = career.week
-
-    # Gather unplayed fixtures for this week
-    week_fixtures = [f for f in career.fixtures if f.week == wk and not f.played]
+    week = career.week
+    week_fixtures = [f for f in career.fixtures if f.week == week and not f.played]
     if not week_fixtures:
         return
 
-    for fx in week_fixtures:
-        seed = _seed_for_fixture(career, fx)
-        _play_fixture_quick(career, fx, seed)
+    for i, fx in enumerate(week_fixtures):
+        seed = _fixture_seed(career, fx, i)
+        hg, ag = _play_fixture_full(career, fx, seed)
+        fx.home_goals, fx.away_goals, fx.played = hg, ag, True
 
-        # Update table
-        H = career.table[fx.home_id]
-        A = career.table[fx.away_id]
-        hg = fx.home_goals or 0
-        ag = fx.away_goals or 0
-
+        H, A = career.table[fx.home_id], career.table[fx.away_id]
         if hg > ag:
             _apply_table_result(H, hg, ag, "W")
             _apply_table_result(A, ag, hg, "L")
-        elif hg < ag:
+        elif ag > hg:
             _apply_table_result(H, hg, ag, "L")
             _apply_table_result(A, ag, hg, "W")
         else:
             _apply_table_result(H, hg, ag, "D")
             _apply_table_result(A, ag, hg, "D")
 
-    # Advance to next week if everything for this week is now played
-    if all(f.played for f in career.fixtures if f.week == wk):
+    # Advance week if all fixtures now played
+    if all(f.played for f in career.fixtures if f.week == week):
         career.week += 1
 
 
 def simulate_week_full(career: Career, seed_base: int = 1000) -> None:
     """
-    Placeholder for 'full combat' simulation.
-    Currently delegates to the same quick-sim logic for stability and tests.
-    Swap _play_fixture_quick with a real engine-driven run when combat AI is ready.
+    Alias to simulate all unplayed fixtures in current week with engine (kept for API).
     """
-    _ensure_table_rows(career)
-    wk = career.week
-    week_fixtures = [f for f in career.fixtures if f.week == wk and not f.played]
-    if not week_fixtures:
-        return
-
-    for i, fx in enumerate(week_fixtures):
-        # Merge base with deterministic per-fixture seed
-        seed = seed_base ^ _seed_for_fixture(career, fx) ^ i
-        _play_fixture_quick(career, fx, seed)
-
-        H = career.table[fx.home_id]
-        A = career.table[fx.away_id]
-        hg = fx.home_goals or 0
-        ag = fx.away_goals or 0
-        if hg > ag:
-            _apply_table_result(H, hg, ag, "W")
-            _apply_table_result(A, ag, hg, "L")
-        elif hg < ag:
-            _apply_table_result(H, hg, ag, "L")
-            _apply_table_result(A, ag, hg, "W")
-        else:
-            _apply_table_result(H, hg, ag, "D")
-            _apply_table_result(A, ag, hg, "D")
-
-    if all(f.played for f in career.fixtures if f.week == wk):
-        career.week += 1
+    simulate_week_ai(career)
 
 
 def simulate_week_full_except(career: Career, skip_index: int, seed_base: int = 2000) -> None:
     """
-    Simulate the current week's fixtures with quick-sim, skipping the fixture at the
-    given 0-based index **within this week's fixtures order**.
+    Simulate all unplayed fixtures in current week except the one at position 'skip_index'
+    (0-based among this week's fixtures), using the full engine.
     """
     _ensure_table_rows(career)
-    wk = career.week
-    week_fx = [f for f in career.fixtures if f.week == wk]
-
+    week = career.week
+    week_fx = [f for f in career.fixtures if f.week == week]
     for i, fx in enumerate(week_fx):
         if i == skip_index or fx.played:
             continue
-        seed = seed_base ^ _seed_for_fixture(career, fx) ^ i
-        _play_fixture_quick(career, fx, seed)
+        seed = _fixture_seed(career, fx, i)
+        hg, ag = _play_fixture_full(career, fx, seed)
+        fx.home_goals, fx.away_goals, fx.played = hg, ag, True
 
-        H = career.table[fx.home_id]
-        A = career.table[fx.away_id]
-        hg = fx.home_goals or 0
-        ag = fx.away_goals or 0
+        H, A = career.table[fx.home_id], career.table[fx.away_id]
         if hg > ag:
-            _apply_table_result(H, hg, ag, "W")
-            _apply_table_result(A, ag, hg, "L")
-        elif hg < ag:
-            _apply_table_result(H, hg, ag, "L")
-            _apply_table_result(A, ag, hg, "W")
+            _apply_table_result(H, hg, ag, "W"); _apply_table_result(A, ag, hg, "L")
+        elif ag > hg:
+            _apply_table_result(H, hg, ag, "L"); _apply_table_result(A, ag, hg, "W")
         else:
-            _apply_table_result(H, hg, ag, "D")
-            _apply_table_result(A, ag, hg, "D")
-
-    if all(f.played for f in career.fixtures if f.week == wk):
+            _apply_table_result(H, hg, ag, "D"); _apply_table_result(A, ag, "D")
+    if all(f.played for f in career.fixtures if f.week == week):
         career.week += 1
