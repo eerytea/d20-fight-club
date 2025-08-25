@@ -1,3 +1,4 @@
+# core package marker
 # core/__init__.py
 from .career import new_career
 from .sim import simulate_week_ai
@@ -12,3 +13,4 @@ __all__ = [
     "Career", "Fixture", "TableRow",
     "ovr_from_stats", "age_xp_mult", "dev_trait_mult", "project_potential_l20",
 ]
+
