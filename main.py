@@ -1,26 +1,22 @@
-# main.py
-from __future__ import annotations
-import os, traceback
+import pathlib
+import traceback
 
-# Adjust this import if your App lives elsewhere:
 from ui.app import App
+from ui.state_menu import MenuState
 
-# Ensure App has derive_seed() for deterministic previews
-from ui.seedshim import patch_app_seed
-patch_app_seed(App)
 
-def main() -> int:
+def main():
     try:
-        app = App()
+        app = App(width=1024, height=576, title="D20 Fight Club")
+        app.push_state(MenuState())
         app.run()
-        return 0
     except Exception:
-        os.makedirs("saves", exist_ok=True)
-        with open(os.path.join("saves", "crash.log"), "a", encoding="utf-8") as f:
-            f.write("\n=== Crash ===\n")
+        # Minimal crash logging compatible with your saves/ folder
+        pathlib.Path("saves").mkdir(exist_ok=True)
+        with open("saves/crash.log", "w", encoding="utf-8") as f:
             traceback.print_exc(file=f)
-        traceback.print_exc()
-        return 1
+        raise
+
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
