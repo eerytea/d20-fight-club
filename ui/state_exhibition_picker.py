@@ -1,209 +1,151 @@
 # ui/state_exhibition_picker.py
 from __future__ import annotations
-from typing import Any, Optional, Callable
+
+from typing import Optional
 
 try:
     import pygame
-except Exception:
+except Exception:  # pragma: no cover
     pygame = None  # type: ignore
 
-try:
-    from .uiutil import Button  # type: ignore
-except Exception:
-    Button = None  # type: ignore
-
-
-def _mk_button(rect, label: str, on_click: Callable[[], None]):
-    if Button is not None:
-        return Button(rect, label, on_click=on_click)
-    return _SimpleButton(rect, label, on_click)
-
-
-class _SimpleButton:
-    def __init__(self, rect, label: str, on_click: Callable[[], None]):
-        self.rect = rect
-        self.label = label
-        self.on_click = on_click
-        self.hover = False
-        self._font = pygame.font.SysFont("consolas", 20) if pygame else None
-
-    def handle_event(self, e) -> bool:
-        if pygame is None:
-            return False
-        if e.type == pygame.MOUSEMOTION:
-            self.hover = self.rect.collidepoint(e.pos)
-        elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and self.rect.collidepoint(e.pos):
-            self.on_click()
-            return True
-        return False
-
-    def draw(self, surf) -> None:
-        if pygame is None:
-            return
-        bg = (120, 120, 120) if self.hover else (98, 98, 98)
-        pygame.draw.rect(surf, bg, self.rect, border_radius=8)
-        pygame.draw.rect(surf, (50, 50, 50), self.rect, 2, border_radius=8)
-        t = self._font.render(self.label, True, (20, 20, 20))
-        surf.blit(t, (self.rect.x + (self.rect.w - t.get_width()) // 2,
-                      self.rect.y + (self.rect.h - t.get_height()) // 2))
+from .uiutil import Theme, Button, ListView, draw_panel, draw_text
+from .app import App
+from core.career import new_career
 
 
 class ExhibitionPickerState:
-    """
-    Pick Home/Away teams from a full generated league (temporary career),
-    then launch ExhibitionState with those ids.
-    """
+    def __init__(self, app: Optional[App] = None) -> None:
+        self.app: App | None = app
+        self.career = None
 
-    def __init__(self, app: Optional[Any] = None) -> None:
-        self.app = app
-        self._title_font = None
-        self._font = None
+        self.home_lv: ListView | None = None
+        self.away_lv: ListView | None = None
+        self.home_roster_lv: ListView | None = None
+        self.away_roster_lv: ListView | None = None
 
-        self.career = None    # temporary career used for team names/rosters
-        self.home_id: Optional[int] = None
-        self.away_id: Optional[int] = None
+        self.home_team: int | None = None
+        self.away_team: int | None = None
 
-        self._buttons = []
+        self.btn_start: Button | None = None
+        self.btn_back: Button | None = None
+
+    # ------------- lifecycle -------------
 
     def enter(self) -> None:
-        if pygame is None:
+        if pygame is None or self.app is None:
             return
-        if not pygame.font.get_init():
-            pygame.font.init()
-        self._title_font = pygame.font.SysFont("consolas", 28)
-        self._font = pygame.font.SysFont("consolas", 20)
+        self.career = new_career(seed=getattr(self.app, "seed", None), user_team_id=None)
 
-        self._build_temp_career(getattr(self.app, "seed", 12345))
-        self._layout_buttons()
+        W, H = self.app.width, self.app.height
+        pad = 16
+        col_w = (W - pad * 3) // 2
+        list_h = int(H * 0.5) - 60
+
+        # Home column
+        home_list_rect = pygame.Rect(pad, pad, col_w, list_h)
+        home_roster_rect = pygame.Rect(pad, home_list_rect.bottom + pad, col_w, list_h)
+
+        # Away column
+        away_list_rect = pygame.Rect(home_list_rect.right + pad, pad, col_w, list_h)
+        away_roster_rect = pygame.Rect(away_list_rect.x, away_list_rect.bottom + pad, col_w, list_h)
+
+        self.home_lv = ListView(home_list_rect, self.career.team_names, row_h=28)
+        self.away_lv = ListView(away_list_rect, self.career.team_names, row_h=28)
+
+        self.home_roster_lv = ListView(home_roster_rect, [], row_h=24)
+        self.away_roster_lv = ListView(away_roster_rect, [], row_h=24)
+
+        # Buttons
+        btn_w, btn_h = 220, 44
+        self.btn_start = Button(pygame.Rect(W - pad - btn_w, H - pad - btn_h, btn_w, btn_h), "Start Match", on_click=self._start_match)
+        self.btn_back = Button(pygame.Rect(pad, H - pad - btn_h, btn_w, btn_h), "Back", on_click=lambda: self.app.pop_state())
 
     def exit(self) -> None:
         pass
 
-    def _build_temp_career(self, seed: int) -> None:
-        from core.career import new_career  # type: ignore
-        self.career = new_career(seed=seed, user_team_id=None)
-        if not getattr(self.career, "team_names", None):
-            raise RuntimeError("Career generator returned no teams for exhibition list")
+    # ------------- events -------------
 
-    def _layout_buttons(self) -> None:
-        if pygame is None:
-            return
-        w, h = getattr(self.app, "width", 1024), getattr(self.app, "height", 600)
-        y = h - 64
-        self._buttons.clear()
-        self._buttons.append(_mk_button(pygame.Rect(24, y, 120, 44), "Back", self._back))
-        self._buttons.append(_mk_button(pygame.Rect(w - 220, y, 180, 44), "Start Match", self._start_match))
+    def handle_event(self, event: "pygame.event.Event") -> bool:
+        consumed = False
 
-    # ---- input ----
+        if self.home_lv and self.home_lv.handle_event(event):
+            self.home_team = self.home_lv.selected
+            self._refresh_roster(is_home=True)
+            consumed = True
 
-    def handle_event(self, e) -> bool:
-        if pygame is None:
-            return False
-        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
-            mx, my = e.pos
-            left, right = self._left_list_rect(), self._right_list_rect()
-            if left.collidepoint(mx, my):
-                idx = self._idx_from_pos(my, left)
-                if idx is not None:
-                    self.home_id = idx
-                    if self.away_id == self.home_id:
-                        self.away_id = None
-                    return True
-            if right.collidepoint(mx, my):
-                idx = self._idx_from_pos(my, right)
-                if idx is not None:
-                    self.away_id = idx
-                    if self.home_id == self.away_id:
-                        self.home_id = None
-                    return True
+        if self.away_lv and self.away_lv.handle_event(event):
+            self.away_team = self.away_lv.selected
+            self._refresh_roster(is_home=False)
+            consumed = True
 
-        for b in self._buttons:
-            if b.handle_event(e):
-                return True
-        if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
-            self._back()
-            return True
-        return False
+        if self.home_roster_lv and self.home_roster_lv.handle_event(event):
+            consumed = True
+        if self.away_roster_lv and self.away_roster_lv.handle_event(event):
+            consumed = True
+
+        if self.btn_start and self.btn_start.handle_event(event):
+            consumed = True
+        if self.btn_back and self.btn_back.handle_event(event):
+            consumed = True
+
+        return consumed
 
     def update(self, dt: float) -> None:
         pass
 
-    # ---- drawing ----
+    # ------------- rendering -------------
 
-    def _left_list_rect(self):
-        w, h = getattr(self.app, "width", 1024), getattr(self.app, "height", 600)
-        return pygame.Rect(24, 64, (w - 72) // 2, h - 64 - 80)
+    def draw(self, surface: "pygame.Surface") -> None:
+        th = Theme()
+        surface.fill(th.bg)
+        draw_text(surface, "Exhibition — Pick Home & Away", (surface.get_width() // 2, 20), size=30, align="center")
 
-    def _right_list_rect(self):
-        w, h = getattr(self.app, "width", 1024), getattr(self.app, "height", 600)
-        return pygame.Rect(24 + (w - 72) // 2 + 24, 64, (w - 72) // 2, h - 64 - 80)
+        self.home_lv.draw(surface, title="Home — Teams")
+        self.away_lv.draw(surface, title="Away — Teams")
+        self.home_roster_lv.draw(surface, title="Home — Roster")
+        self.away_roster_lv.draw(surface, title="Away — Roster")
 
-    def draw(self, surf) -> None:
-        if pygame is None:
+        self.btn_start.draw(surface)
+        self.btn_back.draw(surface)
+
+        # Small hint
+        draw_text(surface, "Tip: mouse wheel scrolls lists", (surface.get_width() // 2, surface.get_height() - 28),
+                  size=16, align="center", color=th.muted)
+
+    # ------------- helpers -------------
+
+    def _refresh_roster(self, *, is_home: bool) -> None:
+        if self.career is None:
             return
-        w, h = surf.get_size()
-        title = self._title_font.render("Exhibition – Pick Home and Away", True, (255, 255, 255))
-        surf.blit(title, (w // 2 - title.get_width() // 2, 16))
-
-        left, right = self._left_list_rect(), self._right_list_rect()
-        pygame.draw.rect(surf, (40, 44, 52), left, border_radius=8)
-        pygame.draw.rect(surf, (40, 44, 52), right, border_radius=8)
-
-        if self.career:
-            self._draw_list(surf, left, self.career.team_names, selected=self.home_id, header="Home")
-            self._draw_list(surf, right, self.career.team_names, selected=self.away_id, header="Away")
-
-        for b in self._buttons:
-            b.draw(surf)
-
-    def _draw_list(self, surf, rect, names, selected: Optional[int], header: str) -> None:
-        hdr = self._font.render(header, True, (220, 220, 220))
-        surf.blit(hdr, (rect.x + 10, rect.y + 8))
-        line_h = 24
-        for i, name in enumerate(names):
-            y = rect.y + 32 + i * line_h
-            if y + line_h > rect.bottom - 8:
-                break
-            sel = (i == selected)
-            color = (255, 230, 120) if sel else (220, 220, 220)
-            t = self._font.render(name, True, color)
-            surf.blit(t, (rect.x + 10, y))
-
-    def _idx_from_pos(self, my: int, rect) -> Optional[int]:
-        line_h = 24
-        idx = (my - (rect.y + 32)) // line_h
-        if self.career is None or idx < 0:
-            return None
-        if idx >= len(self.career.team_names):
-            return None
-        return int(idx)
-
-    # ---- actions ----
+        tid = self.home_team if is_home else self.away_team
+        if tid is None:
+            (self.home_roster_lv if is_home else self.away_roster_lv).set_items([])
+            return
+        roster = self.career.rosters[tid]
+        labels = [f"{f['name']}  (OVR {f.get('ovr', 50)})" for f in roster]
+        (self.home_roster_lv if is_home else self.away_roster_lv).set_items(labels)
 
     def _start_match(self) -> None:
-        if self.career is None or self.home_id is None or self.away_id is None or self.home_id == self.away_id:
+        if self.home_team is None or self.away_team is None:
+            self._msg("Pick both Home and Away teams")
             return
+
+        # seed for exhibition (deterministic wrt app.seed and selection)
         try:
-            # Use existing ExhibitionState which expects (career, home_id, away_id)
-            from ui.state_exhibition import ExhibitionState  # type: ignore
-            if hasattr(self.app, "safe_push"):
-                self.app.safe_replace(ExhibitionState, app=self.app, career=self.career,
-                                      home_id=self.home_id, away_id=self.away_id)
-            else:
-                self.app.replace_state(ExhibitionState(self.app, self.career, self.home_id, self.away_id))
-        except Exception as e:
-            self._message(f"Couldn't start exhibition:\n{e}")
+            seed = self.app.derive_seed("exhibition", self.home_team, self.away_team)
+        except Exception:
+            seed = None
 
-    def _back(self) -> None:
-        if hasattr(self.app, "pop_state"):
-            self.app.pop_state()
+        # Try to push your exhibition/match viewer if present; otherwise show a message
+        try:
+            from .state_exhibition import ExhibitionState
+            self.app.replace_state(ExhibitionState(home_team_id=self.home_team, away_team_id=self.away_team, seed=seed))
+        except Exception:
+            self._msg("Exhibition viewer not wired yet")
 
-    def _message(self, text: str) -> None:
+    def _msg(self, text: str) -> None:
         try:
             from .state_message import MessageState
-            if hasattr(self.app, "push_state"):
-                self.app.push_state(MessageState(app=self.app, text=text))
-            else:
-                print(text)
+            self.app.safe_push(MessageState, message=text)
         except Exception:
             print(text)
