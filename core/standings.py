@@ -92,7 +92,7 @@ def _group_h2h_rankings(tids: List[int], h2h: H2HMap) -> Dict[int, int]:
     other teams in the same group. Higher is better.
     """
     scores: Dict[int, int] = {tid: 0 for tid in tids}
-    for i, a in enumerate(tids):
+    for a in tids:
         for b in tids:
             if a == b:
                 continue
@@ -152,9 +152,15 @@ def sort_table(table: Table, h2h: H2HMap) -> List[tuple[int, Dict[str, int]]]:
     return [(tid, asdict(table[tid])) for tid in ordered_ids]
 
 
-# Back-compat name used by tests
-def table_rows_sorted(table: Table, h2h: H2HMap) -> List[tuple[int, Dict[str, int]]]:
+# Back-compat name used by tests — returns a list of dicts with "tid" key
+def table_rows_sorted(table: Table, h2h: H2HMap) -> List[Dict[str, int]]:
     """
-    Alias expected by tests: identical to sort_table.
+    Tests expect a list of dicts, each having a 'tid' key.
     """
-    return sort_table(table, h2h)
+    ordered_ids = _sorted_with_tiebreakers(table, h2h)
+    rows: List[Dict[str, int]] = []
+    for tid in ordered_ids:
+        d = asdict(table[tid])
+        # Provide both 'tid' (for tests) and the dataclass fields (team_id, points, etc.)
+        rows.append({"tid": tid, **d})
+    return rows
