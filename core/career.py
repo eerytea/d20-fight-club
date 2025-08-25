@@ -16,13 +16,17 @@ from .standings import new_table, Table, H2HMap, sort_table
 
 # --- Creation helpers ---------------------------------------------------------
 
+_TEAM_NAMES = [
+    "Alderfall Dragons", "Blackridge Wolves", "Stormbreak Griffins", "Titan's Gate",
+    "Nightveil Phantoms", "Ironcrest Knights", "Ashmar Rangers", "Silvercoil Serpents",
+    "Ravenmere", "Stoneheart Golems", "Starhaven Magi", "Shadowfen Stalkers",
+    "Frostpeak Yetis", "Sunspire Paladins", "Redwater Raiders", "Moonveil Oracles",
+    "Thornbarb Vipers", "Eaglecrest Sentinels", "Direbrook Bears", "Mirewatch Leeches",
+    "Cinderforge Hammers", "Whisperwind Sylphs", "Grimhold Reapers", "Highspire Wardens",
+]
+
 def _default_team_name(i: int) -> str:
-    animals = [
-        "Dragons", "Wolves", "Griffins", "Titans",
-        "Phantoms", "Knights", "Rangers", "Serpents",
-        "Ravens", "Golems", "Magi", "Stalkers",
-    ]
-    return f"{animals[i % len(animals)]} {100 + i}"
+    return _TEAM_NAMES[i % len(_TEAM_NAMES)]
 
 def _generate_teams(
     n: int,
@@ -123,7 +127,7 @@ class Career:
         team_names: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> "Career":
-        # Accept alias used by some tests
+        # Accept alias used by tests
         if "team_count" in kwargs and kwargs["team_count"] is not None:
             n_teams = int(kwargs["team_count"])
 
@@ -138,7 +142,7 @@ class Career:
         table, h2h = new_table(team_ids)
         return cls(
             seed=seed,
-            week=0,
+            week=1,  # <-- start at Week 1 (tests expect this)
             teams=teams,
             fixtures=fixtures,
             table=table,
@@ -217,7 +221,7 @@ class Career:
             h2h[(int(a), int(b))] = dict(v)
         return cls(
             seed=data.get("seed", DEFAULT_SEED),
-            week=data.get("week", 0),
+            week=data.get("week", 1),
             teams=list(data.get("teams", [])),
             fixtures=fixtures,
             table=dict(data.get("table", {})),
@@ -235,7 +239,6 @@ def new_career(
     team_names: Optional[List[str]] = None,
     **kwargs: Any,
 ) -> Career:
-    # Accept alias used by some tests
     if "team_count" in kwargs and kwargs["team_count"] is not None:
         n_teams = int(kwargs["team_count"])
     return Career.new(
