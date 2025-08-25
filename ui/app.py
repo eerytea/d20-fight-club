@@ -2,176 +2,88 @@
 from __future__ import annotations
 
 import os
-import random
-from typing import Any, List, Type, Optional
+import time
+from typing import Optional, List, Any, Tuple
 
-try:
-    import pygame
-except Exception:  # pragma: no cover
-    pygame = None  # type: ignore
+import pygame
 
 
 class App:
-    """
-    Minimal app shell:
-      - Initializes pygame (with safe fallback to headless 'dummy' driver if needed)
-      - Owns the window/screen, clock, state stack
-      - Provides push_state/pop_state/replace helpers used by UI states
-      - Supports fps_cap and exposes a deterministic seed + rng for UI screens
-    """
-
-    def __init__(
-        self,
-        width: int = 1280,
-        height:  int = 720,
-        title:   str = "D20 Fight Club",
-        fps_cap: Optional[int] = 60,
-        seed:    Optional[int] = None,
-    ) -> None:
-        self.width = width
-        self.height = height
-        self.title = title
-        self.data: dict[str, Any] = {}
-        self.running: bool = True
-        self._stack: List[Any] = []
-
-        self.screen = None
-        self.clock = None
-        self.fps_cap = fps_cap or 60
-
-        # Deterministic RNG for UI helpers (team lists, random previews, etc.)
-        self.seed: int = int(seed) if seed is not None else random.randint(1, 2_147_483_647)
-        self.rng = random.Random(self.seed)
-
-        self._init_pygame()
-
-    # ---------- NEW: seed helpers ----------
-
-    def derive_seed(self, *parts: object) -> int:
-        """Stable child seed derived from app.seed and arbitrary parts (week, fixture idx, etc.)."""
-        from core.rng import mix  # local import to avoid hard coupling at import time
-        return mix(self.seed, *parts)
-
-    def rng_child(self, *parts: object) -> random.Random:
-        """Child RNG derived from app.seed and parts."""
-        from core.rng import child_rng
-        return child_rng(self.seed, *parts)
-
-    # --------------- init / teardown ---------------
-
-    def _init_pygame(self) -> None:
-        if pygame is None:
-            return
-        try:
-            pygame.init()
-            pygame.display.set_caption(self.title)
-            self.screen = pygame.display.set_mode((self.width, self.height))
-        except Exception:
-            try:
-                pygame.quit()
-            except Exception:
-                pass
-            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-            pygame.init()
-            try:
-                pygame.display.set_caption(self.title)
-                self.screen = pygame.display.set_mode((self.width, self.height))
-            except Exception:
-                pygame.display.init()
-                self.screen = None
+    def __init__(self, width: int = 1024, height: int = 576, title: str = "App"):
+        # Ensure Pygame is initialized
+        if os.environ.get("SDL_VIDEODRIVER") == "dummy":
+            # Headless safe (tests)
+            pass
+        pygame.init()
+        pygame.display.set_caption(title)
+        self.screen = pygame.display.set_mode((width, height))
         self.clock = pygame.time.Clock()
+        self.running = True
 
+        self._stack: List["BaseState"] = []
+
+    # --- State stack ---------------------------------------------------------
+    @property
+    def state(self) -> Optional["BaseState"]:
+        return self._stack[-1] if self._stack else None
+
+    def push_state(self, st: "BaseState") -> None:
+        st.app = self
+        self._stack.append(st)
+        if hasattr(st, "enter"):
+            st.enter()
+
+    def pop_state(self) -> None:
+        if self._stack:
+            st = self._stack.pop()
+            if hasattr(st, "exit"):
+                st.exit()
+
+    # --- Main loop -----------------------------------------------------------
+    def run(self) -> None:
+        while self.running:
+            dt = self.clock.tick(60) / 1000.0
+            st = self.state
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                elif st is not None and hasattr(st, "handle"):
+                    st.handle(event)
+
+            if st is not None and hasattr(st, "update"):
+                st.update(dt)
+
+            # Paint
+            if st is not None and hasattr(st, "draw"):
+                st.draw(self.screen)
+            else:
+                self.screen.fill((16, 20, 24))
+
+            pygame.display.flip()
+
+    # Convenience; some states use this pattern
     def quit(self) -> None:
         self.running = False
 
-    # --------------- state management ---------------
 
-    def push_state(self, state: Any) -> None:
-        if hasattr(state, "app") and getattr(state, "app") is None:
-            state.app = self  # type: ignore
-        elif not hasattr(state, "app"):
-            try:
-                state.app = self  # type: ignore
-            except Exception:
-                pass
+class BaseState:
+    """
+    Optional base class for states; concrete states can ignore and simply
+    define handle/update/draw as needed. The App sets `state.app = app`.
+    """
+    app: App
 
-        self._stack.append(state)
-        if hasattr(state, "enter"):
-            state.enter()
+    def enter(self) -> None:  # optional
+        pass
 
-    def pop_state(self) -> None:
-        if not self._stack:
-            return
-        st = self._stack.pop()
-        if hasattr(st, "exit"):
-            try:
-                st.exit()
-            except Exception:
-                pass
+    def exit(self) -> None:  # optional
+        pass
 
-    def replace_state(self, state: Any) -> None:
-        if self._stack:
-            self.pop_state()
-        self.push_state(state)
+    def handle(self, event) -> None:  # optional
+        pass
 
-    def safe_push(self, cls: Type[Any], **kwargs) -> None:
-        st = cls(**kwargs)
-        self.push_state(st)
+    def update(self, dt: float) -> None:  # optional
+        pass
 
-    def safe_replace(self, cls: Type[Any], **kwargs) -> None:
-        st = cls(**kwargs)
-        self.replace_state(st)
-
-    # --------------- main loop ---------------
-
-    def run(self) -> None:
-        if pygame is None:
-            return
-        while self.running:
-            cap = max(1, int(self.fps_cap)) if self.fps_cap else 60
-            dt = self.clock.tick(cap) / 1000.0 if self.clock else 0.016
-
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.quit()
-                    break
-                if self._stack and hasattr(self._stack[-1], "handle_event"):
-                    try:
-                        if self._stack[-1].handle_event(event):
-                            continue
-                    except Exception:
-                        pass
-
-            if not self._stack:
-                continue
-
-            st = self._stack[-1]
-            try:
-                if hasattr(st, "update"):
-                    st.update(dt)
-                if self.screen is not None and hasattr(st, "draw"):
-                    self.screen.fill((22, 24, 28))
-                    st.draw(self.screen)
-                    pygame.display.flip()
-            except Exception:
-                pass
-
-    # --------------- misc ---------------
-
-    def apply_resolution(self, res: tuple[int, int]) -> None:
-        if pygame is None:
-            return
-        self.width, self.height = res
-        try:
-            self.screen = pygame.display.set_mode(res)
-        except Exception:
-            if not pygame.display.get_init():
-                pygame.display.init()
-            self.screen = None
-
-    def set_fps_cap(self, fps: Optional[int]) -> None:
-        self.fps_cap = fps or 60
-
-    @property
-    def state(self) -> Any | None:
-        return self._stack[-1] if self._stack else None
+    def draw(self, surf) -> None:  # required-ish
+        raise NotImplementedError
