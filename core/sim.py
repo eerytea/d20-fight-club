@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 from engine import TBCombat, Team as BattleTeam, fighter_from_dict, layout_teams_tiles
 from .types import Career, Fixture, TableRow
 from . import config
+from .rng import mix
 
 
 def _ensure_table_rows(career: Career) -> None:
@@ -36,8 +37,8 @@ def _apply_table_result(tbl: TableRow, gf: int, ga: int, result: str) -> None:
 
 
 def _fixture_seed(career: Career, fx: Fixture, idx_in_week: int) -> int:
-    # Deterministic but varied based on career seed + fixture identity
-    return (career.seed * 10007) ^ (fx.week * 997) ^ (fx.home_id * 31 + fx.away_id * 17 + idx_in_week)
+    # Stable, cross-process child seed derived from career.seed and fixture identity
+    return mix(career.seed, "fixture", fx.week, fx.home_id, fx.away_id, idx_in_week)
 
 
 def _play_fixture_full(career: Career, fx: Fixture, seed: int) -> Tuple[int, int]:
@@ -62,7 +63,7 @@ def _play_fixture_full(career: Career, fx: Fixture, seed: int) -> Tuple[int, int
             break
         tb.take_turn()
 
-    # Score proxy: goals = number of enemies down (i.e., 4 - alive)
+    # Score proxy: goals = number of enemies down (i.e., TEAM_SIZE - alive)
     home_alive = sum(1 for f in tb.fighters if f.team_id == 0 and f.alive)
     away_alive = sum(1 for f in tb.fighters if f.team_id == 1 and f.alive)
     H_goals = config.TEAM_SIZE - away_alive
@@ -72,8 +73,8 @@ def _play_fixture_full(career: Career, fx: Fixture, seed: int) -> Tuple[int, int
 
 def simulate_week_ai(career: Career) -> None:
     """
-    Public entry: simulate all *unplayed* fixtures in the current week with full engine.
-    (Historically 'AI' referred to quick sims; we unify here to always use engine for parity.)
+    Simulate all unplayed fixtures in the current week using the full engine with
+    deterministic per-fixture seeds derived from career.seed.
     """
     _ensure_table_rows(career)
     week = career.week
@@ -97,22 +98,20 @@ def simulate_week_ai(career: Career) -> None:
             _apply_table_result(H, hg, ag, "D")
             _apply_table_result(A, ag, hg, "D")
 
-    # Advance week if all fixtures now played
+    # Advance if week is complete
     if all(f.played for f in career.fixtures if f.week == week):
         career.week += 1
 
 
 def simulate_week_full(career: Career, seed_base: int = 1000) -> None:
-    """
-    Alias to simulate all unplayed fixtures in current week with engine (kept for API).
-    """
+    """Alias retained for API compatibility; uses deterministic seeds internally."""
     simulate_week_ai(career)
 
 
 def simulate_week_full_except(career: Career, skip_index: int, seed_base: int = 2000) -> None:
     """
     Simulate all unplayed fixtures in current week except the one at position 'skip_index'
-    (0-based among this week's fixtures), using the full engine.
+    (0-based among this week's fixtures), using deterministic per-fixture seeds.
     """
     _ensure_table_rows(career)
     week = career.week
