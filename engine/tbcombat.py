@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Iterable
 import random
 
-# Try typed event formatter; fall back to simple strings.
 try:
     from .events import format_event  # type: ignore
 except Exception:
@@ -27,7 +26,6 @@ except Exception:
             return f"Match ended: {e.get('winner','draw')}"
         return str(e)
 
-# Ratings hook
 try:
     from core.ratings import level_up
 except Exception:
@@ -80,11 +78,9 @@ class _F:
     level: int
 
 def _mk_from_external(ob: Any, default_tx: int = 0, default_ty: int = 0) -> _F:
-    """Map a test/legacy fighter object or dict → internal _F."""
     get = lambda k, d=None: (getattr(ob, k, None) if not isinstance(ob, dict) else ob.get(k, None)) or d
     name = get("name", "F")
     tid = int(get("team_id", 0))
-    # positions may be x/y or tx/ty in tests
     tx = int(get("x", get("tx", default_tx)))
     ty = int(get("y", get("ty", default_ty)))
     hp = int(get("hp", 10))
@@ -92,7 +88,6 @@ def _mk_from_external(ob: Any, default_tx: int = 0, default_ty: int = 0) -> _F:
     spd = int(get("speed", 6))
     lvl = int(get("level", 1))
     xp  = int(get("xp", 0))
-    # back-ref dict so XP/level can mutate if it's a dict; otherwise create one
     if isinstance(ob, dict):
         ref = ob
     else:
@@ -197,35 +192,30 @@ class TBCombat:
           TBCombat(teamA, teamB, fighters_list, GRID_W, GRID_H, seed=999)
     """
     def __init__(self, home_team: Any, away_team: Any, *args, **kwargs):
-        # Defaults
         self.turn_limit = int(kwargs.pop("turn_limit", 100))
         self.grid_w = int(kwargs.pop("grid_w", 15))
         self.grid_h = int(kwargs.pop("grid_h", 9))
 
-        # Detect legacy signature: third positional is a list/iterable of fighters
+        self.round_no = 1
+        self.winner: Optional[str] = None  # <- tests expect this attribute
+        self.events_typed: List[Dict] = []
+        self.events_str: List[str] = []
+        self.k_home = 0
+        self.k_away = 0
+
+        # Legacy signature: third positional is fighter list
         if args and isinstance(args[0], (list, tuple)):
             fighters_in: Iterable[Any] = args[0]
             if len(args) >= 3:
                 self.grid_w = int(args[1])
                 self.grid_h = int(args[2])
-            seed = int(kwargs.get("seed", 0))
-            self.seed = seed
+            self.seed = int(kwargs.get("seed", 0))
             self.rng = random.Random(self.seed)
-            # Map external fighters directly
-            self.fighters: List[_F] = []
-            for idx, ob in enumerate(fighters_in):
-                # try to preserve pre-set positions (tests call layout_teams_tiles)
-                self.fighters.append(_mk_from_external(ob, 0, idx))
-            # track kills
-            self.k_home = 0
-            self.k_away = 0
-            self.events_typed: List[Dict] = []
-            self.events_str: List[str] = []
+            self.fighters: List[_F] = [_mk_from_external(ob, 0, idx) for idx, ob in enumerate(fighters_in)]
             return
 
-        # Otherwise, use new path with team dicts and per-side auto layout
+        # New path (team dicts + seed positional or kw)
         if args:
-            # Back-compat if someone passed seed positionally
             seed = int(args[0])
         else:
             seed = int(kwargs.get("seed", 0))
@@ -235,16 +225,78 @@ class TBCombat:
         self.grid_w = int(kwargs.get("grid_w", self.grid_w))
         self.grid_h = int(kwargs.get("grid_h", self.grid_h))
 
-        # Build fighters from team dicts
         self.home = _mk_from_team_dict(home_team, 0, self.grid_w, self.grid_h)
         self.away = _mk_from_team_dict(away_team, 1, self.grid_w, self.grid_h)
         self.fighters: List[_F] = self.home + self.away
 
-        self.events_typed: List[Dict] = []
-        self.events_str: List[str] = []
+    # ---- one-round step (tests call this repeatedly) ----
+    def step(self) -> None:
+        if self.winner is not None or self.round_no > self.turn_limit:
+            return
+        self.events_typed.append({"type": "round", "round": self.round_no})
+        self.events_str.append(format_event({"type": "round", "round": self.round_no}))
 
-        self.k_home = 0
-        self.k_away = 0
+        order = [f for f in self.fighters if f.alive]
+        self.rng.shuffle(order)
+        for me in order:
+            if not me.alive:
+                continue
+            if self._end_if_done() is not None:
+                break
+            tgt = _nearest_enemy(me, self.fighters)
+            if tgt is None:
+                continue
+            steps = max(1, int(me.spd))
+            for _ in range(steps):
+                if _adjacent(me, tgt):
+                    break
+                _step_toward(me, tgt, self.fighters, self.grid_w, self.grid_h)
+                self.events_typed.append({"type":"move","name":me.name,"to":(me.tx,me.ty)})
+                self.events_str.append(format_event({"type":"move","name":me.name,"to":(me.tx,me.ty)}))
+                tgt = _nearest_enemy(me, self.fighters)
+                if tgt is None:
+                    break
+            if tgt is None:
+                continue
+            if _adjacent(me, tgt):
+                roll = d20(self.rng)
+                crit = (roll == 20)
+                total = roll + attack_bonus(me.ref)
+                if crit or total >= tgt.ac:
+                    dmg = damage_roll(me.ref, crit, self.rng)
+                    tgt.hp -= dmg
+                    self.events_typed.append({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit})
+                    self.events_str.append(format_event({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit}))
+                    if tgt.hp <= 0 and tgt.alive:
+                        tgt.alive = False
+                        if tgt.tid == 0: self.k_away += 1
+                        else:            self.k_home += 1
+                        self.events_typed.append({"type":"down","target":tgt.name})
+                        self.events_str.append(format_event({"type":"down","target":tgt.name}))
+                        _award_xp([me], tgt.ref, self.events_typed, self.events_str)
+                else:
+                    self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
+                    self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
+        maybe = self._end_if_done()
+        if maybe is not None:
+            self.winner = maybe
+            self.events_typed.append({"type":"end","winner":maybe})
+            self.events_str.append(format_event({"type":"end","winner":maybe}))
+        self.round_no += 1
+        if self.round_no > self.turn_limit and self.winner is None:
+            self.winner = None  # draw (already None)
+
+    # ---- run-to-completion convenience ----
+    def run(self, auto: bool = True) -> Dict[str, Any]:
+        while self.winner is None and self.round_no <= self.turn_limit:
+            self.step()
+        return {
+            "kills_home": self.k_home,
+            "kills_away": self.k_away,
+            "winner": self.winner,
+            "events_typed": self.events_typed,
+            "events": self.events_str,
+        }
 
     def _alive_team(self, tid: int) -> bool:
         return any(f.alive and f.tid == tid for f in self.fighters)
@@ -256,62 +308,3 @@ class TBCombat:
         if a and not b: return "home"
         if b and not a: return "away"
         return None
-
-    def run(self, auto: bool = True) -> Dict[str, Any]:
-        round_no = 1
-        while round_no <= self.turn_limit:
-            self.events_typed.append({"type": "round", "round": round_no})
-            self.events_str.append(format_event({"type": "round", "round": round_no}))
-            order = [f for f in self.fighters if f.alive]
-            self.rng.shuffle(order)
-            for me in order:
-                if not me.alive:
-                    continue
-                maybe = self._end_if_done()
-                if maybe is not None:
-                    break
-                tgt = _nearest_enemy(me, self.fighters)
-                if tgt is None:
-                    continue
-                steps = max(1, int(me.spd))
-                for _ in range(steps):
-                    if _adjacent(me, tgt):
-                        break
-                    _step_toward(me, tgt, self.fighters, self.grid_w, self.grid_h)
-                    self.events_typed.append({"type":"move","name":me.name,"to":(me.tx,me.ty)})
-                    self.events_str.append(format_event({"type":"move","name":me.name,"to":(me.tx,me.ty)}))
-                    tgt = _nearest_enemy(me, self.fighters)
-                    if tgt is None:
-                        break
-                if tgt is None:
-                    continue
-                if _adjacent(me, tgt):
-                    roll = d20(self.rng)
-                    crit = (roll == 20)
-                    total = roll + attack_bonus(me.ref)
-                    if crit or total >= tgt.ac:
-                        dmg = damage_roll(me.ref, crit, self.rng)
-                        tgt.hp -= dmg
-                        self.events_typed.append({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit})
-                        self.events_str.append(format_event({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit}))
-                        if tgt.hp <= 0 and tgt.alive:
-                            tgt.alive = False
-                            if tgt.tid == 0: self.k_away += 1
-                            else:            self.k_home += 1
-                            self.events_typed.append({"type":"down","target":tgt.name})
-                            self.events_str.append(format_event({"type":"down","target":tgt.name}))
-                            _award_xp([me], tgt.ref, self.events_typed, self.events_str)
-                    else:
-                        self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
-                        self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
-            winner = self._end_if_done()
-            if winner is not None:
-                self.events_typed.append({"type":"end","winner":winner})
-                self.events_str.append(format_event({"type":"end","winner":winner}))
-                return {"kills_home": self.k_home, "kills_away": self.k_away, "winner": winner,
-                        "events_typed": self.events_typed, "events": self.events_str}
-            round_no += 1
-        self.events_typed.append({"type":"end","winner":None})
-        self.events_str.append(format_event({"type":"end","winner":None}))
-        return {"kills_home": self.k_home, "kills_away": self.k_away, "winner": None,
-                "events_typed": self.events_typed, "events": self.events_str}
