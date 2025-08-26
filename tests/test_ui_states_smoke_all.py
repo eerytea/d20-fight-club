@@ -9,14 +9,13 @@ from ui.app import App
 from core.career import Career
 from core.config import DEFAULT_SEED, LEAGUE_TEAMS, TEAM_SIZE
 
-# States we expect; missing ones are skipped automatically.
 STATE_NAMES = [
     "ui.state_menu.MenuState",
     "ui.state_team_select.TeamSelectState",
     "ui.state_exhibition_picker.ExhibitionPickerState",
-    "ui.state_season_hub.SeasonHubState",            # if present
-    "ui.state_match.MatchState",                     # if present
-    "ui.state_roster_browser.RosterBrowserState",    # if present
+    "ui.state_season_hub.SeasonHubState",
+    "ui.state_match.MatchState",
+    "ui.state_roster_browser.RosterBrowserState",
 ]
 
 def _import_opt(name):
@@ -38,43 +37,50 @@ def _dummy_career():
 def test_all_states_construct_and_draw():
     app = _make_app()
     screen = app.screen
-    for fullname in STATE_NAMES:
-        cls = _import_opt(fullname)
-        if cls is None:
-            continue  # missing in this branch — fine
+    try:
+        for fullname in STATE_NAMES:
+            cls = _import_opt(fullname)
+            if cls is None:
+                continue
 
-        # Try minimal ctor signatures commonly used
-        try:
-            sig = inspect.signature(cls)
-            if len(sig.parameters) == 0:
-                st = cls()
-            else:
-                try:
-                    st = cls(app)
-                except TypeError:
-                    if "SeasonHub" in fullname:
-                        st = cls(app, career=_dummy_career())
-                    elif "MatchState" in fullname:
-                        car = _dummy_career()
-                        th, ta = car.teams[0], car.teams[min(1, len(car.teams)-1)]
-                        st = cls(app, th, ta)
-                    else:
-                        # give up on this optional state
-                        continue
-        except Exception as e:
-            raise AssertionError(f"Failed to construct {fullname}: {e}")
+            try:
+                sig = inspect.signature(cls)
+                if len(sig.parameters) == 0:
+                    st = cls()
+                else:
+                    try:
+                        st = cls(app)
+                    except TypeError:
+                        if "SeasonHub" in fullname:
+                            st = cls(app, career=_dummy_career())
+                        elif "MatchState" in fullname:
+                            car = _dummy_career()
+                            th, ta = car.teams[0], car.teams[min(1, len(car.teams)-1)]
+                            st = cls(app, th, ta)
+                        else:
+                            continue
+            except Exception as e:
+                raise AssertionError(f"Failed to construct {fullname}: {e}")
 
-        # Ensure state has an app and enter() via the real push mechanism
+            try:
+                app.push_state(st)
+                for _ in range(3):
+                    if hasattr(app.state, "update"): app.state.update(1/60)
+                    screen.fill((0,0,0))
+                    if hasattr(app.state, "draw"): app.state.draw(screen)
+                    pygame.event.pump()
+            except Exception as e:
+                raise AssertionError(f"State {fullname} crashed on draw: {e}")
+            finally:
+                app.pop_state()
+    finally:
+        # Ensure pygame tears down cleanly on Windows to avoid heap issues
         try:
-            app.push_state(st)
-            # tick a few frames
-            for _ in range(3):
-                if hasattr(app.state, "update"): app.state.update(1/60)
-                screen.fill((0,0,0))
-                if hasattr(app.state, "draw"): app.state.draw(screen)
-                pygame.event.pump()
-        except Exception as e:
-            raise AssertionError(f"State {fullname} crashed on draw: {e}")
-        finally:
-            # clean up stack for the next state
-            app.pop_state()
+            pygame.display.quit()
+        except Exception:
+            pass
+        try:
+            pygame.font.quit()
+        except Exception:
+            pass
+        pygame.quit()
