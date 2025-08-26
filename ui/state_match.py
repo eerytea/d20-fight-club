@@ -1,4 +1,4 @@
-# ui/state_match.py — larger grid, collision-free lineup, accurate HP bars
+# ui/state_match.py — larger grid, collision-free lineup, name fits HP bar
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -98,7 +98,6 @@ def _choose_events(obj: Any) -> List[Dict[str, Any]]:
 # ---------- Lineup helpers (no initial overlaps) ----------
 
 def _ring_positions(cx: int, cy: int, r: int):
-    # Generate ring coordinates around (cx,cy) for radius r in a deterministic order
     for dx in range(-r, r + 1):
         yield cx + dx, cy - r
         yield cx + dx, cy + r
@@ -111,20 +110,15 @@ def _nearest_free_on_side(start: Tuple[int, int], used: set, w: int, h: int, sid
     sx, sy = start
     sx = max(0, min(w - 1, sx))
     sy = max(0, min(h - 1, sy))
-    # Keep placement on each team's half if we can
     mid = w // 2
-    def on_side(x):
-        return x < mid if side == 0 else x >= mid
-
+    def on_side(x): return x < mid if side == 0 else x >= mid
     if (sx, sy) not in used and on_side(sx):
         return sx, sy
-    # Expand search
     maxr = max(w, h) + 2
     for r in range(1, maxr):
         for x, y in _ring_positions(sx, sy, r):
             if 0 <= x < w and 0 <= y < h and (x, y) not in used and on_side(x):
                 return x, y
-    # If we must, allow crossing sides as a last resort
     for r in range(1, maxr):
         for x, y in _ring_positions(sx, sy, r):
             if 0 <= x < w and 0 <= y < h and (x, y) not in used:
@@ -133,40 +127,28 @@ def _nearest_free_on_side(start: Tuple[int, int], used: set, w: int, h: int, sid
 
 
 def _lineup_teams_tiles(fighters: List[Any], grid_w: int, grid_h: int) -> None:
-    """
-    Deterministic, non-overlapping lineup with as many columns as needed.
-
-    Team 0: x = 2, 4, 6, ... (stays on the left half)
-    Team 1: x = w-3, w-5, w-7, ... (stays on the right half)
-    Rows prefer odd indices (1,3,5,...) then even (0,2,4,...) if needed.
-    Writes BOTH (tx,ty) AND (x,y) to avoid any transient overlap.
-    """
     team0 = [f for f in fighters if getattr(f, "team_id", 0) == 0]
     team1 = [f for f in fighters if getattr(f, "team_id", 0) == 1]
 
     def y_rows(h: int) -> List[int]:
         odds = list(range(1, h, 2))
         evens = list(range(0, h, 2))
-        rows = odds + evens
-        # Avoid very top/bottom edges if possible
-        return [y for y in rows if 0 <= y < h]
+        return [y for y in (odds + evens) if 0 <= y < h]
 
     rows = y_rows(grid_h)
     cap_per_col = max(1, len(rows))
 
     def columns_for_side(side: int) -> List[int]:
         if side == 0:
-            cols = list(range(2, grid_w // 2, 2))  # 2,4,6,... up to left half
+            cols = list(range(2, grid_w // 2, 2))
         else:
-            cols = list(range(grid_w - 3, grid_w // 2 - 1, -2))  # w-3,w-5,... down to right half
-        # Ensure at least one column per side
+            cols = list(range(grid_w - 3, grid_w // 2 - 1, -2))
         return cols if cols else ([1] if side == 0 else [grid_w - 2])
 
     def place_group(fs: List[Any], side: int):
         cols = columns_for_side(side)
         need_cols = (len(fs) + cap_per_col - 1) // cap_per_col
         if need_cols > len(cols):
-            # If we run out of spaced columns, extend by stepping 1
             if side == 0:
                 extra = [x for x in range(cols[-1] + 1, grid_w // 2)]
             else:
@@ -181,11 +163,10 @@ def _lineup_teams_tiles(fighters: List[Any], grid_w: int, grid_h: int) -> None:
                 r_idx = 0
                 c_idx += 1
             if c_idx >= len(cols):
-                c_idx = len(cols) - 1  # clamp, we’ll spill vertically and then search nearest
+                c_idx = len(cols) - 1
             cx, cy = cols[c_idx], rows[r_idx]
             x, y = _nearest_free_on_side((cx, cy), used, grid_w, grid_h, side)
             used.add((x, y))
-            # write both desired and actual
             for k, v in (("tx", x), ("ty", y), ("x", x), ("y", y)):
                 try:
                     setattr(f, k, v)
@@ -196,6 +177,29 @@ def _lineup_teams_tiles(fighters: List[Any], grid_w: int, grid_h: int) -> None:
 
     place_group(team0, 0)
     place_group(team1, 1)
+
+
+# -------- text fit helper --------
+def _fit_text_size(font, text: str, target_w: int, max_h: int, *, min_px=8, max_px=32) -> int:
+    """
+    Return a font size that fits within target_w and max_h.
+    We try a single-shot proportional guess, then tighten with a small loop.
+    """
+    max_px = max(min_px, max_px)
+    # start with optimistic size proportional to width
+    rect_at_max = font.get_rect(text, size=max_px)
+    base_w = max(1, rect_at_max.width)
+    guess = int(max(min_px, min(max_px, max_px * (target_w / base_w))))
+    # now clamp by height, if needed
+    def fits(sz: int) -> bool:
+        r = font.get_rect(text, size=sz)
+        return r.width <= target_w and font.get_sized_height(sz) <= max_h
+    sz = guess
+    # tighten downwards until both width and height fit
+    while sz > min_px and not fits(sz):
+        sz -= 1
+    # if even min doesn't fit height, just return min
+    return max(min_px, sz)
 
 
 class MatchState(BaseState):
@@ -223,7 +227,6 @@ class MatchState(BaseState):
         self._auto_timer = 0.0
         self._auto_period = 0.20
 
-        # Accept TBCombat directly or build from team dicts
         if isinstance(home_or_engine, TBCombat):
             self.engine = home_or_engine
         elif away is None and isinstance(home_or_engine, dict) and "combat" in home_or_engine:
@@ -231,7 +234,6 @@ class MatchState(BaseState):
         else:
             self.engine = self._build_engine_from_teams(home_or_engine, away)
 
-        # Fighters & max_hp guard (for HP bars)
         self._fighters = getattr(self.engine, "fighters", [])
         for f in self._fighters:
             if not hasattr(f, "max_hp"):
@@ -240,16 +242,13 @@ class MatchState(BaseState):
                 except Exception:
                     setattr(f, "max_hp", int(getattr(f, "hp", 1)))
 
-        # Event list
         self.events = _choose_events(self.engine)
 
-        # Log
         self.log_lines: List[str] = []
         self._ev_idx = 0
         self._log_line_h = 22
         self.log_scroll = 0
 
-    # --- engine construction ---
     def _build_engine_from_teams(self, home: dict, away: dict) -> TBCombat:
         nameH = str(home.get("name", "Home"))
         nameA = str(away.get("name", "Away"))
@@ -267,12 +266,9 @@ class MatchState(BaseState):
             setattr(f, "team_id", 1)
         fighters = fH + fA
 
-        # Place everyone neatly; assigns both (tx,ty) and (x,y) with no duplicates.
         _lineup_teams_tiles(fighters, GRID_W, GRID_H)
 
-        # Seed derived from names for determinism between same teams
         seed = (hash(nameH) ^ (hash(nameA) << 1)) & 0xFFFFFFFF
-
         return TBCombat(teamA, teamB, fighters, GRID_W, GRID_H, seed=seed)
 
     # --- state lifecycle ---
@@ -346,25 +342,21 @@ class MatchState(BaseState):
         self._side_rect = pygame.Rect(self._grid_rect.right + pad, pad, sidebar_w, self._grid_rect.height)
         self._btn_rect = pygame.Rect(pad, self._grid_rect.bottom + pad, W - pad * 2, btn_h)
 
-        # cell sizes for 19x11 look
         self._cell_w = max(26, self._grid_rect.w // GRID_W)
         self._cell_h = max(26, self._grid_rect.h // GRID_H)
 
-        # fonts
-        tile_h = self._cell_h
-        self._font_name = get_font(max(12, min(int(tile_h * 0.30), 28)))
+        self._font_name = get_font(28)   # we compute per-name size at draw
         self._font_log = get_font(18)
         self._log_line_h = self._font_log.get_sized_height()
 
-        # buttons
         bw = 160
         gap = 10
         x = self._btn_rect.x
         y = self._btn_rect.y
-        self.btn_next_turn = Button(pygame.Rect(x, y, bw, self._btn_rect.h), "Next Turn", self._action_next_turn)
-        self.btn_next_round = Button(pygame.Rect(x + (bw + gap), y, bw, self._btn_rect.h), "Next Round", self._action_next_round)
-        self.btn_auto = Button(pygame.Rect(x + 2 * (bw + gap), y, bw, self._btn_rect.h), "Auto: OFF", self._toggle_auto)
-        self.btn_finish = Button(pygame.Rect(self._btn_rect.right - bw, y, bw, self._btn_rect.h), "Finish", self._finish)
+        self.btn_next_turn  = Button(pygame.Rect(x,                 y, bw, self._btn_rect.h), "Next Turn",  self._action_next_turn)
+        self.btn_next_round = Button(pygame.Rect(x + (bw + gap),    y, bw, self._btn_rect.h), "Next Round", self._action_next_round)
+        self.btn_auto       = Button(pygame.Rect(x + 2*(bw + gap),  y, bw, self._btn_rect.h), "Auto: OFF",  self._toggle_auto)
+        self.btn_finish     = Button(pygame.Rect(self._btn_rect.right - bw, y, bw, self._btn_rect.h), "Finish", self._finish)
 
         self._layout_built = True
 
@@ -378,22 +370,54 @@ class MatchState(BaseState):
 
     def _draw_fighter(self, surf, gx: int, gy: int, name: str, tid: int, hp: int, max_hp: int):
         r = self._cell_rect(gx, gy)
+
+        # dynamic stack sizing that always fits:
+        # dot → name → bar; shrink bar/dot if needed to leave enough room for the name
+        # dot radius
+        dot = max(4, int(min(r.w, r.h) * 0.22))
+        name_top_gap = 6
+        bar_gap = 4
+        bar_h = max(6, int(r.h * 0.12))
+
+        # ensure at least 10px name height budget
+        def name_budget(dot_r, bar_h_now):
+            return r.h - (dot_r * 2 + name_top_gap + bar_gap + 6 + bar_h_now)
+
+        budget = name_budget(dot, bar_h)
+        # if too tight, first shrink bar, then dot
+        if budget < 10:
+            # try shrinking bar (down to 5)
+            shrink = min(bar_h - 5, 10 - budget)
+            if shrink > 0:
+                bar_h -= shrink
+                budget = name_budget(dot, bar_h)
+        if budget < 10:
+            # shrink dot (down to 4)
+            shrink = min(dot - 4, 10 - budget)
+            if shrink > 0:
+                dot -= shrink
+                budget = name_budget(dot, bar_h)
+        budget = max(10, budget)
+
+        # dot
         color = (220, 64, 64) if tid == 0 else (64, 110, 220)
-        dot = min(r.w, r.h) // 4 + 4
         pygame.draw.circle(surf, color, (r.centerx, r.top + dot + 4), dot)
 
-        nm = _short_name(name)
-        txt_rect = self._font_name.get_rect(nm)
-        txt_rect.midtop = (r.centerx, r.top + dot * 2 + 6)
-        self._font_name.render_to(surf, txt_rect.topleft, nm, self.theme.text)
+        # HP bar prelim (we use bar_w to size the name)
+        bar_w = int(r.w * 0.9)
+        bar_x = r.centerx - bar_w // 2
 
+        # name, sized to HP bar width + height budget
+        nm = _short_name(name)
+        name_px = _fit_text_size(self._font_name, nm, bar_w, budget, min_px=8, max_px=int(r.h * 0.4))
+        txt_rect = self._font_name.get_rect(nm, size=name_px)
+        txt_rect.midtop = (r.centerx, r.top + dot * 2 + name_top_gap)
+        self._font_name.render_to(surf, txt_rect.topleft, nm, self.theme.text, size=name_px)
+
+        # HP bar (after name)
         denom = max(1, int(max_hp))
         frac = max(0.0, min(1.0, float(hp) / float(denom)))
-        bar_w = int(r.w * 0.9)
-        bar_h = max(6, int(r.h * 0.12))
-        bar_x = r.centerx - bar_w // 2
-        bar_y = txt_rect.bottom + 4
-
+        bar_y = txt_rect.bottom + bar_gap
         pygame.draw.rect(surf, (40, 40, 46), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
         fill_w = max(0, int(bar_w * frac))
         fill_col = (70, 200, 120) if frac >= 0.5 else (220, 80, 80)
