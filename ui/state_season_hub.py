@@ -42,15 +42,15 @@ class SeasonHubState(BaseState):
             nonlocal x, y
             self.buttons.append(Button(pygame.Rect(x, y, btn_w, btn_h), label, fn))
             x -= btn_w + gap
-            if x < panel.x + 12:  # wrap to new row if needed
+            if x < panel.x + 12:
                 x = panel.right - (btn_w + gap)
                 y -= btn_h + gap
 
         add("Back", self._back)
         add("Save (soon)", self._save)
-        add("Table (soon)", self._table)
-        add("Schedule (soon)", self._schedule)
-        add("Roster (soon)", self._roster)
+        add("Table", self._table)
+        add("Schedule", self._schedule)
+        add("Roster", self._roster)
         add("Sim Rest of Week", self._sim_rest)
         add("Play My Match", self._play_my_match)
 
@@ -64,13 +64,31 @@ class SeasonHubState(BaseState):
         print("[SeasonHub] Save coming soon.")
 
     def _table(self):
-        print("[SeasonHub] Table coming soon.")
+        if self.career is None:
+            print("[SeasonHub] No career loaded.")
+            return
+        try:
+            from .state_table import TableState
+            self.app.push_state(TableState(self.app, self.career))
+        except Exception as e:
+            print("[SeasonHub] Table open failed:", e)
 
     def _schedule(self):
-        print("[SeasonHub] Schedule coming soon.")
+        if self.career is None:
+            print("[SeasonHub] No career loaded.")
+            return
+        try:
+            from .state_schedule import ScheduleState
+            self.app.push_state(ScheduleState(self.app, self.career))
+        except Exception as e:
+            print("[SeasonHub] Schedule open failed:", e)
 
     def _roster(self):
-        print("[SeasonHub] Roster coming soon.")
+        try:
+            from .state_roster_browser import RosterBrowserState
+            self.app.push_state(RosterBrowserState(self.app))
+        except Exception as e:
+            print("[SeasonHub] Roster open failed:", e)
 
     def _sim_rest(self):
         if self.career is None:
@@ -87,9 +105,8 @@ class SeasonHubState(BaseState):
             print("[SeasonHub] No career loaded.")
             return
         try:
-            # Try to open a match viewer if available
             from .state_match import MatchState
-            # Find the first unplayed fixture for user team if available
+            # pick first unplayed fixture; bias to user team if set
             uid = getattr(self.career, "user_team_id", None)
             fixture = None
             for fx in getattr(self.career, "fixtures", []):
@@ -101,7 +118,6 @@ class SeasonHubState(BaseState):
             if fixture is None:
                 print("[SeasonHub] No pending fixtures.")
                 return
-            # Build team dicts expected by MatchState
             tH = next(t for t in self.career.teams if t["tid"] == fixture.home_id)
             tA = next(t for t in self.career.teams if t["tid"] == fixture.away_id)
             self.app.push_state(MatchState(self.app, tH, tA))
@@ -123,7 +139,7 @@ class SeasonHubState(BaseState):
             b.update((mx, my))
 
     def draw(self, surface: "pygame.Surface") -> None:
-        th = Theme()
+        th = self.theme
         surface.fill(th.bg)
 
         # Title
@@ -131,10 +147,7 @@ class SeasonHubState(BaseState):
             title = "Season Hub — No season loaded"
             subtitle = "Load a save or start a New Season to continue."
         else:
-            try:
-                wk = getattr(self.career, "week", 1)
-            except Exception:
-                wk = 1
+            wk = getattr(self.career, "week", 1)
             title = f"Season Hub — Week {wk}"
             subtitle = getattr(self.career, "league_name", "Single League")
 
@@ -144,12 +157,7 @@ class SeasonHubState(BaseState):
         # Main panel
         draw_panel(surface, self.panel_rect, th)
 
-        # If no career, show a placeholder message
-        if self.career is None:
-            msg = "No season is active. Use New Season from the main menu."
-            draw_text(surface, msg, (self.panel_rect.centerx, self.panel_rect.centery - 12), 22, th.text, align="center")
-        else:
-            # Minimal season snapshot (safe to access)
+        if self.career:
             try:
                 team_count = len(getattr(self.career, "teams", []))
                 draw_text(surface, f"Teams: {team_count}", (self.panel_rect.x + 16, self.panel_rect.y + 16), 20, th.text)
