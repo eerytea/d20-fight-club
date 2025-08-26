@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pygame
-from dataclasses import dataclass, is_dataclass, asdict
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 
@@ -57,7 +57,7 @@ def _mk_fighter(fd: Dict[str, Any]) -> Any:
 
 
 class MatchState(BaseState):
-    """Gridless viewer: large dots, names + HP on top, scrollable log, Next Turn / Next Round / Auto / Finish."""
+    """Grid viewer with large fighter dots, name+HP above, scrollable log, and Next Turn / Next Round controls."""
     def __init__(self, app, home_team: Dict[str, Any], away_team: Dict[str, Any]):
         self.app = app
         self.theme = Theme()
@@ -68,7 +68,7 @@ class MatchState(BaseState):
         self.combat: TBCombat | None = None
         self._started = False
 
-        # Our own team objects for color/name lookup (don’t rely on TBCombat attrs)
+        # our team lookup (don’t depend on TBCombat attrs)
         self._teams_by_tid: Dict[int, TBTeam] = {}
 
         # UI rects + buttons
@@ -81,13 +81,13 @@ class MatchState(BaseState):
         self.btn_finish: Button | None = None
         self.btn_back:   Button | None = None
 
-        # Event log + name maps
+        # Event log + mapping
         self.events: List[str] = []
         self._last_seen = {k: 0 for k in ("events_typed", "typed_events", "event_log_typed", "events", "log")}
         self._idx_to_name: Dict[int, str] = {}
         self._pid_to_name: Dict[str, str] = {}
         self._log_scroll = 0
-        self._last_round_no: int | None = None  # for Next Round detection
+        self._last_round_seen = 0  # parsed from events
 
         self.auto = False
         self._auto_steps_per_update = 10
@@ -111,6 +111,7 @@ class MatchState(BaseState):
 
     def _name_from_val(self, v: Any) -> str:
         if isinstance(v, str):
+            # try PID map first
             return self._pid_to_name.get(v, v)
         if isinstance(v, int):
             return self._idx_to_name.get(v, f"#{v}")
@@ -118,7 +119,7 @@ class MatchState(BaseState):
             if "name" in v: return str(v["name"])
             pid = v.get("pid")
             if pid is not None: return self._pid_to_name.get(str(pid), str(pid))
-        if hasattr(v, "name"):  # object w/ name attr
+        if hasattr(v, "name"):
             return str(getattr(v, "name"))
         if hasattr(v, "pid"):
             pid = getattr(v, "pid")
@@ -130,95 +131,81 @@ class MatchState(BaseState):
         if t: return tuple(getattr(t, "color", (200, 200, 200)))
         return (200, 200, 200)
 
-    # ---------- event normalization + formatting ----------
-    def _normalize_event(self, e: Any) -> Dict[str, Any]:
-        """Return a dict-like view of the event regardless of representation."""
-        if isinstance(e, dict):
-            d = dict(e)
-            d.setdefault("type", d.get("type") or d.get("event") or d.get("kind") or "event")
-            return d
-        if is_dataclass(e):
-            d = asdict(e)
-            d.setdefault("type", getattr(e, "type", e.__class__.__name__))
-            return d
-        if hasattr(e, "__dict__"):
-            d = dict(e.__dict__)
-            d.setdefault("type", getattr(e, "type", e.__class__.__name__))
-            return d
-        # string or unknown — return as string-wrapped dict
-        return {"type": "str", "s": str(e)}
+    def _current_round_from_engine(self) -> int | None:
+        return getattr(self.combat, "round", None) if self.combat else None
 
-    def _fmt_event(self, e_raw: Any) -> str:
+    # ---------- event formatting ----------
+    def _fmt_event(self, e: Any) -> str:
         if _format_event:
             try:
-                return _format_event(e_raw)
+                s = _format_event(e)
+                if isinstance(s, str) and s.strip():
+                    return s
             except Exception:
                 pass
 
-        e = self._normalize_event(e_raw)
-        t = e.get("type", "event")
+        if isinstance(e, dict):
+            t = e.get("type") or e.get("event") or e.get("kind") or "event"
 
-        def who_from(keys=("who","actor","attacker","src","i","a","idx","actor_idx","attacker_idx","src_idx")):
-            for k in keys:
-                if k in e: return self._name_from_val(e[k])
-            return "?"
+            who_keys = (
+                "who","who_id","who_idx","actor","actor_id","actor_idx",
+                "src","src_id","src_idx","attacker","att","unit","unit_idx",
+                "i","a","idx"
+            )
+            tgt_keys = (
+                "target","target_id","target_idx","defender","def","dst","dst_idx",
+                "j","b"
+            )
 
-        def tgt_from(keys=("target","defender","dst","j","b","target_idx","defender_idx","dst_idx")):
-            for k in keys:
-                if k in e: return self._name_from_val(e[k])
-            return "?"
+            def who_from():
+                # direct name fields first
+                nm = e.get("who_name") or e.get("actor_name") or e.get("attacker_name") or e.get("unit_name")
+                if nm: return str(nm)
+                for k in who_keys:
+                    if k in e: return self._name_from_val(e[k])
+                return "?"
 
-        if t in ("round","StartRound","start","Round","Start"):
-            rn = e.get("round", e.get("r", None))
-            try:
-                self._last_round_no = int(rn) if rn is not None else self._last_round_no
-            except Exception:
-                pass
-            rn_txt = rn if rn is not None else "?"
-            return f"— Round {rn_txt} —"
+            def tgt_from():
+                nm = e.get("target_name") or e.get("defender_name")
+                if nm: return str(nm)
+                for k in tgt_keys:
+                    if k in e: return self._name_from_val(e[k])
+                return "?"
 
-        if t in ("move","Move"):
-            to = e.get("to")
-            if not to:
-                to = (e.get("x"), e.get("y"))
-            return f"{who_from()} moves to {to}"
+            if t in ("round","StartRound","start"):
+                r = e.get("round", e.get("r", "?"))
+                try: self._last_round_seen = int(r)
+                except Exception: pass
+                return f"— Round {r} —"
+            if t in ("move","Move"):
+                to = e.get("to") or (e.get("x"), e.get("y"))
+                return f"{who_from()} moves to {to}"
+            if t in ("hit","Hit"):
+                dmg = e.get("dmg") or e.get("damage") or e.get("amount") or "?"
+                return f"{who_from()} hits {tgt_from()} for {dmg}"
+            if t in ("miss","Miss"):
+                return f"{who_from()} misses {tgt_from()}"
+            if t in ("down","Down"):
+                w = who_from() or tgt_from()
+                return f"{w} is down!"
+            if t in ("end","End","finish"):
+                return "End of match"
 
-        if t in ("hit","Hit"):
-            dmg = e.get("dmg") or e.get("damage") or e.get("amount") or "?"
-            return f"{who_from()} hits {tgt_from()} for {dmg}"
-
-        if t in ("miss","Miss"):
-            return f"{who_from()} misses {tgt_from()}"
-
-        if t in ("down","Down","KO"):
-            w = who_from()
-            if w == "?":
-                w = tgt_from()
-            return f"{w} is down!"
-
-        if t in ("end","End","finish","Finish"):
-            return "End of match"
-
-        # string fallback with index->name substitution
-        s = e.get("s")
-        if s is not None:
-            import re as _re
-            def repl(m):
-                key, val = m.group(1), int(m.group(2))
-                return f" {key}={self._idx_to_name.get(val, f'#{val}')}"
-            return _re.sub(r"\b(i|j|a|b|src|dst|attacker|defender)\s*=\s*(\d+)", repl, s)
-
-        # generic dict pretty-print resolving any actor/target-ish keys to names
-        try:
+            # fallback: pretty dict with names resolved
             parts = []
             for k, v in e.items():
-                if k in ("who","actor","attacker","src","i","a","idx","actor_idx","attacker_idx","src_idx",
-                         "target","defender","dst","j","b","target_idx","defender_idx","dst_idx"):
+                if k in who_keys or k in tgt_keys:
                     v = self._name_from_val(v)
                 parts.append(f"{k}={v}")
             return ", ".join(parts)
-        except Exception:
-            return str(e_raw)
+
+        # string fallback: substitute indices with names
+        import re as _re
+        s = str(e)
+        def repl(m):
+            key, val = m.group(1), int(m.group(2))
+            return f" {key}={self._idx_to_name.get(val, f'#{val}')}"
+        return _re.sub(r"\b(i|j|a|b|src|dst|attacker|defender)\s*=\s*(\d+)", repl, s)
 
     # ---------- lifecycle ----------
     def enter(self) -> None:
@@ -229,32 +216,26 @@ class MatchState(BaseState):
         self._built = True
 
     def _build_match(self) -> None:
-        # Build our own team objects (ids 0/1)
         tA = TBTeam(0, self.home_d.get("name","Home"), tuple(self.home_d.get("color",(180,180,220))))
         tB = TBTeam(1, self.away_d.get("name","Away"), tuple(self.away_d.get("color",(220,180,180))))
         self._teams_by_tid = {0: tA, 1: tB}
 
-        # Fighters mapped into tid 0/1
         h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
         a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
         fighters: List[Any] = []
         for idx, fd in enumerate(h_roster): fighters.append(_mk_fighter({**fd, "team_id": 0, "pid": fd.get("pid") or f"H{idx}"}))
         for idx, fd in enumerate(a_roster): fighters.append(_mk_fighter({**fd, "team_id": 1, "pid": fd.get("pid") or f"A{idx}"}))
 
-        # Pre-layout (engine helper if available, else two columns)
         if _layout_teams_tiles: _layout_teams_tiles(fighters, _GRID_W, _GRID_H)
         else: self._layout_two_columns(fighters)
 
-        # Start combat
         self.combat = TBCombat(tA, tB, fighters, _GRID_W, _GRID_H, seed=42)
-
         self._ensure_layout()
 
-        # reset log tracking
         for k in self._last_seen: self._last_seen[k] = 0
         self.events.clear()
         self._log_scroll = 0
-        self._last_round_no = None
+        self._last_round_seen = 0
         self._started = False
 
     def _layout_two_columns(self, fighters: List[Any]) -> None:
@@ -262,7 +243,7 @@ class MatchState(BaseState):
         right = [f for f in fighters if getattr(f, "team_id", 0) == 1]
         gapL = max(1, _GRID_H // (len(left)  + 1)) if left  else 2
         gapR = max(1, _GRID_H // (len(right) + 1)) if right else 2
-        for i, f in enumerate(left,  start=1): f.x = f.tx = 1;               f.y = f.ty = min(_GRID_H-1, i*gapL)
+        for i, f in enumerate(left,  start=1): f.x = f.tx = 1;            f.y = f.ty = min(_GRID_H-1, i*gapL)
         for i, f in enumerate(right, start=1): f.x = f.tx = max(0,_GRID_W-2); f.y = f.ty = min(_GRID_H-1, i*gapR)
 
     def _ensure_layout(self) -> None:
@@ -280,8 +261,7 @@ class MatchState(BaseState):
         self.rect_grid = pygame.Rect(self.rect_panel.x + 12, self.rect_panel.y + 12, split - 24, self.rect_panel.h - 84)
         self.rect_log  = pygame.Rect(self.rect_panel.x + split, self.rect_panel.y + 12, self.rect_panel.w - split - 24, self.rect_panel.h - 84)
 
-        # Five buttons: Next Turn, Next Round, Auto, Finish, Back
-        btn_w, btn_h, gap = 150, 44, 10
+        btn_w, btn_h, gap = 160, 44, 10
         y = self.rect_panel.bottom - (btn_h + 10)
         x = self.rect_panel.x + 12
         self.btn_turn   = Button(pygame.Rect(x, y, btn_w, btn_h), "Next Turn", self._next_turn)
@@ -312,7 +292,7 @@ class MatchState(BaseState):
             except Exception:
                 continue
 
-    def _refresh_after_advance(self) -> None:
+    def _harvest_and_refresh(self) -> None:
         self._ensure_layout()
         self._rebuild_name_maps()
         self._harvest_new_events()
@@ -321,21 +301,22 @@ class MatchState(BaseState):
         if self.combat and getattr(self.combat, "winner", None) is None:
             self._started = True
             self._advance_once()
-            self._refresh_after_advance()
+            self._harvest_and_refresh()
 
     def _next_round(self):
-        if not self.combat: return
+        if not self.combat or getattr(self.combat, "winner", None) is not None:
+            return
         self._started = True
-        start_round = self._last_round_no
-        for _ in range(5000):
+        target = (self._current_round_from_engine() or self._last_round_seen) + 1
+        # advance until we detect round increased or winner
+        for _ in range(20000):
             if getattr(self.combat, "winner", None) is not None:
                 break
             self._advance_once()
-            # harvest periodically so we see the round boundary
-            self._harvest_new_events()
-            if self._last_round_no is not None and start_round is not None and self._last_round_no > start_round:
+            self._harvest_and_refresh()
+            cur = self._current_round_from_engine() or self._last_round_seen
+            if cur >= target:
                 break
-        self._refresh_after_advance()
 
     def _toggle_auto(self):
         self.auto = not self.auto
@@ -348,8 +329,9 @@ class MatchState(BaseState):
         for i in range(20000):
             if getattr(self.combat, "winner", None) is not None: break
             self._advance_once()
-            if i % 12 == 0: self._harvest_new_events()
-        self._refresh_after_advance()
+            if i % 12 == 0:
+                self._harvest_and_refresh()
+        self._harvest_and_refresh()
 
     def _back(self): self.app.pop_state()
 
@@ -363,19 +345,18 @@ class MatchState(BaseState):
             fresh = evs[start:]
             if fresh:
                 for e in fresh:
-                    # update round tracker from raw event if possible
                     try:
-                        ev = self._normalize_event(e)
-                        if ev.get("type") in ("round","StartRound","Round","start","Start"):
-                            rn = ev.get("round", ev.get("r", None))
-                            if rn is not None:
-                                try: self._last_round_no = int(rn)
-                                except Exception: pass
+                        s = self._fmt_event(e)
+                        # keep last seen round from strings too
+                        if isinstance(s, str) and s.startswith("— Round "):
+                            try:
+                                num = int(s.replace("— Round ","").replace(" —","").strip())
+                                self._last_round_seen = max(self._last_round_seen, num)
+                            except Exception:
+                                pass
+                        self.events.append(s)
                     except Exception:
-                        pass
-                    # append formatted string
-                    try: self.events.append(self._fmt_event(e))
-                    except Exception: self.events.append(str(e))
+                        self.events.append(str(e))
                 self._last_seen[attr] = start + len(fresh)
         if len(self.events) > 800: self.events = self.events[-800:]
 
@@ -403,7 +384,7 @@ class MatchState(BaseState):
             for _ in range(self._auto_steps_per_update):
                 if getattr(self.combat, "winner", None) is not None: break
                 self._advance_once()
-            self._refresh_after_advance()
+            self._harvest_and_refresh()
 
     def draw(self, surf: pygame.Surface) -> None:
         if not self._built: self.enter()
@@ -414,7 +395,7 @@ class MatchState(BaseState):
         draw_text(surf, title, (surf.get_width()//2, 16), 30, th.text, align="center")
 
         draw_panel(surf, self.rect_panel, th)
-        draw_panel(surf, self.rect_grid, th)
+        draw_panel(surf, self.rect_grid, th)   # no gridlines; just a panel background
         draw_panel(surf, self.rect_log, th)
 
         status_y = self.rect_panel.y + 16
@@ -424,12 +405,12 @@ class MatchState(BaseState):
                     "away": self.away_d.get("name","Away"),
                     "draw": "Draw", 0: self.home_d.get("name","Home"),
                     1: self.away_d.get("name","Away")}
-            draw_text(surf, f"Winner: {wmap.get(winner, str(winner))}", (self.rect_panel.x + 16, status_y), 26, th.text)
+            draw_text(surf, f"Winner: {wmap.get(winner, str(winner))}", (self.rect_panel.x + 16, status_y), 22, th.text)
         else:
             draw_text(surf, "Status: Running" if self.auto else "Status: Paused",
                       (self.rect_panel.x + 16, status_y), 22, th.subt)
 
-        self._draw_gridless_fighters(surf)
+        self._draw_grid(surf)
         self._draw_log(surf)
 
         if self.btn_turn:   self.btn_turn.draw(surf, th)
@@ -438,17 +419,16 @@ class MatchState(BaseState):
         if self.btn_finish: self.btn_finish.draw(surf, th)
         if self.btn_back:   self.btn_back.draw(surf, th)
 
-    # ---------- fighter rendering (no gridlines) ----------
-    def _draw_gridless_fighters(self, surf: pygame.Surface) -> None:
+    # ---------- grid (no gridlines; larger dots; name+HP above) ----------
+    def _draw_grid(self, surf: pygame.Surface) -> None:
         rg = self.rect_grid
         gw, gh = _GRID_W, _GRID_H
-        # Larger "cells" to give more breathing room
-        cell_w = max(20, (rg.w - 12) // gw)
-        cell_h = max(20, (rg.h - 12) // gh)
+        # generous cell size so dots are larger
+        cell_w = max(16, (rg.w - 12) // gw)
+        cell_h = max(16, (rg.h - 12) // gh)
         ox = rg.x + (rg.w - cell_w * gw) // 2
         oy = rg.y + (rg.h - cell_h * gh) // 2
 
-        # no gridlines — just draw fighters
         for f in self._fighters():
             x = int(getattr(f, "x", getattr(f, "tx", 0)))
             y = int(getattr(f, "y", getattr(f, "ty", 0)))
@@ -460,25 +440,23 @@ class MatchState(BaseState):
             alive = bool(getattr(f, "alive", True))
             color = base if alive else (110, 110, 110)
 
-            r = max(10, min(cell_w, cell_h) // 2)
-            # HP bar and name ABOVE the dot to reduce overlap
-            name = str(getattr(f, "name", getattr(f, "pid", "F")))
+            # larger radius, but keep some spacing
+            r = max(8, int(min(cell_w, cell_h) * 0.38))
+            # HP bar and name above the dot
             hp = max(0, int(getattr(f, "hp", 0)))
             mh = max(1, int(getattr(f, "max_hp", max(hp, 1))))
-            bar_w = max(32, cell_w - 2)
+            bar_w = max(28, int(min(cell_w, cell_h) * 0.9))
             bar_h = 7
-            bar_x = cx - bar_w // 2
-            bar_y = cy - r - 20  # higher above dot
-
-            # name just above the bar
-            draw_text(surf, name, (cx, bar_y - 18), 14, self.theme.text, align="center")
-            # HP bar
-            pygame.draw.rect(surf, (50, 55, 60), pygame.Rect(bar_x, bar_y, bar_w, bar_h), border_radius=3)
+            bx = cx - bar_w // 2
+            by = cy - r - 16  # higher above the dot
+            pygame.draw.rect(surf, (50, 55, 60), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
             if mh > 0:
                 fill_w = int(bar_w * (hp / mh))
-                pygame.draw.rect(surf, (90, 200, 120), pygame.Rect(bar_x, bar_y, fill_w, bar_h), border_radius=3)
+                pygame.draw.rect(surf, (90, 200, 120), pygame.Rect(bx, by, fill_w, bar_h), border_radius=3)
 
-            # the dot
+            name = str(getattr(f, "name", getattr(f, "pid", "F")))
+            draw_text(surf, name, (cx, by - 16), 16, self.theme.text, align="center")
+
             pygame.draw.circle(surf, color, (cx, cy), r)
             pygame.draw.circle(surf, self.theme.panel_border, (cx, cy), r, 1)
 
