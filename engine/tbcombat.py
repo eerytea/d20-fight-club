@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 import random
 
-# Default grid (UI also targets 11×11 by default)
+# Default grid (UI often uses 11×11; tests may override via kwargs)
 GRID_W = 11
 GRID_H = 11
 
@@ -74,8 +74,8 @@ def layout_teams_tiles(fighters: List[Fighter], W: int, H: int) -> None:
     left_x = 1
     right_x = max(0, W - 2)
 
-    t0 = [f for f in fighters if f.team_id == 0]
-    t1 = [f for f in fighters if f.team_id == 1]
+    t0 = [f for f in fighters if _get_team_id(f) == 0]
+    t1 = [f for f in fighters if _get_team_id(f) == 1]
 
     def positions(xs: int, count: int) -> List[Coord]:
         if count <= 0:
@@ -86,9 +86,81 @@ def layout_teams_tiles(fighters: List[Fighter], W: int, H: int) -> None:
         return [(xs, y) for y in ys]
 
     for f, pos in zip(t0, positions(left_x, len(t0))):
-        f.set_pos(pos)
+        _set_pos(f, pos)
     for f, pos in zip(t1, positions(right_x, len(t1))):
-        f.set_pos(pos)
+        _set_pos(f, pos)
+
+
+# -------------------- generic field helpers (robust to plain objects/dicts) --------------------
+
+def _getattr_or_key(o, k, default=None):
+    if isinstance(o, dict):
+        return o.get(k, default)
+    return getattr(o, k, default)
+
+def _setattr_or_key(o, k, v):
+    if isinstance(o, dict):
+        o[k] = v
+    else:
+        try:
+            setattr(o, k, v)
+        except Exception:
+            # object may be slot/frozen; ignore
+            pass
+
+def _get_team_id(f) -> int:
+    v = _getattr_or_key(f, "team_id", None)
+    if v is None:
+        v = _getattr_or_key(f, "tid", None)
+    if v is None:
+        v = _getattr_or_key(f, "team", 0)
+    try:
+        return int(v)
+    except Exception:
+        return 0
+
+def _is_alive(f) -> bool:
+    v = _getattr_or_key(f, "alive", True)
+    try:
+        return bool(v)
+    except Exception:
+        return True
+
+def _set_alive(f, alive: bool) -> None:
+    _setattr_or_key(f, "alive", bool(alive))
+
+def _get_pos(f) -> Coord:
+    x = _getattr_or_key(f, "x", _getattr_or_key(f, "tx", 0))
+    y = _getattr_or_key(f, "y", _getattr_or_key(f, "ty", 0))
+    try:
+        return (int(x), int(y))
+    except Exception:
+        return (0, 0)
+
+def _set_pos(f, xy: Coord) -> None:
+    if hasattr(f, "set_pos"):
+        try:
+            f.set_pos(xy)  # type: ignore[attr-defined]
+            return
+        except Exception:
+            pass
+    # fallback: direct fields / dict
+    _setattr_or_key(f, "x", int(xy[0]))
+    _setattr_or_key(f, "y", int(xy[1]))
+    _setattr_or_key(f, "tx", int(xy[0]))
+    _setattr_or_key(f, "ty", int(xy[1]))
+
+def _get_name(f) -> str:
+    n = _getattr_or_key(f, "name", None)
+    if n is None:
+        n = f"Unit{_getattr_or_key(f, 'pid', _getattr_or_key(f, 'id', ''))}"
+    return str(n)
+
+def _get_hp(f) -> int:
+    return int(_getattr_or_key(f, "hp", _getattr_or_key(f, "max_hp", 1)))
+
+def _set_hp(f, hp: int) -> None:
+    _setattr_or_key(f, "hp", int(hp))
 
 
 # -------------------- combat engine --------------------
@@ -110,11 +182,12 @@ class TBCombat:
       .winner        (0/1 or None)
       .take_turn()
       .step_action() (alias to take_turn)
+      ._move_actor_if_free(actor, dest_xy)  # used in tests
     """
     def __init__(self,
                  teamA,
                  teamB,
-                 fighters: List[Fighter],
+                 fighters: List,
                  grid_w: Optional[int] = None,
                  grid_h: Optional[int] = None,
                  seed: Optional[int] = None,
@@ -138,13 +211,16 @@ class TBCombat:
         self.rng = random.Random(seed if seed is not None else 12345)
 
         # normalize team ids to 0/1 defensively
+        normd: List = []
         for f in fighters:
-            if getattr(f, "team_id", 0) not in (0, 1):
-                # If unknown, map by original tid against our team tids; else default to 0
-                orig = getattr(f, "team_id", 0)
-                f.team_id = 0 if orig in (teamA.tid, 0) else 1
+            tid_like = _get_team_id(f)
+            if tid_like not in (0, 1):
+                # Map by original tid against our team tids; else default by sign
+                tid_like = 0 if tid_like in (teamA.tid, 0) else 1
+            _setattr_or_key(f, "team_id", tid_like)
+            normd.append(f)
+        self.fighters = normd
 
-        self.fighters: List[Fighter] = fighters[:]
         self.typed_events: List[Dict] = []
         self.events_typed = self.typed_events
         self.events = self.typed_events
@@ -166,8 +242,8 @@ class TBCombat:
     def occupied(self) -> Dict[Coord, int]:
         occ: Dict[Coord, int] = {}
         for i, f in enumerate(self.fighters):
-            if f.alive:
-                occ[(f.x, f.y)] = i
+            if _is_alive(f):
+                occ[_get_pos(f)] = i
         return occ
 
     def _in_bounds(self, x: int, y: int) -> bool:
@@ -206,16 +282,17 @@ class TBCombat:
     def _fix_spawn_collisions(self) -> None:
         seen = {}
         for i, f in enumerate(self.fighters):
-            if not f.alive:
+            if not _is_alive(f):
                 continue
-            xy = (f.x, f.y)
-            if not self._in_bounds(f.x, f.y):
-                f.set_pos((min(self.GRID_W-1, max(0, f.x)),
-                           min(self.GRID_H-1, max(0, f.y))))
-                xy = f.pos
+            x, y = _get_pos(f)
+            if not self._in_bounds(x, y):
+                _set_pos(f, (min(self.GRID_W-1, max(0, x)),
+                             min(self.GRID_H-1, max(0, y))))
+                x, y = _get_pos(f)
+            xy = (x, y)
             if xy in seen:
                 nx, ny = self._nearest_free(xy)
-                f.set_pos((nx, ny))
+                _set_pos(f, (nx, ny))
             else:
                 seen[xy] = i
 
@@ -226,8 +303,8 @@ class TBCombat:
         order = list(range(len(self.fighters)))
         def _key(i: int):
             f = self.fighters[i]
-            pid = getattr(f, "pid", getattr(f, "id", i))
-            return (getattr(f, "team_id", 0), pid)
+            pid = _getattr_or_key(f, "pid", _getattr_or_key(f, "id", i))
+            return (_get_team_id(f), pid)
         order.sort(key=_key)
         return order
 
@@ -235,8 +312,8 @@ class TBCombat:
         self.typed_events.append({"type": "round", "round": self._round})
 
     def _emit_end_if_finished(self) -> None:
-        a_alive = any(f.alive and f.team_id == 0 for f in self.fighters)
-        b_alive = any(f.alive and f.team_id == 1 for f in self.fighters)
+        a_alive = any(_is_alive(f) and _get_team_id(f) == 0 for f in self.fighters)
+        b_alive = any(_is_alive(f) and _get_team_id(f) == 1 for f in self.fighters)
         if not a_alive and not b_alive:
             self.winner = None
             self.typed_events.append({"type": "end"})
@@ -253,23 +330,39 @@ class TBCombat:
             self._idx = (self._idx + 1) % n
             i = self._order[self._idx]
             f = self.fighters[i]
-            if f.alive:
+            if _is_alive(f):
                 if self._idx == 0:
                     self._round += 1
                     self._emit_round()
                 return
         self._emit_end_if_finished()
 
-    def _award_xp(self, fighter: Fighter, amount: int = 1) -> None:
+    def _award_xp(self, fighter, amount: int = 1) -> None:
         """Give XP to the fighter (defensive against missing attribute)."""
         try:
-            fighter.xp = int(getattr(fighter, "xp", 0)) + int(amount)
+            cur = int(_getattr_or_key(fighter, "xp", 0))
+            _setattr_or_key(fighter, "xp", cur + int(amount))
         except Exception:
             pass
 
-    def _try_step_toward(self, actor: Fighter, target: Fighter) -> bool:
-        ax, ay = actor.x, actor.y
-        tx, ty = target.x, target.y
+    # --- occupancy helper expected by tests ---
+    def _move_actor_if_free(self, actor, dest_xy: Coord) -> bool:
+        """Internal: move actor to dest if tile is free; otherwise emit 'blocked' and return False."""
+        x, y = dest_xy
+        if not self._in_bounds(x, y):
+            self.typed_events.append({"type": "blocked", "name": _get_name(actor), "at": _get_pos(actor)})
+            return False
+        occ = set(self.occupied.keys())
+        if (x, y) in occ:
+            self.typed_events.append({"type": "blocked", "name": _get_name(actor), "at": _get_pos(actor)})
+            return False
+        _set_pos(actor, (x, y))
+        self.typed_events.append({"type": "move", "name": _get_name(actor), "to": (x, y)})
+        return True
+
+    def _try_step_toward(self, actor, target) -> bool:
+        ax, ay = _get_pos(actor)
+        tx, ty = _get_pos(target)
         cand: List[Coord] = []
 
         dx = 1 if tx > ax else (-1 if tx < ax else 0)
@@ -281,41 +374,39 @@ class TBCombat:
             cand.append((ax, ay + dy))
         cand.extend([(ax+1, ay), (ax-1, ay), (ax, ay+1), (ax, ay-1)])
 
-        occ = set(self.occupied.keys())
         for (nx, ny) in cand:
-            if self._in_bounds(nx, ny) and (nx, ny) not in occ:
-                actor.set_pos((nx, ny))
-                self.typed_events.append({"type": "move", "name": actor.name, "to": (nx, ny)})
+            if self._move_actor_if_free(actor, (nx, ny)):
                 return True
-        # blocked: movement not possible
-        self.typed_events.append({"type": "blocked", "name": actor.name, "at": actor.pos})
-        return False
+        return False  # blocked events already emitted
 
-    def _attack(self, attacker: Fighter, defender: Fighter) -> None:
+    def _attack(self, attacker, defender) -> None:
         # very simple d20 vs AC proxy
+        def_ac = int(_getattr_or_key(defender, "ac", 10))
         roll = self.rng.randint(1, 20)
-        # keep hit rate reasonable against varied AC
-        hit = roll >= max(5, int(defender.ac) // 2 + 5)
+        hit = roll >= max(5, def_ac // 2 + 5)
         if hit:
             dmg = max(1, self.rng.randint(1, 6))
-            defender.hp = max(0, defender.hp - dmg)
-            self.typed_events.append({"type": "hit", "name": attacker.name,
-                                      "target": defender.name, "dmg": dmg})
-            if defender.hp <= 0 and defender.alive:
-                defender.alive = False
-                self.typed_events.append({"type": "down", "name": defender.name})
+            hp_after = max(0, _get_hp(defender) - dmg)
+            _set_hp(defender, hp_after)
+            self.typed_events.append({"type": "hit", "name": _get_name(attacker),
+                                      "target": _get_name(defender), "dmg": dmg})
+            if hp_after <= 0 and _is_alive(defender):
+                _set_alive(defender, False)
+                self.typed_events.append({"type": "down", "name": _get_name(defender)})
                 # award XP to attacker on down (fixes unit test)
                 self._award_xp(attacker, 1)
                 self._emit_end_if_finished()
         else:
-            self.typed_events.append({"type": "miss", "name": attacker.name,
-                                      "target": defender.name})
+            self.typed_events.append({"type": "miss", "name": _get_name(attacker),
+                                      "target": _get_name(defender)})
 
-    def _closest_enemy(self, actor: Fighter) -> Optional[Fighter]:
-        foes = [f for f in self.fighters if f.alive and f.team_id != actor.team_id]
+    def _closest_enemy(self, actor):
+        foes = [f for f in self.fighters if _is_alive(f) and _get_team_id(f) != _get_team_id(actor)]
         if not foes:
             return None
-        foes.sort(key=lambda f: (self._distance(actor.pos, f.pos), getattr(f, "pid", getattr(f, "id", 0))))
+        def _pidlike(f):
+            return _getattr_or_key(f, "pid", _getattr_or_key(f, "id", 0))
+        foes.sort(key=lambda f: (self._distance(_get_pos(actor), _get_pos(f)), _pidlike(f)))
         return foes[0]
 
     def _distance(self, a: Coord, b: Coord) -> int:
@@ -333,7 +424,7 @@ class TBCombat:
         for _ in range(len(self._order)):
             idx = self._order[self._idx]
             actor = self.fighters[idx]
-            if actor.alive:
+            if _is_alive(actor):
                 break
             self._advance_index()
         else:
@@ -345,7 +436,7 @@ class TBCombat:
             self._emit_end_if_finished()
             return
 
-        if self._adjacent(actor.pos, target.pos):
+        if self._adjacent(_get_pos(actor), _get_pos(target)):
             self._attack(actor, target)
         else:
             self._try_step_toward(actor, target)
