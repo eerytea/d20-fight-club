@@ -1,4 +1,4 @@
-# ui/state_season_hub.py — Season Hub with visible weekly matchups + auto-fitting button row
+# ui/state_season_hub.py — Season Hub with robust career adapters
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import pygame
@@ -7,7 +7,7 @@ from .app import BaseState
 from .uiutil import Theme, Button, draw_panel, draw_text, get_font
 
 
-# ---------- helpers ---------------------------------------------------------
+# ---------- generic helpers -------------------------------------------------
 
 def _get(obj: Any, key: str, default=None):
     if isinstance(obj, dict):
@@ -22,47 +22,150 @@ def _safe_int(v, default: int = -1) -> int:
     except Exception:
         return default
 
+def _team_id_from(obj: Any, default: int = -1) -> int:
+    for k in ("tid", "team_id", "id", "index"):
+        val = _get(obj, k, None)
+        if val is not None:
+            try:
+                return int(val)
+            except Exception:
+                pass
+    return default
+
+def _name_from(obj: Any, default: str = "Team") -> str:
+    for k in ("name", "full_name", "display_name", "abbr", "short"):
+        v = _get(obj, k, None)
+        if v:
+            return str(v)
+    return default
+
 def _team_name_map(career) -> Dict[int, str]:
+    # Prefer a direct helper if present
     m: Dict[int, str] = {}
+    if hasattr(career, "team_name"):
+        for t in getattr(career, "teams", []) or []:
+            tid = _team_id_from(t, -1)
+            if tid >= 0:
+                try:
+                    m[tid] = str(career.team_name(tid))  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+    if m:
+        return m
+
+    # Fall back to scanning teams list
     for t in getattr(career, "teams", []) or []:
-        tid = _safe_int(_get(t, "tid", -1), -1)
-        nm  = str(_get(t, "name", f"Team {tid}"))
+        tid = _team_id_from(t, -1)
+        nm = _name_from(t, f"Team {tid}")
         if tid >= 0:
             m[tid] = nm
+
+    # As a last resort, some careers expose team_names dict
+    tn = getattr(career, "team_names", None)
+    if isinstance(tn, dict):
+        for k, v in tn.items():
+            try:
+                m[int(k)] = str(v)
+            except Exception:
+                pass
     return m
 
-def _fixtures_for_week(career, week_idx: int) -> List[Tuple[int, int]]:
-    """Return a list of (home_tid, away_tid) pairs for the given week."""
-    # 1) explicit helper
-    if hasattr(career, "fixtures_for_week"):
+
+# ---------- fixtures adapters -----------------------------------------------
+
+def _pair_from_any(item) -> Optional[Tuple[int, int]]:
+    """Parse a fixture object into (home_tid, away_tid)."""
+    if item is None:
+        return None
+    if isinstance(item, (list, tuple)) and len(item) >= 2:
         try:
-            out = career.fixtures_for_week(week_idx)
-            if out:
-                return [(_safe_int(a, -1), _safe_int(b, -1)) for (a, b) in out]
+            return (int(item[0]), int(item[1]))
         except Exception:
-            pass
+            return None
+    if isinstance(item, dict):
+        for hk, ak in (("home_tid", "away_tid"), ("home_id", "away_id"),
+                       ("home", "away"), ("h", "v"), ("a", "b")):
+            ha = item.get(hk, None)
+            aw = item.get(ak, None)
+            if ha is not None and aw is not None:
+                try:
+                    return (int(ha), int(aw))
+                except Exception:
+                    pass
+    # attributes?
+    ha = _get(item, "home_tid", _get(item, "home", _get(item, "h", None)))
+    aw = _get(item, "away_tid", _get(item, "away", _get(item, "v", None)))
+    if ha is not None and aw is not None:
+        try:
+            return (int(ha), int(aw))
+        except Exception:
+            return None
+    return None
 
-    # 2) schedule attribute
-    sched = getattr(career, "schedule", None)
-    wk = []
-    if isinstance(sched, list):
-        wk = sched[week_idx] if 0 <= week_idx < len(sched) else []
-    elif isinstance(sched, dict):
-        wk = sched.get(week_idx, [])
-
-    pairs: List[Tuple[int, int]] = []
-    for f in wk or []:
-        if isinstance(f, dict):
-            a = f.get("home_tid", f.get("home", f.get("a")))
-            b = f.get("away_tid", f.get("away", f.get("b")))
-        else:
+def _fixtures_for_week(career, week_idx: int) -> List[Tuple[int, int]]:
+    """Return a list of (home_tid, away_tid) pairs for the given week, regardless of shape."""
+    # Method adapters first
+    for meth in ("fixtures_for_week", "get_fixtures_for_week", "week_fixtures", "fixtures_in_week"):
+        fn = getattr(career, meth, None)
+        if callable(fn):
             try:
-                a, b = f
+                out = fn(week_idx)
+                pairs: List[Tuple[int, int]] = []
+                for it in out or []:
+                    p = _pair_from_any(it)
+                    if p: pairs.append(p)
+                if pairs:
+                    return pairs
             except Exception:
-                a = b = None
-        if a is not None and b is not None:
-            pairs.append((_safe_int(a, -1), _safe_int(b, -1)))
-    return pairs
+                pass
+
+    # Common attribute shapes
+    candidates = [
+        "schedule",          # list[week] or flat list with 'week'
+        "fixtures",          # list[week] or flat list with 'week'
+        "fixtures_by_week",  # dict[int] -> list
+        "rounds",            # list[week]
+        "weeks",             # list[week]
+    ]
+
+    for attr in candidates:
+        obj = getattr(career, attr, None)
+        if obj is None:
+            continue
+
+        # list of weeks
+        if isinstance(obj, list):
+            wk = obj[week_idx] if 0 <= week_idx < len(obj) else []
+            pairs: List[Tuple[int, int]] = []
+            for it in wk or []:
+                p = _pair_from_any(it)
+                if p: pairs.append(p)
+            if pairs:
+                return pairs
+
+        # dict by week index
+        if isinstance(obj, dict):
+            wk = obj.get(week_idx, [])
+            pairs: List[Tuple[int, int]] = []
+            for it in wk or []:
+                p = _pair_from_any(it)
+                if p: pairs.append(p)
+            if pairs:
+                return pairs
+
+        # flat list with a `week` field on each item
+        if isinstance(obj, list):
+            pairs: List[Tuple[int, int]] = []
+            for it in obj:
+                w = _get(it, "week", _get(it, "round", _get(it, "week_index", None)))
+                if w is not None and int(w) == int(week_idx):
+                    p = _pair_from_any(it)
+                    if p: pairs.append(p)
+            if pairs:
+                return pairs
+
+    # No fixtures found
+    return []
 
 def _find_user_fixture(pairs: List[Tuple[int, int]], user_tid: int) -> Optional[Tuple[int, int]]:
     for a, b in pairs:
@@ -120,7 +223,7 @@ class SeasonHubState(BaseState):
         self.f_row   = get_font(28)
         self.f_msg   = get_font(22)
 
-        self._last_saved_msg: Optional[str] = None
+        self._last_msg: Optional[str] = None
         self._msg_timer: float = 0.0
 
     # lifecycle
@@ -165,7 +268,7 @@ class SeasonHubState(BaseState):
             wk = _safe_int(getattr(self.career, "week_index", 0), 0)
             self.app.push_state(ScheduleState(self.app, self.career, wk))
         except Exception as e:
-            self._last_saved_msg = f"Open Schedule failed: {e}"
+            self._last_msg = f"Open Schedule failed: {e}"
             self._msg_timer = 2.5
 
     def _open_table(self) -> None:
@@ -173,7 +276,7 @@ class SeasonHubState(BaseState):
             from .state_table import TableState
             self.app.push_state(TableState(self.app, self.career))
         except Exception as e:
-            self._last_saved_msg = f"Open Table failed: {e}"
+            self._last_msg = f"Open Table failed: {e}"
             self._msg_timer = 2.5
 
     def _open_roster(self) -> None:
@@ -181,19 +284,33 @@ class SeasonHubState(BaseState):
             from .state_roster import RosterState
             self.app.push_state(RosterState(self.app, self.career))
         except Exception as e:
-            self._last_saved_msg = f"Open Roster failed: {e}"
+            self._last_msg = f"Open Roster failed: {e}"
             self._msg_timer = 2.5
+
+    def _try_sim_method(self) -> bool:
+        # Try a few common names, first one that exists wins
+        for name in ("simulate_week_ai", "simulate_week", "sim_week_ai", "sim_week"):
+            fn = getattr(self.career, name, None)
+            if callable(fn):
+                fn()  # assume no-arg
+                return True
+        return False
 
     def _sim_week(self) -> None:
         try:
-            if hasattr(self.career, "simulate_week_ai"):
-                self.career.simulate_week_ai()
-            elif hasattr(self.career, "sim_week_ai"):
-                self.career.sim_week_ai()
-            self._last_saved_msg = "Week simulated."
+            ok = self._try_sim_method()
+            if ok:
+                # Some careers separate advancement
+                adv = getattr(self.career, "advance_week_if_done", None)
+                if callable(adv):
+                    try: adv()
+                    except Exception: pass
+                self._last_msg = "Week simulated."
+            else:
+                self._last_msg = "No sim method found on career."
             self._msg_timer = 2.5
         except Exception as e:
-            self._last_saved_msg = f"Sim failed: {e}"
+            self._last_msg = f"Sim failed: {e}"
             self._msg_timer = 3.0
 
     def _play(self) -> None:
@@ -202,11 +319,12 @@ class SeasonHubState(BaseState):
         user_tid = _safe_int(getattr(self.career, "user_team_id", -1), -1)
         fx = _find_user_fixture(pairs, user_tid)
         if not fx:
-            self._last_saved_msg = "No match for your team this week."
+            self._last_msg = "No match for your team this week."
             self._msg_timer = 2.5
             return
 
         home_tid, away_tid = fx
+        names = _team_name_map(self.career)
 
         def _on_finish(result: Any) -> None:
             try:
@@ -216,23 +334,27 @@ class SeasonHubState(BaseState):
                         self.career.record_result(home_tid, away_tid, kh, ka, winner_tid)
                     except TypeError:
                         self.career.record_result(home_tid, away_tid, kh, ka)
-                if hasattr(self.career, "advance_week_if_done"):
-                    self.career.advance_week_if_done()
-                names = _team_name_map(self.career)
-                self._last_saved_msg = f"Result saved: {names.get(home_tid,'?')} {kh}-{ka} {names.get(away_tid,'?')}"
+                adv = getattr(self.career, "advance_week_if_done", None)
+                if callable(adv):
+                    adv()
+                self._last_msg = f"Saved: {names.get(home_tid,'?')} {kh}-{ka} {names.get(away_tid,'?')}"
                 self._msg_timer = 3.0
             except Exception as e:
-                self._last_saved_msg = f"Save failed: {e}"
+                self._last_msg = f"Save failed: {e}"
                 self._msg_timer = 3.0
 
         try:
             from .state_match import MatchState
-            st = MatchState(self.app, career=self.career, home_tid=home_tid, away_tid=away_tid,
-                            week_index=wk, on_finish=_on_finish)
-        except TypeError:
-            from .state_match import MatchState
-            st = MatchState(self.app, self.career, home_tid, away_tid, _on_finish)
-        self.app.push_state(st)
+            st = None
+            try:
+                st = MatchState(self.app, career=self.career, home_tid=home_tid, away_tid=away_tid,
+                                week_index=wk, on_finish=_on_finish)
+            except TypeError:
+                st = MatchState(self.app, self.career, home_tid, away_tid, _on_finish)
+            self.app.push_state(st)
+        except Exception as e:
+            self._last_msg = f"Play failed: {e}"
+            self._msg_timer = 3.0
 
     # input/update
     def handle(self, event) -> None:
@@ -278,18 +400,17 @@ class SeasonHubState(BaseState):
                   (self.rect_toolbar.right - 12, self.rect_toolbar.centery), 32, th.subt, align="midright")
 
         # Optional banner
-        if self._msg_timer > 0 and self._last_saved_msg:
+        if self._msg_timer > 0 and self._last_msg:
             msg_rect = pygame.Rect(self.rect_panel.x, self.rect_panel.y - 28, self.rect_panel.w, 24)
-            draw_text(surf, self._last_saved_msg, (msg_rect.centerx, msg_rect.centery), 20, th.subt, align="center")
+            draw_text(surf, self._last_msg, (msg_rect.centerx, msg_rect.centery), 20, th.subt, align="center")
 
         # Matchups panel
         draw_panel(surf, self.rect_panel, th)
         inner = self.rect_panel.inflate(-20, -20)
 
         hdr = "This Week's Matchups"
-        f_h2 = self.f_h2
-        rr = f_h2.get_rect(hdr); rr.midtop = (inner.centerx, inner.y + 4)
-        f_h2.render_to(surf, rr.topleft, hdr, th.text)
+        rr = self.f_h2.get_rect(hdr); rr.midtop = (inner.centerx, inner.y + 4)
+        self.f_h2.render_to(surf, rr.topleft, hdr, th.text)
 
         list_top = rr.bottom + 8
         list_rect = pygame.Rect(inner.x, list_top, inner.w, inner.bottom - list_top)
@@ -297,13 +418,12 @@ class SeasonHubState(BaseState):
 
         wk = _safe_int(getattr(self.career, "week_index", 0), 0)
         pairs = _fixtures_for_week(self.career, wk)
-        f_row = self.f_row
-        lh = max(30, int(f_row.height * 1.25))
+        lh = max(30, int(self.f_row.height * 1.25))
         y = list_rect.y + 4
         for a, b in pairs:
             left  = names.get(int(a), f"Team {a}")
             right = names.get(int(b), f"Team {b}")
-            f_row.render_to(surf, (list_rect.x + 10, y), f"{left}  vs  {right}", th.text)
+            self.f_row.render_to(surf, (list_rect.x + 10, y), f"{left}  vs  {right}", th.text)
             y += lh
 
         surf.set_clip(clip)
