@@ -9,7 +9,6 @@ from .app import BaseState
 from .uiutil import Theme, Button, draw_text, draw_panel, get_font
 from core.career import Career
 
-
 # ---------- robust getters ----------
 
 def _get(r: Any, keys, default=None):
@@ -25,17 +24,14 @@ def _get(r: Any, keys, default=None):
             return getattr(r, k)
     return default
 
-
 def _team_name(team: dict | Any) -> str:
     return _get(team, "name", "Team")
-
 
 def _fighter_line(f: dict | Any) -> str:
     name = _get(f, "name", "?")
     role = _get(f, ("role", "cls", "class"), "")
     lvl  = _get(f, ("level", "lvl", "L"), None)
     ovr  = _get(f, ("ovr", "OVR"), None)
-
     parts = [name]
     if role:
         parts.append(f"— {role}")
@@ -48,10 +44,8 @@ def _fighter_line(f: dict | Any) -> str:
         parts.append("  " + "  ".join(tail))
     return " ".join(parts)
 
-
 def _stat_val(f: Any, names: Tuple[str, ...], default=None):
     return _get(f, names, default)
-
 
 def _equip_name(f: Any, candidates: Tuple[str, ...]) -> str:
     item = _get(f, candidates, None)
@@ -62,22 +56,29 @@ def _equip_name(f: Any, candidates: Tuple[str, ...]) -> str:
     nm = _get(item, ("name", "Name", "id", "kind"), None)
     return str(nm) if nm is not None else "—"
 
+def _text_width(font, text: str, size: Optional[int] = None) -> int:
+    """Safe width measure for pygame.freetype.Font (avoid size=None TypeError)."""
+    try:
+        if size is None:
+            return font.get_rect(text).width
+        return font.get_rect(text, size=size).width
+    except TypeError:
+        return font.get_rect(text).width
 
 def _ellipsize(font, text: str, max_w: int, size: Optional[int] = None) -> str:
-    if font.get_rect(text, size=size).width <= max_w:
+    if _text_width(font, text, size=size) <= max_w:
         return text
     s = text
-    while s and font.get_rect(s + "…", size=size).width > max_w:
+    while s and _text_width(font, s + "…", size=size) > max_w:
         s = s[:-1]
     return (s + "…") if s else "…"
-
 
 # ---------- state ----------
 
 class TeamSelectState(BaseState):
     """
     New Game -> Team Select:
-      * Left: scrollable list of teams (hard-clipped to panel)
+      * Left: scrollable list of teams (hard-clipped to content area; no overlap)
       * Right top: roster (click a player)
       * Right bottom: compact details that always fit the box
     """
@@ -106,14 +107,13 @@ class TeamSelectState(BaseState):
 
         self._built = False
 
-        # Fonts
+        # Fonts (slightly smaller in details so everything fits)
         self.font_title = get_font(48)
         self.font_list  = get_font(24)
         self.font_sub   = get_font(22)
-        # Details use compact fonts so everything fits
-        self.font_det_h1 = get_font(22)  # header line
-        self.font_det    = get_font(18)  # HP/AC/Move + armor/weapon
-        self.font_det_s  = get_font(16)  # attribute labels
+        self.font_det_h1 = get_font(20)  # header in details
+        self.font_det    = get_font(16)  # HP/AC/Move + armor/weapon
+        self.font_det_s  = get_font(14)  # attribute labels
 
     # ---- lifecycle ----
     def enter(self) -> None:
@@ -179,17 +179,16 @@ class TeamSelectState(BaseState):
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
+            # Click in teams list (respect the same inner content rect used for drawing)
             if self.rect_left.collidepoint(mx, my):
-                clip_box = self.rect_left.inflate(-2, -2)
-                inner = self.rect_left.inflate(-12*2, -12*2)
-                inner.y += 24
-                # ensure clicks respect the same scroll & clip we draw with
-                if clip_box.collidepoint(mx, my):
-                    idx = (my - (inner.y - self.team_scroll)) // self.team_line_h
+                content = self._left_content_rect()
+                if content.collidepoint(mx, my):
+                    idx = (my - (content.y - self.team_scroll)) // self.team_line_h
                     teams = self._teams_sorted()
                     if 0 <= idx < len(teams):
                         self.selected_tid = int(teams[int(idx)].get("tid"))
                         self.selected_player_idx = None
+            # Click in roster list
             elif self.rect_rtop.collidepoint(mx, my):
                 inner = self.rect_rtop.inflate(-12*2, -12*2)
                 inner.y += 36
@@ -217,22 +216,19 @@ class TeamSelectState(BaseState):
         r.center = (self.app.width // 2, self.rect_title.centery + 6)
         self.font_title.render_to(surf, r.topleft, title, th.text)
 
-        # Left: Teams (draw list with clip to entire panel bounds)
+        # Left: Teams (draw with clip to CONTENT area so it never overlaps the header)
         draw_panel(surf, self.rect_left, th)
         draw_text(surf, "Teams", (self.rect_left.x + 12, self.rect_left.y + 10), 20, th.subt, align="topleft")
 
-        clip_box = self.rect_left.inflate(-2, -2)              # <- clip to whole panel so nothing bleeds
-        inner     = self.rect_left.inflate(-12*2, -12*2)
-        inner.y  += 24
-
+        content = self._left_content_rect()  # strictly inside the panel, below "Teams"
         saved = surf.get_clip()
-        surf.set_clip(clip_box)
+        surf.set_clip(content)
 
         teams = self._teams_sorted()
-        y = inner.y - self.team_scroll
+        y = content.y - self.team_scroll
         for t in teams:
             nm = _team_name(t)
-            self.font_list.render_to(surf, (inner.x, int(y)), nm, th.text)
+            self.font_list.render_to(surf, (content.x, int(y)), nm, th.text)
             y += self.team_line_h
 
         surf.set_clip(saved)
@@ -271,13 +267,12 @@ class TeamSelectState(BaseState):
         if isinstance(self.selected_player_idx, int) and 0 <= self.selected_player_idx < len(roster):
             f = roster[self.selected_player_idx]
 
-            # 1) Header line
+            # 1) Header line (ellipsized)
             header = _fighter_line(f)
-            # Fit header across width with ellipsis if needed
             header_fit = _ellipsize(self.font_det_h1, header, inner_d.w)
-            self.font_det_h1.render_to(surf, (inner_d.x, inner_d.y), header_fit, th.text)
+            self.font_det_h1.render_to(surf, (inner_d.x, inner_d.y), header_fit, self.theme.text)
 
-            y = inner_d.y + 24
+            y = inner_d.y + 22
 
             # 2) HP X/X, AC, Movement
             hp  = _stat_val(f, ("hp", "HP"))
@@ -290,13 +285,13 @@ class TeamSelectState(BaseState):
             mv_txt = f"Movement: {int(spd)}" if spd is not None else "Movement: —"
 
             x = inner_d.x
-            self.font_det.render_to(surf, (x, y), hp_txt, th.text)
-            x += self.font_det.get_rect(hp_txt).width + 24
-            self.font_det.render_to(surf, (x, y), ac_txt, th.text)
-            x += self.font_det.get_rect(ac_txt).width + 24
-            self.font_det.render_to(surf, (x, y), mv_txt, th.text)
+            self.font_det.render_to(surf, (x, y), hp_txt, self.theme.text)
+            x += _text_width(self.font_det, hp_txt) + 18
+            self.font_det.render_to(surf, (x, y), ac_txt, self.theme.text)
+            x += _text_width(self.font_det, ac_txt) + 18
+            self.font_det.render_to(surf, (x, y), mv_txt, self.theme.text)
 
-            y += 28
+            y += 22
 
             # 3) Six-attribute grid (labels then centered values)
             labels = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
@@ -308,7 +303,6 @@ class TeamSelectState(BaseState):
                 "WIS": ("wis", "WIS", "wisdom"),
                 "CHA": ("cha", "CHA", "charisma"),
             }
-
             col_w = inner_d.w // 6
             row_x = inner_d.x
             # labels
@@ -316,8 +310,8 @@ class TeamSelectState(BaseState):
                 cx = row_x + i * col_w + col_w // 2
                 rlab = self.font_det_s.get_rect(lab)
                 rlab.midtop = (cx, y)
-                self.font_det_s.render_to(surf, rlab.topleft, lab, th.subt)
-            y += 16
+                self.font_det_s.render_to(surf, rlab.topleft, lab, self.theme.subt)
+            y += 14
             # values
             for i, lab in enumerate(labels):
                 val = _stat_val(f, name_map[lab], "—")
@@ -325,36 +319,39 @@ class TeamSelectState(BaseState):
                 rvl = self.font_list.get_rect(txt)
                 cx = row_x + i * col_w + col_w // 2
                 rvl.midtop = (cx, y)
-                self.font_list.render_to(surf, rvl.topleft, txt, th.text)
-            y += 30
+                self.font_list.render_to(surf, rvl.topleft, txt, self.theme.text)
 
-            # 4) Armor and Weapon (fit with ellipsis)
+            y += 26
+
+            # 4) Armor and Weapon (split halves, ellipsized)
             armor = _equip_name(f, ("equipped_armor", "armor", "armour", "gear_armor"))
             weapon = _equip_name(f, ("equipped_weapon", "weapon", "main_hand", "wpn"))
 
             arm_left = "Armor: "
             wep_left = "Weapon: "
-            arm_txt = arm_left + armor
-            wep_txt = wep_left + weapon
-
-            # available per side
             half_w = inner_d.w // 2 - 8
-            arm_fit = arm_left + _ellipsize(self.font_det, armor, half_w - self.font_det.get_rect(arm_left).width)
-            wep_fit = wep_left + _ellipsize(self.font_det, weapon, half_w - self.font_det.get_rect(wep_left).width)
+            arm_fit = arm_left + _ellipsize(self.font_det, armor, half_w - _text_width(self.font_det, arm_left))
+            wep_fit = wep_left + _ellipsize(self.font_det, weapon, half_w - _text_width(self.font_det, wep_left))
 
-            self.font_det.render_to(surf, (inner_d.x, y), arm_fit, th.text)
-            self.font_det.render_to(surf, (inner_d.x + half_w + 16, y), wep_fit, th.text)
-
+            self.font_det.render_to(surf, (inner_d.x, y), arm_fit, self.theme.text)
+            self.font_det.render_to(surf, (inner_d.x + half_w + 16, y), wep_fit, self.theme.text)
         else:
-            self.font_det.render_to(surf, (inner_d.x, inner_d.y), "Click a player above to view stats.", th.subt)
+            self.font_det.render_to(surf, (inner_d.x, inner_d.y), "Click a player above to view stats.", self.theme.subt)
 
         # Buttons
-        self.btn_start.draw(surf, th)
-        self.btn_back.draw(surf, th)
+        self.btn_start.draw(surf, self.theme)
+        self.btn_back.draw(surf, self.theme)
+
+    # ---- content rect for left list (used for both draw & click) ----
+    def _left_content_rect(self) -> pygame.Rect:
+        inner = self.rect_left.inflate(-12*2, -12*2)
+        inner.y += 24  # space below "Teams"
+        inner.h -= 24  # keep bottom margin symmetric
+        return inner
 
     # ---- scroll clamp ----
     def _clamp_team_scroll(self):
-        inner_h = self.rect_left.h - 12*2 - 24
+        inner_h = self._left_content_rect().h
         total_h = max(0, len(self._teams_sorted()) * self.team_line_h)
         max_scroll = max(0, total_h - inner_h)
         self.team_scroll = max(0, min(self.team_scroll, max_scroll))
@@ -364,7 +361,6 @@ class TeamSelectState(BaseState):
         total_h = max(0, len(self._selected_team().get("fighters", [])) * self.roster_line_h)
         max_scroll = max(0, total_h - inner_h)
         self.roster_scroll = max(0, min(self.roster_scroll, max_scroll))
-
 
 def create(app):
     return TeamSelectState(app)
