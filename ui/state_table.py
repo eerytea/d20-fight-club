@@ -8,6 +8,23 @@ from .uiutil import Theme, Button, draw_text, draw_panel
 from core.standings import table_rows_sorted
 
 
+def _get(r, keys, default=0):
+    """Support dict-like or attribute-like rows and multiple key aliases."""
+    if isinstance(keys, str):
+        keys = (keys,)
+    # dict?
+    if isinstance(r, dict):
+        for k in keys:
+            if k in r:
+                return r[k]
+        return default
+    # object with attrs?
+    for k in keys:
+        if hasattr(r, k):
+            return getattr(r, k)
+    return default
+
+
 class TableState(BaseState):
     def __init__(self, app, career):
         self.app = app
@@ -44,7 +61,7 @@ class TableState(BaseState):
         draw_text(surf, "Standings", (surf.get_width() // 2, 16), 30, th.text, align="center")
         draw_panel(surf, self.rect_panel, th)
 
-        # Build rows (dict-like rows)
+        # Rows normalized from standings helper
         rows = table_rows_sorted(self.career.table, self.career.h2h)
 
         # Header
@@ -53,8 +70,20 @@ class TableState(BaseState):
         y += 26
 
         for i, r in enumerate(rows, start=1):
-            name = self.career.team_names[r["tid"]] if hasattr(self.career, "team_names") else str(r["tid"])
-            line = f"{i:>2}.  {name:<20}  {r['PL']:>2} {r['W']:>2} {r['D']:>2} {r['L']:>2}  {r['K']:>3} {r['KD']:>3}  {r['PTS']:>3}"
+            # Team name
+            tid = _get(r, ("tid", "team_id", "id"))
+            name = (self.career.team_names[tid] if hasattr(self.career, "team_names") and 0 <= tid < len(self.career.team_names)
+                    else str(tid))
+
+            PL = _get(r, ("PL", "played", "P"))
+            W  = _get(r, ("W", "wins"))
+            D  = _get(r, ("D", "draws"))
+            L  = _get(r, ("L", "losses"))
+            K  = _get(r, ("K", "kills", "goals_for"))
+            KD = _get(r, ("KD", "kill_diff", "gd", "goal_diff"))
+            PTS= _get(r, ("PTS", "points", "pts"))
+
+            line = f"{i:>2}.  {name:<20}  {PL:>2} {W:>2} {D:>2} {L:>2}  {K:>3} {KD:>3}  {PTS:>3}"
             draw_text(surf, line, (x0, y), 20, th.text)
             y += 22
 
