@@ -1,4 +1,4 @@
-# ui/state_schedule.py
+# ui/state_schedule.py — show real team names from career.teams
 from __future__ import annotations
 
 import pygame
@@ -12,32 +12,41 @@ except Exception:
     Fixture = object  # type: ignore
 
 
+def _team_name(career, tid: int) -> str:
+    try:
+        return next(t.get("name", f"Team {tid}") for t in career.teams if int(t.get("tid")) == int(tid))
+    except StopIteration:
+        return f"Team {tid}"
+
+
 class ScheduleState(BaseState):
     def __init__(self, app, career):
         self.app = app
-        self.career = career
         self.theme = Theme()
+        self.career = career
+
+        self.week_idx = getattr(career, "week", 1)
+        self.rect_panel = pygame.Rect(0, 0, 0, 0)
+
+        self.btn_prev: Button | None = None
+        self.btn_next: Button | None = None
+        self.btn_back: Button | None = None
+
         self._built = False
 
-        self.week_idx = max(1, getattr(career, "week", 1))
-        self.btn_prev = None
-        self.btn_next = None
-        self.btn_back = None
-
-        self.rect_panel = None
-
     def enter(self) -> None:
-        self._build_ui()
+        self._build()
 
-    def _build_ui(self):
+    def _build(self):
         W, H = self.app.width, self.app.height
-        self.rect_panel = pygame.Rect(16, 60, W - 32, H - 76)
-        btn_w, btn_h, gap = 140, 42, 10
-        y = self.rect_panel.bottom - (btn_h + 10)
+        pad = 16
+        self.rect_panel = pygame.Rect(pad, pad + 50, W - pad * 2, H - (pad * 2 + 50))
 
-        self.btn_prev = Button(pygame.Rect(self.rect_panel.x + 12, y, btn_w, btn_h), "Prev Week", self._prev)
-        self.btn_next = Button(pygame.Rect(self.rect_panel.x + 12 + btn_w + gap, y, btn_w, btn_h), "Next Week", self._next)
-        self.btn_back = Button(pygame.Rect(self.rect_panel.right - (btn_w + 12), y, btn_w, btn_h), "Back", self._back)
+        bw, bh = 160, 44
+        yb = self.rect_panel.bottom + 8
+        self.btn_prev = Button(pygame.Rect(self.rect_panel.x, yb, bw, bh), "Prev Week", self._prev)
+        self.btn_next = Button(pygame.Rect(self.rect_panel.x + bw + 8, yb, bw, bh), "Next Week", self._next)
+        self.btn_back = Button(pygame.Rect(self.rect_panel.right - bw, yb, bw, bh), "Back", self._back)
 
         self._built = True
 
@@ -45,7 +54,6 @@ class ScheduleState(BaseState):
         self.week_idx = max(1, self.week_idx - 1)
 
     def _next(self):
-        # Weeks are 1-based; rough cap (won't crash if over)
         self.week_idx = min(self.week_idx + 1, 999)
 
     def _back(self):
@@ -69,18 +77,17 @@ class ScheduleState(BaseState):
         draw_text(surf, f"Schedule — Week {self.week_idx}", (surf.get_width() // 2, 16), 30, th.text, align="center")
         draw_panel(surf, self.rect_panel, th)
 
-        # List fixtures for week
         y = self.rect_panel.y + 14
-        week_fx = [fx for fx in getattr(self.career, "fixtures", []) if getattr(fx, "week", 0) == self.week_idx]
+        week_fx = [fx for fx in getattr(self.career, "fixtures", []) if int(getattr(fx, "week", 0)) == int(self.week_idx)]
         if not week_fx:
             draw_text(surf, "No fixtures this week.", (self.rect_panel.x + 12, y), 20, th.subt)
         else:
             for fx in week_fx:
-                hn = self.career.team_names[fx.home_id] if hasattr(self.career, "team_names") else str(fx.home_id)
-                an = self.career.team_names[fx.away_id] if hasattr(self.career, "team_names") else str(fx.away_id)
+                hn = _team_name(self.career, fx.home_id)
+                an = _team_name(self.career, fx.away_id)
                 status = "vs"
                 if getattr(fx, "played", False):
-                    status = f"{fx.home_goals}-{fx.away_goals}"
+                    status = f"{getattr(fx, 'kills_home', 0)}-{getattr(fx, 'kills_away', 0)}"
                 draw_text(surf, f"{hn} {status} {an}", (self.rect_panel.x + 12, y), 20, th.text)
                 y += 24
 
