@@ -1,617 +1,459 @@
 # ui/state_match.py
+# Match Viewer state (pygame)
+# - Watches a TBCombat instance and renders live events.
+# - Buttons: Next Turn, Next Round, Auto, Finish.
+# - Event stream priority: events_typed > typed_events > events > _events.
 from __future__ import annotations
-
 import pygame
-from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple, Optional
-from collections import defaultdict
 
-from .app import BaseState
-from .uiutil import Theme, Button, draw_text, draw_panel, get_font
-
-from engine.tbcombat import TBCombat
+# --- light dependencies on your UI kit; fall back if not present
 try:
-    from engine.tbcombat import Team as TBTeam
-except Exception:
-    @dataclass
-    class TBTeam:
-        tid: int
-        name: str
-        color: Tuple[int, int, int]
+    from ui.uiutil import Theme, get_font  # type: ignore
+except Exception:  # fallback stubs
+    class Theme:
+        BG = (18, 18, 22)
+        FG = (235, 235, 235)
+        ACCENT = (120, 170, 255)
+        RED = (220, 64, 64)
+        BLUE = (64, 110, 220)
+        MUTED = (150, 150, 160)
+        PANEL = (28, 28, 34)
+        BTN_BG = (38, 38, 46)
+        BTN_BG_H = (48, 48, 56)
+        BTN_FG = (230, 230, 235)
+        HP_GOOD = (70, 200, 120)
+        HP_BAD = (220, 80, 80)
 
-try:
-    from engine.tbcombat import GRID_W as _GRID_W, GRID_H as _GRID_H
-except Exception:
-    _GRID_W, _GRID_H = 15, 9
+    def get_font(px: int) -> pygame.font.Font:
+        pygame.font.init()
+        return pygame.font.SysFont(None, px)
 
-try:
-    from engine.events import format_event as _format_event
-except Exception:
-    _format_event = None
+# -------- utility helpers --------
 
-
-# ---------- constants ----------
-TARGET_CELL_W = 72
-TARGET_CELL_H = 92
-DOT_RADIUS_F  = 0.22  # fraction of min(cell_w, cell_h)
-
-COLOR_RED  = (220, 70, 70)
-COLOR_BLUE = (70, 120, 230)
-COLOR_HP_BG   = (50, 55, 60)
-COLOR_HP_FILL = (90, 200, 120)
-
-# ---------- helpers ----------
-def _mk_fighter(fd: Dict[str, Any]) -> Any:
-    d = dict(fd)
-    d.setdefault("pid", str(d.get("pid") or d.get("id") or d.get("name") or "F"))
-    d.setdefault("name", str(d.get("name") or d["pid"]))
-    d.setdefault("team_id", d.get("team_id", 0))
-    d.setdefault("class", d.get("class", d.get("cls", "Fighter")))
-    d.setdefault("level", int(d.get("level", d.get("lvl", 1))))
-    hp = int(d.get("hp", 12))
-    d.setdefault("hp", hp)
-    d.setdefault("max_hp", int(d.get("max_hp", hp)))
-    d.setdefault("ac", int(d.get("ac", 10)))
-    d.setdefault("atk", int(d.get("atk", 2)))
-    d.setdefault("alive", bool(d.get("alive", True)))
-    d.setdefault("x", int(d.get("x", d.get("tx", 0))))
-    d.setdefault("y", int(d.get("y", d.get("ty", 0))))
-    d.setdefault("tx", d["x"])
-    d.setdefault("ty", d["y"])
-    return SimpleNamespace(**d)
+def _choose_event_source(combat: Any) -> List[Dict[str, Any]]:
+    # Accept several attribute spellings
+    for attr in ("events_typed", "typed_events", "events", "_events"):
+        if hasattr(combat, attr):
+            ev = getattr(combat, attr)
+            if isinstance(ev, list):
+                return ev
+    # final fallback: attach one
+    combat.typed_events = []
+    return combat.typed_events
 
 def _short_name(name: str) -> str:
-    parts = [p for p in str(name).strip().split() if p]
-    if not parts: return "?"
-    if len(parts) == 1:
-        s = parts[0]
-        return s if len(s) <= 14 else s[:13] + "…"
-    first, last = parts[0], parts[-1]
-    return f"{first[0].upper()}. {last}"
-
-
-class MatchState(BaseState):
-    """Match viewer that normalizes engine team IDs to 0/1 to avoid instant end."""
-
-    def __init__(self, app, home_team: Dict[str, Any], away_team: Dict[str, Any]):
-        self.app = app
-        self.theme = Theme()
-
-        self.home_d = home_team
-        self.away_d = away_team
-
-        # original career team ids (for user-color decision)
-        self.home_tid_orig = int(home_team.get("tid", 0))
-        self.away_tid_orig = int(away_team.get("tid", 1))
-
-        self.combat: Optional[TBCombat] = None
-        self._built = False
-        self._started = False
-
-        # engine-visible color mapping (0 = home, 1 = away)
-        self._color_for_engine_tid: Dict[int, Tuple[int, int, int]] = {}
-
-        # UI rects + buttons
-        self.rect_panel = pygame.Rect(0, 0, 0, 0)
-        self.rect_grid  = pygame.Rect(0, 0, 0, 0)
-        self.rect_log   = pygame.Rect(0, 0, 0, 0)
-        self.btn_turn:   Optional[Button] = None
-        self.btn_round:  Optional[Button] = None
-        self.btn_auto:   Optional[Button] = None
-        self.btn_finish: Optional[Button] = None
-
-        # log + tracking (use a SINGLE src)
-        self.events: List[str] = []
-        self._src_attr: Optional[str] = None
-        self._seen: int = 0
-        self._last_round_seen = 0
-        self._log_scroll = 0
-
-        # name maps & HP cache
-        self._idx_to_name: Dict[int, str] = {}
-        self._pid_to_name: Dict[str, str] = {}
-        self._name_to_pid: Dict[str, str] = {}
-        self._hp_max: Dict[str, int] = {}
-        self._hp_cur: Dict[str, int] = {}
-        self._alive_prev: Dict[str, bool] = {}
-
-        self.auto = False
-        self._auto_steps_per_update = 10
-
-    # ---------- base getters ----------
-    def _fighters(self) -> List[Any]:
-        return getattr(self.combat, "fighters", []) if self.combat else []
-
-    def _fighter_alive(self, f: Any) -> bool:
-        pid = str(getattr(f, "pid", getattr(f, "name", "")))
-        hp  = self._hp_cur.get(pid, int(getattr(f, "hp", 1)))
-        return hp > 0 and bool(getattr(f, "alive", True))
-
-    def _fighter_hp(self, f: Any) -> Tuple[int,int]:
-        pid = str(getattr(f, "pid", getattr(f, "name", "")))
-        mh  = self._hp_max.get(pid, int(getattr(f, "max_hp", getattr(f, "hp", 12))))
-        hp  = self._hp_cur.get(pid, int(getattr(f, "hp", mh)))
-        mh = max(1, mh); hp = max(0, min(mh, hp))
-        return hp, mh
-
-    def _rebuild_name_maps(self) -> None:
-        self._idx_to_name.clear()
-        self._pid_to_name.clear()
-        self._name_to_pid.clear()
-        for i, f in enumerate(self._fighters()):
-            name = str(getattr(f, "name", getattr(f, "pid", f"F{i}")))
-            pid  = str(getattr(f, "pid", name))
-            self._idx_to_name[i] = name
-            self._pid_to_name[pid] = name
-            self._name_to_pid[name] = pid
-
-    def _current_round_from_engine(self) -> Optional[int]:
-        return getattr(self.combat, "round", None) if self.combat else None
-
-    # ---------- colors ----------
-    def _decide_team_colors(self) -> None:
-        user_tid = getattr(getattr(self.app, "career", None), "user_team_id", None)
-        # engine ids are 0 (home) and 1 (away)
-        if user_tid == self.home_tid_orig:
-            self._color_for_engine_tid = {0: COLOR_RED, 1: COLOR_BLUE}
-        elif user_tid == self.away_tid_orig:
-            self._color_for_engine_tid = {0: COLOR_BLUE, 1: COLOR_RED}
-        else:
-            self._color_for_engine_tid = {0: COLOR_RED, 1: COLOR_BLUE}
-
-    def _team_color_for_engine_tid(self, tid01: int) -> Tuple[int, int, int]:
-        return self._color_for_engine_tid.get(int(tid01), COLOR_BLUE)
-
-    # ---------- HP & identity ----------
-    def _init_hp_cache(self) -> None:
-        self._hp_max.clear(); self._hp_cur.clear(); self._alive_prev.clear()
-        for f in self._fighters():
-            pid = str(getattr(f, "pid", getattr(f, "name", "")))
-            if not pid: continue
-            mh = int(getattr(f, "max_hp", getattr(f, "hp", 12)))
-            hp = int(getattr(f, "hp", mh))
-            self._hp_max[pid] = max(1, mh)
-            self._hp_cur[pid] = max(0, min(mh, hp))
-            self._alive_prev[pid] = bool(getattr(f, "alive", True))
-
-    def _pid_from_event_field(self, val: Any) -> Optional[str]:
-        if val is None: return None
-        if isinstance(val, str):   return self._name_to_pid.get(val, val)
-        if isinstance(val, int):   return self._name_to_pid.get(self._idx_to_name.get(val, ""), None)
-        if isinstance(val, dict):
-            if "pid" in val: return str(val["pid"])
-            if "name" in val: return self._name_to_pid.get(str(val["name"]))
-        if hasattr(val, "pid"): return str(getattr(val, "pid"))
-        if hasattr(val, "name"): return self._name_to_pid.get(str(getattr(val, "name")))
-        return None
-
-    # ---------- event formatting ----------
-    def _name_from_val(self, v: Any) -> str:
-        if isinstance(v, str): return self._pid_to_name.get(v, v)
-        if isinstance(v, int): return self._idx_to_name.get(v, f"#{v}")
-        if isinstance(v, dict):
-            if "name" in v: return str(v["name"])
-            pid = v.get("pid"); 
-            if pid is not None: return self._pid_to_name.get(str(pid), str(pid))
-        if hasattr(v, "name"): return str(getattr(v, "name"))
-        if hasattr(v, "pid"):  return self._pid_to_name.get(str(getattr(v, "pid")), str(getattr(v, "pid")))
+    name = (name or "").strip()
+    if not name:
         return "?"
+    parts = name.split()
+    if len(parts) == 1:
+        return parts[0][:12]
+    first = (parts[0][0] + ".") if parts[0] else ""
+    last = parts[-1]
+    s = f"{first} {last}"
+    return s if len(s) <= 14 else s[:14]
 
-    def _fmt_event(self, e: Any) -> str:
-        if _format_event:
-            try:
-                s = _format_event(e)
-                if isinstance(s, str) and s.strip(): return s
-            except Exception:
-                pass
+def _fmt_event(d: Dict[str, Any]) -> Optional[str]:
+    t = d.get("type")
+    if t == "round":
+        return f"— Round {d.get('round', '?')} —"
+    if t == "move":
+        who = d.get("name", "Unknown")
+        to = d.get("to", ("?", "?"))
+        return f"{who} moves to {to}."
+    if t == "blocked":
+        who = d.get("name", "Unknown")
+        to = d.get("to", ("?", "?"))
+        by = d.get("by", "someone")
+        return f"{who} tries to move to {to} but is blocked by {by}."
+    if t == "hit":
+        return f"{d.get('name','?')} hits {d.get('target','?')} for {d.get('dmg','?')}."
+    if t == "miss":
+        return f"{d.get('name','?')} misses {d.get('target','?')}."
+    if t == "down":
+        return f"{d.get('name','?')} is down!"
+    if t == "end":
+        return "— End of match —"
+    if t == "note":
+        return f"[note] {d.get('msg','')}"
+    # unknown: don't crash viewer
+    return None
 
-        if isinstance(e, dict):
-            t = e.get("type") or e.get("event") or e.get("kind") or "event"
-            actor_keys = ("name","who","actor","src","attacker","unit","who_id","actor_id","src_id","attacker_id")
-            targ_keys  = ("target","defender","dst","target_id","defender_id","dst_id")
+def _wrap_lines(text: str, font: pygame.font.Font, max_w: int) -> List[str]:
+    if not text:
+        return [""]
+    words = text.split(" ")
+    out: List[str] = []
+    cur = ""
+    for w in words:
+        trial = w if not cur else f"{cur} {w}"
+        if font.size(trial)[0] <= max_w or not cur:
+            cur = trial
+        else:
+            out.append(cur)
+            cur = w
+    if cur:
+        out.append(cur)
+    return out
 
-            def who_from() -> str:
-                nm = e.get("who_name") or e.get("actor_name") or e.get("attacker_name") or e.get("unit_name")
-                if nm: return str(nm)
-                for k in actor_keys:
-                    if k in e: return self._name_from_val(e[k])
-                return "?"
+def _norm_tid(x: Any) -> int:
+    return 1 if x in (1, "1", True) else 0
 
-            def tgt_from() -> str:
-                nm = e.get("target_name") or e.get("defender_name")
-                if nm: return str(nm)
-                for k in targ_keys:
-                    if k in e: return self._name_from_val(e[k])
-                return "?"
+# -------- simple button --------
 
-            if t in ("round","StartRound","start"):
-                r = e.get("round", e.get("r", "?"))
-                try: self._last_round_seen = int(r)
-                except Exception: pass
-                return f"— Round {r} —"
-            if t in ("move","Move"):
-                to = e.get("to") or (e.get("x"), e.get("y"))
-                return f"{who_from()} moves to {to}"
-            if t in ("hit","Hit"):
-                dmg = e.get("dmg") or e.get("damage") or e.get("amount") or "?"
-                return f"{who_from()} hits {tgt_from()} for {dmg}"
-            if t in ("miss","Miss"):
-                return f"{who_from()} misses {tgt_from()}"
-            if t in ("down","Down"):
-                nm = e.get("name") or e.get("who") or e.get("target") or e.get("defender") or who_from() or tgt_from()
-                return f"{self._name_from_val(nm)} is down!"
-            if t in ("end","End","finish"):
-                return "End of match"
+class Button:
+    def __init__(self, rect: pygame.Rect, label: str, on_click):
+        self.rect = rect
+        self.label = label
+        self.on_click = on_click
+        self._hover = False
 
-            # readable fallback
-            parts = []
-            for k, v in e.items():
-                if k in actor_keys or k in targ_keys: v = self._name_from_val(v)
-                parts.append(f"{k}={v}")
-            return ", ".join(parts)
+    def handle_event(self, e: pygame.event.Event) -> None:
+        if e.type == pygame.MOUSEMOTION:
+            self._hover = self.rect.collidepoint(e.pos)
+        elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+            if self.rect.collidepoint(e.pos):
+                self.on_click()
 
-        return str(e)
+    def draw(self, surf: pygame.Surface, theme: Theme):
+        bg = theme.BTN_BG_H if self._hover else theme.BTN_BG
+        pygame.draw.rect(surf, bg, self.rect, border_radius=10)
+        f = get_font(20)
+        txt = f.render(self.label, True, theme.BTN_FG)
+        surf.blit(txt, txt.get_rect(center=self.rect.center))
 
-    # ---------- lifecycle ----------
-    def enter(self) -> None:
-        self._build_match()
-        self._decide_team_colors()
-        self._build_ui()
-        self._rebuild_name_maps()
-        self._init_hp_cache()
-        self._choose_event_source()
-        self._harvest_new_events()  # prime (may include Round 1)
-        self._built = True
+# -------- match state --------
 
-    def _build_match(self) -> None:
-        # IMPORTANT: normalize to 0/1 for the engine
-        tA_engine_id, tB_engine_id = 0, 1
-        tA = TBTeam(tA_engine_id, self.home_d.get("name","Home"), COLOR_RED)
-        tB = TBTeam(tB_engine_id, self.away_d.get("name","Away"), COLOR_BLUE)
+class State_Match:
+    """
+    Public surface:
+      - enter(app, **kwargs)  (optional)
+      - handle_event(e)
+      - update(dt)
+      - draw(screen)
+    Construct with (app, combat, on_finish=None, user_tid=0, auto=False)
+    """
+    def __init__(self, app, combat: Any, on_finish=None, user_tid: int = 0, auto: bool = False):
+        self.app = app
+        self.combat = combat
+        self.events = _choose_event_source(combat)
+        self.on_finish = on_finish
+        # normalize team IDs defensively
+        for f in getattr(self.combat, "fighters", []):
+            if hasattr(f, "team_id"):
+                f.team_id = _norm_tid(getattr(f, "team_id", 0))
+            elif isinstance(f, dict):
+                f["team_id"] = _norm_tid(f.get("team_id", 0))
 
-        # fighters from team dicts, mapped to engine ids 0/1
-        h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
-        a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
-        fighters: List[Any] = []
-        for idx, fd in enumerate(h_roster):
-            fighters.append(_mk_fighter({**fd, "team_id": tA_engine_id, "pid": fd.get("pid") or f"H{idx}"}))
-        for idx, fd in enumerate(a_roster):
-            fighters.append(_mk_fighter({**fd, "team_id": tB_engine_id, "pid": fd.get("pid") or f"A{idx}"}))
+        # layout
+        self.W = getattr(app, "width", 1280)
+        self.H = getattr(app, "height", 720)
+        self.theme = getattr(app, "theme", Theme())
 
-        # two-column layout using engine ids 0/1
-        self._layout_two_columns(fighters, tA_engine_id, tB_engine_id)
+        self.sidebar_w = 360
+        self.bottom_h = 64
+        self.pad = 12
 
-        # fresh combat
-        self.combat = TBCombat(tA, tB, fighters, _GRID_W, _GRID_H, seed=42)
-        self.events.clear()
-        self._log_scroll = 0
-        self._last_round_seen = 0
-        self._started = False
+        # derived rects
+        self.grid_rect = pygame.Rect(self.pad, self.pad,
+                                     self.W - self.sidebar_w - 3*self.pad,
+                                     self.H - self.bottom_h - 2*self.pad)
+        self.sidebar_rect = pygame.Rect(self.grid_rect.right + self.pad, self.pad,
+                                        self.sidebar_w, self.grid_rect.height)
+        self.buttons_rect = pygame.Rect(self.pad, self.grid_rect.bottom + self.pad,
+                                        self.W - 2*self.pad, self.bottom_h)
 
-    def _layout_two_columns(self, fighters: List[Any], home_id01: int, away_id01: int) -> None:
-        left  = [f for f in fighters if getattr(f, "team_id", 0) == home_id01]
-        right = [f for f in fighters if getattr(f, "team_id", 0) == away_id01]
-        gapL = max(1, _GRID_H // (len(left)  + 1)) if left  else 2
-        gapR = max(1, _GRID_H // (len(right) + 1)) if right else 2
-        for i, f in enumerate(left,  start=1): f.x = f.tx = 1;               f.y = f.ty = min(_GRID_H-1, i*gapL)
-        for i, f in enumerate(right, start=1): f.x = f.tx = max(0,_GRID_W-2); f.y = f.ty = min(_GRID_H-1, i*gapR)
+        # grid size from combat
+        self.GW = int(getattr(self.combat, "GRID_W", 8))
+        self.GH = int(getattr(self.combat, "GRID_H", 6))
 
-    def _build_ui(self) -> None:
-        W, H = self.app.width, self.app.height
-        self.rect_panel = pygame.Rect(16, 60, W - 32, H - 76)
-        split = int(self.rect_panel.w * 0.70)
-        self.rect_grid = pygame.Rect(self.rect_panel.x + 12, self.rect_panel.y + 12,
-                                     split - 24, self.rect_panel.h - 84)
-        self.rect_log  = pygame.Rect(self.rect_panel.x + split, self.rect_panel.y + 12,
-                                     self.rect_panel.w - split - 24, self.rect_panel.h - 84)
+        # cell math (no gridlines drawn)
+        self.cell_w = max(24, self.grid_rect.width // self.GW)
+        self.cell_h = max(24, self.grid_rect.height // self.GH)
 
-        btn_w, btn_h, gap = 160, 44, 10
-        y = self.rect_panel.bottom - (btn_h + 10)
-        x = self.rect_panel.x + 12
-        self.btn_turn   = Button(pygame.Rect(x, y, btn_w, btn_h), "Next Turn",  self._next_turn)
-        x += btn_w + gap
-        self.btn_round  = Button(pygame.Rect(x, y, btn_w, btn_h), "Next Round", self._next_round)
-        x += btn_w + gap
-        self.btn_auto   = Button(pygame.Rect(x, y, btn_w, btn_h), f"Auto: {'ON' if self.auto else 'OFF'}", self._toggle_auto)
-        self.btn_finish = Button(pygame.Rect(self.rect_panel.right - (btn_w + 12), y, btn_w, btn_h), "Finish", self._back)
+        # fonts scale to tile height
+        self._recalc_fonts()
 
-    # ---------- event source (single stream) ----------
-    def _choose_event_source(self) -> None:
-        for name in ("events_typed", "typed_events", "event_log_typed", "events", "log"):
-            if isinstance(getattr(self.combat, name, None), list):
-                self._src_attr = name
+        # colors
+        self.COLOR_BY_TID = {
+            0: getattr(self.theme, "RED", (220, 64, 64)),
+            1: getattr(self.theme, "BLUE", (64, 110, 220)),
+        }
+        self.user_tid = _norm_tid(user_tid)
+
+        # log + scroll
+        self.log_lines: List[str] = []
+        self.log_scroll = 0  # pixels from top
+        self._log_line_h = self.font_log.get_linesize()
+        self._ev_idx = 0
+
+        # buttons
+        bw = 160
+        gap = 10
+        bx = self.buttons_rect.x
+        by = self.buttons_rect.y
+        self.btn_next_turn = Button(pygame.Rect(bx, by, bw, self.bottom_h), "Next Turn", self._action_next_turn)
+        self.btn_next_round = Button(pygame.Rect(bx + (bw + gap), by, bw, self.bottom_h), "Next Round", self._action_next_round)
+        self.btn_auto = Button(pygame.Rect(bx + 2*(bw + gap), by, bw, self.bottom_h), "Auto: OFF", self._toggle_auto)
+        self.btn_finish = Button(pygame.Rect(self.buttons_rect.right - bw, by, bw, self.bottom_h), "Finish", self._finish)
+
+        self.auto = bool(auto)
+        self._auto_timer = 0.0
+        self._auto_period = 0.20  # seconds per step when Auto
+
+        # start banner if not already present
+        if not any(ev.get("type") == "round" for ev in self.events):
+            self._append_log("— Round 1 —")
+
+    # ------- state lifecycle (optional) -------
+    def enter(self, **kwargs):  # called by app if present
+        pass
+
+    # ------- input -------
+    def handle_event(self, e: pygame.event.Event) -> None:
+        # buttons
+        self.btn_next_turn.handle_event(e)
+        self.btn_next_round.handle_event(e)
+        self.btn_auto.handle_event(e)
+        self.btn_finish.handle_event(e)
+
+        # mouse wheel scroll on sidebar
+        if e.type == pygame.MOUSEWHEEL:
+            mx, my = pygame.mouse.get_pos()
+            if self.sidebar_rect.collidepoint(mx, my):
+                self.log_scroll -= e.y * (self._log_line_h * 3)
+                self.log_scroll = max(0, self.log_scroll)
+
+        # keyboard shortcuts
+        if e.type == pygame.KEYDOWN:
+            if e.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                self._finish()
+            elif e.key == pygame.K_n:
+                self._action_next_turn()
+            elif e.key == pygame.K_r:
+                self._action_next_round()
+            elif e.key == pygame.K_a:
+                self._toggle_auto()
+
+    # ------- update/draw -------
+    def update(self, dt: float) -> None:
+        # bring in any engine events that appeared since last frame (e.g., if engine pre-simmed)
+        self._ingest_new_events()
+
+        if self.auto and not self._ended():
+            self._auto_timer += dt
+            while self._auto_timer >= self._auto_period and not self._ended():
+                self._auto_timer -= self._auto_period
+                self._step_once_and_ingest()
+
+    def draw(self, screen: pygame.Surface) -> None:
+        screen.fill(self.theme.BG)
+
+        # grid area (no gridlines)
+        pygame.draw.rect(screen, self.theme.PANEL, self.grid_rect, border_radius=12)
+
+        # draw fighters
+        for f in getattr(self.combat, "fighters", []):
+            alive = getattr(f, "alive", True) if not isinstance(f, dict) else f.get("alive", True)
+            hp = getattr(f, "hp", 0) if not isinstance(f, dict) else f.get("hp", 0)
+            if not alive or hp <= 0:
+                continue
+            tid = _norm_tid(getattr(f, "team_id", 0) if not isinstance(f, dict) else f.get("team_id", 0))
+            x = getattr(f, "x", 0) if not isinstance(f, dict) else f.get("x", 0)
+            y = getattr(f, "y", 0) if not isinstance(f, dict) else f.get("y", 0)
+            name = getattr(f, "name", "?") if not isinstance(f, dict) else f.get("name", "?")
+            self._draw_fighter(screen, x, y, name, tid, hp, getattr(f, "max_hp", hp) if not isinstance(f, dict) else f.get("max_hp", hp))
+
+        # sidebar log
+        self._draw_log(screen)
+
+        # buttons
+        self.btn_next_turn.draw(screen, self.theme)
+        self.btn_next_round.draw(screen, self.theme)
+        self.btn_auto.draw(screen, self.theme)
+        self.btn_finish.draw(screen, self.theme)
+
+    # ------- internal helpers -------
+
+    def _recalc_fonts(self):
+        tile_h = self.cell_h
+        name_px = max(12, min(int(tile_h * 0.28), 28))
+        hp_px = max(10, min(int(tile_h * 0.22), 24))
+        log_px = 18
+        self.font_name = get_font(name_px)
+        self.font_hp = get_font(hp_px)
+        self.font_log = get_font(log_px)
+
+    def _cell_rect(self, gx: int, gy: int) -> pygame.Rect:
+        x = self.grid_rect.x + gx * self.cell_w
+        y = self.grid_rect.y + gy * self.cell_h
+        return pygame.Rect(x, y, self.cell_w, self.cell_h)
+
+    def _draw_fighter(self, screen: pygame.Surface, gx: int, gy: int, name: str, tid: int, hp: int, max_hp: int):
+        r = self._cell_rect(gx, gy)
+        # dot
+        color = self.COLOR_BY_TID.get(tid, self.theme.ACCENT)
+        dot = min(r.width, r.height) // 4 + 4
+        pygame.draw.circle(screen, color, (r.centerx, r.top + dot + 4), dot)
+
+        # name
+        nm = _short_name(name)
+        txt = self.font_name.render(nm, True, self.theme.FG)
+        name_rect = txt.get_rect(midtop=(r.centerx, r.top + dot*2 + 6))
+        screen.blit(txt, name_rect)
+
+        # HP bar (under name)
+        frac = 0.0 if max_hp <= 0 else max(0.0, min(1.0, hp / float(max_hp)))
+        bar_w = int(r.width * 0.9)
+        bar_h = max(6, int(r.height * 0.12))
+        bar_x = r.centerx - bar_w // 2
+        bar_y = name_rect.bottom + 4
+        # background
+        pygame.draw.rect(screen, (40, 40, 46), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+        # fill
+        fill_w = max(0, int(bar_w * frac))
+        fill_col = self.theme.HP_GOOD if frac >= 0.5 else self.theme.HP_BAD
+        pygame.draw.rect(screen, fill_col, (bar_x, bar_y, fill_w, bar_h), border_radius=4)
+
+    def _draw_log(self, screen: pygame.Surface):
+        pygame.draw.rect(screen, self.theme.PANEL, self.sidebar_rect, border_radius=12)
+        pad = 10
+        inner = self.sidebar_rect.inflate(-2*pad, -2*pad)
+        y = inner.y - self.log_scroll
+
+        # draw lines
+        for line in self.log_lines:
+            surf = self.font_log.render(line, True, self.theme.FG)
+            screen.blit(surf, (inner.x, y))
+            y += self._log_line_h
+
+        # soft edge fade (optional)
+        # top
+        top_fade = pygame.Surface((inner.width, min(30, inner.height)), pygame.SRCALPHA)
+        top_fade.fill((0, 0, 0, 90))
+        screen.blit(top_fade, (inner.x, inner.y))
+        # bottom
+        bot_fade = pygame.Surface((inner.width, min(30, inner.height)), pygame.SRCALPHA)
+        bot_fade.fill((0, 0, 0, 90))
+        screen.blit(bot_fade, (inner.x, inner.bottom - bot_fade.get_height()))
+
+        # clip to sidebar
+        clip_old = screen.get_clip()
+        screen.set_clip(inner)
+        # (already drawn within bounds)
+        screen.set_clip(clip_old)
+
+    def _append_log(self, s: str):
+        # wrap to sidebar width
+        pad = 10
+        inner_w = self.sidebar_rect.width - 2*pad
+        for line in _wrap_lines(s, self.font_log, inner_w):
+            self.log_lines.append(line)
+        # auto-scroll to bottom on new lines
+        total_px = len(self.log_lines) * self._log_line_h
+        visible_px = self.sidebar_rect.height - 2*pad
+        self.log_scroll = max(0, total_px - visible_px)
+
+    # ---- event ingestion / stepping ----
+
+    def _ingest_new_events(self):
+        # read any new events from combat.events*
+        while self._ev_idx < len(self.events):
+            ev = self.events[self._ev_idx]
+            self._ev_idx += 1
+            msg = _fmt_event(ev)
+            if msg:
+                self._append_log(msg)
+
+    def _step_once_and_ingest(self):
+        # perform exactly one engine step_action() and ingest its events
+        step = getattr(self.combat, "step_action", None)
+        if callable(step) and not self._ended():
+            before = len(self.events)
+            step()
+            # pull new events
+            self._ingest_new_events()
+            # safety: if engine emitted nothing, avoid tight loop in Auto
+            if len(self.events) == before:
+                # give viewer *something* to hold onto
+                self._append_log("[warn] step_action produced no events.")
+
+    def _action_next_turn(self):
+        if self._ended():
+            return
+        # first step
+        base_len = len(self.events)
+        self._step_once_and_ingest()
+        # try to continue while the same actor is acting (heuristic by 'name' fields)
+        first_name = None
+        for ev in self.events[base_len:]:
+            if "name" in ev and ev.get("type") not in ("down", "end", "round", "note"):
+                first_name = ev["name"]
                 break
-        self._seen = len(getattr(self.combat, self._src_attr, [])) if self._src_attr else 0
+        if first_name is None:
+            return
+        # keep stepping while actor stays the same and no round/end occurs
+        while not self._ended():
+            pre_len = len(self.events)
+            self._step_once_and_ingest()
+            new_chunk = self.events[pre_len:]
+            if any(ev.get("type") in ("round", "end") for ev in new_chunk):
+                break
+            actor_changed = False
+            for ev in new_chunk:
+                nm = ev.get("name")
+                if nm and nm != first_name and ev.get("type") not in ("down", "note"):
+                    actor_changed = True
+                    break
+            if actor_changed or not new_chunk:
+                break
 
-    def _raw_since(self, base: int) -> List[Any]:
-        if not self._src_attr or not self.combat: return []
-        evs = getattr(self.combat, self._src_attr)
-        return evs[base:]
-
-    # ---------- controls ----------
-    def _advance_once(self) -> None:
-        if not self.combat: return
-        c = self.combat
-        for name in ("take_turn","step","advance","tick","update"):
-            fn = getattr(c, name, None)
-            if callable(fn):
-                try: fn(1); return
-                except TypeError:
-                    try: fn(); return
-                    except Exception: pass
-                except Exception:
-                    pass
-
-    def _harvest_and_refresh(self) -> None:
-        self._rebuild_name_maps()
-        self._harvest_new_events()
-
-    def _next_turn(self):
-        if not self.combat or getattr(self.combat, "winner", None) is not None: return
-        self._started = True
-        base_raw = self._seen
-        start_round = self._current_round_from_engine() or self._last_round_seen
-        actor_name: Optional[str] = None
-
-        for _ in range(500):
-            self._advance_once()
-            self._harvest_and_refresh()
-            if getattr(self.combat, "winner", None) is not None: break
-
-            new_raw = self._raw_since(base_raw)
-            for e in new_raw:
-                if isinstance(e, dict):
-                    nm = e.get("name") or e.get("actor") or e.get("who") or e.get("src")
-                    if nm:
-                        nm = self._name_from_val(nm)
-                        if actor_name is None:
-                            actor_name = nm
-                        elif nm != actor_name:
-                            return
-            cur_round = self._current_round_from_engine() or self._last_round_seen
-            if cur_round is not None and start_round is not None and cur_round > start_round:
-                return
-
-    def _next_round(self):
-        if not self.combat or getattr(self.combat, "winner", None) is not None: return
-        self._started = True
-        target = (self._current_round_from_engine() or self._last_round_seen) + 1
-        for _ in range(20000):
-            if getattr(self.combat, "winner", None) is not None: break
-            self._advance_once()
-            self._harvest_and_refresh()
-            cur = self._current_round_from_engine() or self._last_round_seen
-            if cur >= target: break
+    def _action_next_round(self):
+        if self._ended():
+            return
+        # advance until we observe a 'round' event or the match ends
+        start_round = self._current_round()
+        while not self._ended():
+            pre_len = len(self.events)
+            self._step_once_and_ingest()
+            # if new events contain round or end, stop
+            new_chunk = self.events[pre_len:]
+            if any(ev.get("type") in ("round", "end") for ev in new_chunk):
+                break
+            # safety if engine stalled
+            if self._current_round() != start_round:
+                break
 
     def _toggle_auto(self):
         self.auto = not self.auto
-        if self.btn_auto: self.btn_auto.label = f"Auto: {'ON' if self.auto else 'OFF'}"
-        if self.auto: self._started = True
+        self.btn_auto.label = f"Auto: {'ON' if self.auto else 'OFF'}"
 
-    def _back(self): self.app.pop_state()
-
-    # ---------- event ingest (single stream) ----------
-    def _harvest_new_events(self):
-        if not self.combat or not self._src_attr: return
-        evs = getattr(self.combat, self._src_attr, [])
-        fresh = evs[self._seen:]
-
-        if fresh and self._seen == 0:
-            print("[Match] sample events:", fresh[:5])
-
-        # update HP first
-        for e in fresh:
+    def _finish(self):
+        # Prefer callback; else try app.pop_state(); else no-op
+        if callable(self.on_finish):
             try:
-                if isinstance(e, dict):
-                    t = e.get("type") or e.get("event") or e.get("kind")
-                    if t in ("hit","Hit"):
-                        dmg = int(e.get("dmg") or e.get("damage") or e.get("amount") or 0)
-                        tgt = e.get("target", e.get("defender", e.get("dst")))
-                        pid = self._pid_from_event_field(tgt)
-                        if pid and pid in self._hp_max:
-                            self._hp_cur[pid] = max(0, self._hp_cur.get(pid, self._hp_max[pid]) - dmg)
-                    elif t in ("down","Down"):
-                        nm = e.get("name") or e.get("target") or e.get("defender")
-                        pid = self._pid_from_event_field(nm) if nm is not None else None
-                        if pid and pid in self._hp_max:
-                            self._hp_cur[pid] = 0
+                self.on_finish(self)
             except Exception:
                 pass
-
-        # readable log lines
-        for e in fresh:
-            try:
-                s = self._fmt_event(e)
-                if isinstance(s, str) and s.startswith("— Round "):
-                    try:
-                        num = int(s.replace("— Round ","").replace(" —","").strip())
-                        self._last_round_seen = max(self._last_round_seen, num)
-                    except Exception:
-                        pass
-                self.events.append(s)
-            except Exception:
-                self.events.append(str(e))
-
-        self._seen += len(fresh)
-        if len(self.events) > 800: self.events = self.events[-800:]
-
-    # ---------- update/draw ----------
-    def handle(self, event) -> None:
-        if self.btn_turn:   self.btn_turn.handle(event)
-        if self.btn_round:  self.btn_round.handle(event)
-        if self.btn_auto:   self.btn_auto.handle(event)
-        if self.btn_finish: self.btn_finish.handle(event)
-        if event.type == pygame.MOUSEWHEEL and self.rect_log:
-            mx, my = pygame.mouse.get_pos()
-            if self.rect_log.collidepoint(mx, my):
-                self._log_scroll = max(0, self._log_scroll + event.y * 4)
-
-    def update(self, dt: float) -> None:
-        mx, my = pygame.mouse.get_pos()
-        if self.btn_turn:   self.btn_turn.update((mx,my))
-        if self.btn_round:  self.btn_round.update((mx,my))
-        if self.btn_auto:   self.btn_auto.update((mx,my))
-        if self.btn_finish: self.btn_finish.update((mx,my))
-
-        if self.auto and self.combat and getattr(self.combat, "winner", None) is None:
-            for _ in range(self._auto_steps_per_update):
-                if getattr(self.combat, "winner", None) is not None: break
-                self._advance_once()
-            self._harvest_and_refresh()
-
-    def draw(self, surf: pygame.Surface) -> None:
-        if not self._built: self.enter()
-        th = self.theme
-        surf.fill(th.bg)
-
-        title = f"{self.home_d.get('name','Home')} vs {self.away_d.get('name','Away')}"
-        draw_text(surf, title, (surf.get_width()//2, 16), 28, th.text, align="center")
-
-        draw_panel(surf, self.rect_panel, th)
-        draw_panel(surf, self.rect_grid, th)   # grid area (no gridlines)
-        draw_panel(surf, self.rect_log, th)
-
-        status_y = self.rect_panel.y + 16
-        winner = getattr(self.combat, "winner", None) if self.combat else None
-        if self._started and winner is not None:
-            wmap = {"home": self.home_d.get("name","Home"),
-                    "away": self.away_d.get("name","Away"),
-                    "draw": "Draw", 0: self.home_d.get("name","Home"),
-                    1: self.away_d.get("name","Away")}
-            draw_text(surf, f"Winner: {wmap.get(winner, str(winner))}", (self.rect_panel.x + 16, status_y), 20, th.text)
         else:
-            draw_text(surf, "Status: Running" if self.auto else "Status: Paused",
-                      (self.rect_panel.x + 16, status_y), 20, th.subt)
+            pop = getattr(self.app, "pop_state", None)
+            if callable(pop):
+                try:
+                    pop()
+                except Exception:
+                    pass
 
-        self._draw_grid(surf)
-        self._draw_log(surf)
+    def _ended(self) -> bool:
+        return bool(getattr(self.combat, "winner", None)) or any(ev.get("type") == "end" for ev in self.events)
 
-        if self.btn_turn:   self.btn_turn.draw(surf, th)
-        if self.btn_round:  self.btn_round.draw(surf, th)
-        if self.btn_auto:   self.btn_auto.draw(surf, th)
-        if self.btn_finish: self.btn_finish.draw(surf, th)
+    def _current_round(self) -> int:
+        # scan backwards for last round marker
+        for ev in reversed(self.events):
+            if ev.get("type") == "round":
+                return int(ev.get("round", 1))
+        return 1
 
-    # ---------- grid (no lines, big cells; hide downed) ----------
-    def _draw_grid(self, surf: pygame.Surface) -> None:
-        rg = self.rect_grid
-        gw, gh = _GRID_W, _GRID_H
-
-        scale_w = max(0.1, min(1.0, (rg.w - 12) / (gw * TARGET_CELL_W)))
-        scale_h = max(0.1, min(1.0, (rg.h - 12) / (gh * TARGET_CELL_H)))
-        s = min(scale_w, scale_h)
-
-        cell_w = max(40, int(TARGET_CELL_W * s))
-        cell_h = max(60, int(TARGET_CELL_H * s))
-
-        used_w, used_h = cell_w * gw, cell_h * gh
-        ox = rg.x + max(0, (rg.w - used_w) // 2)
-        oy = rg.y + max(0, (rg.h - used_h) // 2)
-
-        per_tile: defaultdict[Tuple[int,int], List[Any]] = defaultdict(list)
-        for f in self._fighters():
-            if not self._fighter_alive(f): continue
-            x = int(getattr(f, "x", getattr(f, "tx", 0)))
-            y = int(getattr(f, "y", getattr(f, "ty", 0)))
-            per_tile[(x,y)].append(f)
-
-        def offsets(n: int) -> List[Tuple[float,float]]:
-            if n <= 1: return [(0.0, 0.0)]
-            if n == 2: return [(-0.22, 0.0), (0.22, 0.0)]
-            if n == 3: return [(-0.22, -0.18), (0.22, -0.18), (0.0, 0.22)]
-            return [(-0.22, -0.18), (0.22, -0.18), (-0.22, 0.22), (0.22, 0.22)]
-
-        for (x, y), flist in per_tile.items():
-            cx = ox + x * cell_w
-            cy = oy + y * cell_h
-            cell_rect = pygame.Rect(cx, cy, cell_w, cell_h)
-
-            name_y = cell_rect.y + max(4, int(cell_h * 0.08))
-            bar_y  = name_y + max(14, int(cell_h * 0.16))
-            dot_row_y = bar_y + 10
-
-            r = max(8, int(min(cell_w, cell_h) * DOT_RADIUS_F))
-            base_cx = cell_rect.centerx
-            base_cy = dot_row_y + r
-
-            offs = offsets(len(flist))
-            for idx, f in enumerate(flist):
-                dx, dy = offs[min(idx, len(offs)-1)]
-                dot_cx = int(base_cx + dx * cell_w)
-                dot_cy = int(base_cy + dy * cell_h)
-
-                # engine ids are 0/1
-                tid01 = int(getattr(f, "team_id", 0))
-                color = self._team_color_for_engine_tid(tid01)
-
-                hp, mh = self._fighter_hp(f)
-                name_full = str(getattr(f, "name", getattr(f, "pid", "F")))
-                name_disp = _short_name(name_full)
-
-                name_size = 14 if len(flist) <= 2 else 12
-                draw_text(surf, name_disp, (dot_cx, name_y), name_size, self.theme.text, align="center")
-
-                bar_w = int(min(cell_rect.w * 0.9, max(48, cell_w * (0.78 if len(flist) <= 2 else 0.66))))
-                bar_h = 7
-                bx = dot_cx - bar_w // 2
-                by = bar_y
-                pygame.draw.rect(surf, COLOR_HP_BG, pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
-                fill_w = int(bar_w * (hp / mh))
-                pygame.draw.rect(surf, COLOR_HP_FILL, pygame.Rect(bx, by, fill_w, bar_h), border_radius=3)
-
-                pygame.draw.circle(surf, color, (dot_cx, dot_cy), r)
-                pygame.draw.circle(surf, self.theme.panel_border, (dot_cx, dot_cy), r, 1)
-
-    # ---------- log ----------
-    def _measure_w(self, text: str, font_px: int) -> int:
-        font = get_font(font_px)
-        sa = getattr(font, "size", None)
-        try:
-            if callable(sa):
-                w, _ = sa(text)
-                return int(w)
-        except Exception:
-            pass
-        try:
-            return int(font.render(text, True, (0, 0, 0)).get_width())
-        except Exception:
-            return int(len(text) * (font_px * 0.55))
-
-    def _wrap_lines(self, lines: List[str], width_px: int, font_size: int) -> List[str]:
-        wrapped: List[str] = []
-        for line in lines:
-            words = str(line).split()
-            if not words:
-                wrapped.append("")
-                continue
-            cur = words[0]
-            for w in words[1:]:
-                test = f"{cur} {w}"
-                if self._measure_w(test, font_size) <= width_px:
-                    cur = test
-                else:
-                    wrapped.append(cur)
-                    cur = w
-            wrapped.append(cur)
-        return wrapped
-
-    def _draw_log(self, surf: pygame.Surface) -> None:
-        rl = self.rect_log
-        draw_text(surf, "Event Log", (rl.centerx, rl.y + 6), 20, self.theme.subt, align="center")
-
-        clip = surf.get_clip()
-        inner = pygame.Rect(rl.x + 8, rl.y + 28, rl.w - 16, rl.h - 36)
-        surf.set_clip(inner)
-
-        wrapped = self._wrap_lines(self.events[-800:], inner.w - 8, 18)
-        line_h = 20
-        visible = max(1, inner.h // line_h)
-        start = max(0, len(wrapped) - visible - self._log_scroll)
-        end = min(len(wrapped), start + visible)
-
-        y = inner.y
-        for i in range(start, end):
-            draw_text(surf, wrapped[i], (inner.x + 4, y), 18, self.theme.text)
-            y += line_h
-
-        surf.set_clip(clip)
+# convenience: factory
+def create(app, combat, on_finish=None, user_tid: int = 0, auto: bool = False) -> State_Match:
+    return State_Match(app, combat, on_finish=on_finish, user_tid=user_tid, auto=auto)
