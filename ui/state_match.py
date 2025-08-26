@@ -3,6 +3,7 @@
 # - Watches a TBCombat instance and renders live events.
 # - Buttons: Next Turn, Next Round, Auto, Finish.
 # - Event stream priority: events_typed > typed_events > events > _events.
+
 from __future__ import annotations
 import pygame
 from typing import Any, Dict, List, Tuple, Optional
@@ -77,7 +78,6 @@ def _fmt_event(d: Dict[str, Any]) -> Optional[str]:
         return "— End of match —"
     if t == "note":
         return f"[note] {d.get('msg','')}"
-    # unknown: don't crash viewer
     return None
 
 def _wrap_lines(text: str, font: pygame.font.Font, max_w: int) -> List[str]:
@@ -125,7 +125,7 @@ class Button:
 
 # -------- match state --------
 
-class State_Match:
+class MatchState:
     """
     Public surface:
       - enter(app, **kwargs)  (optional)
@@ -329,28 +329,18 @@ class State_Match:
             y += self._log_line_h
 
         # soft edge fade (optional)
-        # top
         top_fade = pygame.Surface((inner.width, min(30, inner.height)), pygame.SRCALPHA)
         top_fade.fill((0, 0, 0, 90))
         screen.blit(top_fade, (inner.x, inner.y))
-        # bottom
         bot_fade = pygame.Surface((inner.width, min(30, inner.height)), pygame.SRCALPHA)
         bot_fade.fill((0, 0, 0, 90))
         screen.blit(bot_fade, (inner.x, inner.bottom - bot_fade.get_height()))
 
-        # clip to sidebar
-        clip_old = screen.get_clip()
-        screen.set_clip(inner)
-        # (already drawn within bounds)
-        screen.set_clip(clip_old)
-
     def _append_log(self, s: str):
-        # wrap to sidebar width
         pad = 10
         inner_w = self.sidebar_rect.width - 2*pad
         for line in _wrap_lines(s, self.font_log, inner_w):
             self.log_lines.append(line)
-        # auto-scroll to bottom on new lines
         total_px = len(self.log_lines) * self._log_line_h
         visible_px = self.sidebar_rect.height - 2*pad
         self.log_scroll = max(0, total_px - visible_px)
@@ -358,7 +348,6 @@ class State_Match:
     # ---- event ingestion / stepping ----
 
     def _ingest_new_events(self):
-        # read any new events from combat.events*
         while self._ev_idx < len(self.events):
             ev = self.events[self._ev_idx]
             self._ev_idx += 1
@@ -367,25 +356,19 @@ class State_Match:
                 self._append_log(msg)
 
     def _step_once_and_ingest(self):
-        # perform exactly one engine step_action() and ingest its events
         step = getattr(self.combat, "step_action", None)
         if callable(step) and not self._ended():
             before = len(self.events)
             step()
-            # pull new events
             self._ingest_new_events()
-            # safety: if engine emitted nothing, avoid tight loop in Auto
             if len(self.events) == before:
-                # give viewer *something* to hold onto
                 self._append_log("[warn] step_action produced no events.")
 
     def _action_next_turn(self):
         if self._ended():
             return
-        # first step
         base_len = len(self.events)
         self._step_once_and_ingest()
-        # try to continue while the same actor is acting (heuristic by 'name' fields)
         first_name = None
         for ev in self.events[base_len:]:
             if "name" in ev and ev.get("type") not in ("down", "end", "round", "note"):
@@ -393,7 +376,6 @@ class State_Match:
                 break
         if first_name is None:
             return
-        # keep stepping while actor stays the same and no round/end occurs
         while not self._ended():
             pre_len = len(self.events)
             self._step_once_and_ingest()
@@ -412,16 +394,13 @@ class State_Match:
     def _action_next_round(self):
         if self._ended():
             return
-        # advance until we observe a 'round' event or the match ends
         start_round = self._current_round()
         while not self._ended():
             pre_len = len(self.events)
             self._step_once_and_ingest()
-            # if new events contain round or end, stop
             new_chunk = self.events[pre_len:]
             if any(ev.get("type") in ("round", "end") for ev in new_chunk):
                 break
-            # safety if engine stalled
             if self._current_round() != start_round:
                 break
 
@@ -430,7 +409,6 @@ class State_Match:
         self.btn_auto.label = f"Auto: {'ON' if self.auto else 'OFF'}"
 
     def _finish(self):
-        # Prefer callback; else try app.pop_state(); else no-op
         if callable(self.on_finish):
             try:
                 self.on_finish(self)
@@ -448,12 +426,14 @@ class State_Match:
         return bool(getattr(self.combat, "winner", None)) or any(ev.get("type") == "end" for ev in self.events)
 
     def _current_round(self) -> int:
-        # scan backwards for last round marker
         for ev in reversed(self.events):
             if ev.get("type") == "round":
                 return int(ev.get("round", 1))
         return 1
 
-# convenience: factory
-def create(app, combat, on_finish=None, user_tid: int = 0, auto: bool = False) -> State_Match:
-    return State_Match(app, combat, on_finish=on_finish, user_tid=user_tid, auto=auto)
+# Backward-compat: some code may import create() or State_Match
+def create(app, combat, on_finish=None, user_tid: int = 0, auto: bool = False) -> MatchState:
+    return MatchState(app, combat, on_finish=on_finish, user_tid=user_tid, auto=auto)
+
+State_Match = MatchState  # alias for compatibility
+__all__ = ["MatchState", "create", "State_Match"]
