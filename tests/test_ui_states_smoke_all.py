@@ -2,6 +2,7 @@ import os
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 import pygame
+import pygame.freetype as ft
 import importlib
 import inspect
 
@@ -29,6 +30,7 @@ def _import_opt(name):
 
 def _make_app():
     pygame.init()
+    ft.init()
     return App(width=800, height=480, title="Smoke")
 
 def _dummy_career():
@@ -74,13 +76,16 @@ def test_all_states_construct_and_draw():
             finally:
                 app.pop_state()
     finally:
-        # Ensure pygame tears down cleanly on Windows to avoid heap issues
+        # Clean shutdown (important on Windows)
         try:
             pygame.display.quit()
         except Exception:
             pass
         try:
-            pygame.font.quit()
+            ft.quit()
         except Exception:
             pass
-        pygame.quit()
+        try:
+            pygame.quit()
+        except Exception:
+            pass
