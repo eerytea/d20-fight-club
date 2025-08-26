@@ -1,151 +1,154 @@
 # ui/state_exhibition_picker.py
 from __future__ import annotations
 
-from typing import Optional
+import pygame
+from typing import List, Dict, Any
 
-try:
-    import pygame
-except Exception:  # pragma: no cover
-    pygame = None  # type: ignore
+from .app import BaseState
+from .uiutil import Theme, Button, ListView, draw_text, draw_panel
 
-from .uiutil import Theme, Button, ListView, draw_panel, draw_text
-from .app import App
-from core.career import new_career
+from core.config import LEAGUE_TEAMS, TEAM_SIZE, DEFAULT_SEED
+from core.career import Career
 
 
-class ExhibitionPickerState:
-    def __init__(self, app: Optional[App] = None) -> None:
-        self.app: App | None = app
-        self.career = None
+class ExhibitionPickerState(BaseState):
+    def __init__(self, app):
+        self.app = app
+        self.theme = Theme()
+        self._built = False
+
+        self.preview_career: Career | None = None
+        self.teams: List[Dict[str, Any]] = []
+        self.team_names: List[str] = []
+
+        self.sel_home: int = 0
+        self.sel_away: int = 1
 
         self.home_lv: ListView | None = None
         self.away_lv: ListView | None = None
-        self.home_roster_lv: ListView | None = None
-        self.away_roster_lv: ListView | None = None
-
-        self.home_team: int | None = None
-        self.away_team: int | None = None
-
         self.btn_start: Button | None = None
         self.btn_back: Button | None = None
 
-    # ------------- lifecycle -------------
-
     def enter(self) -> None:
-        if pygame is None or self.app is None:
-            return
-        self.career = new_career(seed=getattr(self.app, "seed", None), user_team_id=None)
+        self._rebuild_data()
+        self._build_ui()
 
-        W, H = self.app.width, self.app.height
+    def _rebuild_data(self) -> None:
+        self.preview_career = Career.new(
+            seed=DEFAULT_SEED,
+            n_teams=LEAGUE_TEAMS,
+            team_size=TEAM_SIZE,
+            user_team_id=None,
+        )
+        self.teams = self.preview_career.teams
+        self.team_names = [t.get("name", f"Team {t.get('tid', i)}") for i, t in enumerate(self.teams)]
+        if len(self.team_names) >= 2:
+            self.sel_home, self.sel_away = 0, 1
+        else:
+            self.sel_home = self.sel_away = 0
+
+    def _build_ui(self) -> None:
+        W, H = self.app.screen.get_size()
         pad = 16
         col_w = (W - pad * 3) // 2
-        list_h = int(H * 0.5) - 60
+        left = pygame.Rect(pad, pad + 40, col_w, H - pad * 2 - 40)
+        right = pygame.Rect(left.right + pad, pad + 40, col_w, H - pad * 2 - 40)
 
-        # Home column
-        home_list_rect = pygame.Rect(pad, pad, col_w, list_h)
-        home_roster_rect = pygame.Rect(pad, home_list_rect.bottom + pad, col_w, list_h)
+        self.left_rect = left
+        self.right_rect = right
 
-        # Away column
-        away_list_rect = pygame.Rect(home_list_rect.right + pad, pad, col_w, list_h)
-        away_roster_rect = pygame.Rect(away_list_rect.x, away_list_rect.bottom + pad, col_w, list_h)
+        self.home_lv = ListView(
+            pygame.Rect(left.x + 10, left.y + 34, left.w - 20, left.h - 44),
+            self.team_names,
+            row_h=28,
+            on_select=self._on_pick_home
+        )
+        self.away_lv = ListView(
+            pygame.Rect(right.x + 10, right.y + 34, right.w - 20, right.h - 100),
+            self.team_names,
+            row_h=28,
+            on_select=self._on_pick_away
+        )
 
-        self.home_lv = ListView(home_list_rect, self.career.team_names, row_h=28)
-        self.away_lv = ListView(away_list_rect, self.career.team_names, row_h=28)
+        btn_w, btn_h = 180, 42
+        yb = right.bottom - (btn_h + 12)
+        self.btn_start = Button(pygame.Rect(right.x + 12, yb, btn_w, btn_h), "Start Match", self._start)
+        self.btn_back = Button(pygame.Rect(right.right - (btn_w + 12), yb, btn_w, btn_h), "Back", self._back)
 
-        self.home_roster_lv = ListView(home_roster_rect, [], row_h=24)
-        self.away_roster_lv = ListView(away_roster_rect, [], row_h=24)
+        self._built = True
 
-        # Buttons
-        btn_w, btn_h = 220, 44
-        self.btn_start = Button(pygame.Rect(W - pad - btn_w, H - pad - btn_h, btn_w, btn_h), "Start Match", on_click=self._start_match)
-        self.btn_back = Button(pygame.Rect(pad, H - pad - btn_h, btn_w, btn_h), "Back", on_click=lambda: self.app.pop_state())
+    # --- Events --------------------------------------------------------------
+    def _on_pick_home(self, idx: int) -> None:
+        self.sel_home = int(idx)
+        if self.sel_home == self.sel_away and len(self.team_names) > 1:
+            self.sel_away = (self.sel_home + 1) % len(self.team_names)
 
-    def exit(self) -> None:
-        pass
+    def _on_pick_away(self, idx: int) -> None:
+        self.sel_away = int(idx)
+        if self.sel_home == self.sel_away and len(self.team_names) > 1:
+            self.sel_home = (self.sel_away + 1) % len(self.team_names)
 
-    # ------------- events -------------
+    def _start(self) -> None:
+        try:
+            th = self.teams[self.sel_home]
+            ta = self.teams[self.sel_away]
+            # Try to open a match viewer if present; otherwise just log
+            try:
+                from .state_match import MatchState
+                self.app.push_state(MatchState(self.app, th, ta))
+            except Exception:
+                print(f"[Exhibition] Would start: {th.get('name')} vs {ta.get('name')} (viewer not wired)")
+        except Exception as e:
+            print("[Exhibition] Could not start match:", e)
 
-    def handle_event(self, event: "pygame.event.Event") -> bool:
-        consumed = False
+    def _back(self) -> None:
+        self.app.pop_state()
 
-        if self.home_lv and self.home_lv.handle_event(event):
-            self.home_team = self.home_lv.selected
-            self._refresh_roster(is_home=True)
-            consumed = True
-
-        if self.away_lv and self.away_lv.handle_event(event):
-            self.away_team = self.away_lv.selected
-            self._refresh_roster(is_home=False)
-            consumed = True
-
-        if self.home_roster_lv and self.home_roster_lv.handle_event(event):
-            consumed = True
-        if self.away_roster_lv and self.away_roster_lv.handle_event(event):
-            consumed = True
-
-        if self.btn_start and self.btn_start.handle_event(event):
-            consumed = True
-        if self.btn_back and self.btn_back.handle_event(event):
-            consumed = True
-
-        return consumed
+    # --- State interface -----------------------------------------------------
+    def handle(self, event) -> None:
+        if not self._built:
+            return
+        self.home_lv.handle(event)
+        self.away_lv.handle(event)
+        self.btn_start.handle(event)
+        self.btn_back.handle(event)
 
     def update(self, dt: float) -> None:
-        pass
+        if not self._built:
+            self.enter(); return
+        mx, my = pygame.mouse.get_pos()
+        self.btn_start.update((mx, my))
+        self.btn_back.update((mx, my))
 
-    # ------------- rendering -------------
+    def _draw_team_preview(self, surf, rect, label: str, idx: int):
+        draw_panel(surf, rect, self.theme)
+        draw_text(surf, label, (rect.centerx, rect.y + 6), 20, self.theme.subt, align="center")
+        # left list already occupies left; on right we put roster preview for away team
+        if 0 <= idx < len(self.teams):
+            t = self.teams[idx]
+            draw_text(surf, t.get("name", "Team"), (rect.x + 12, rect.y + 34), 22, self.theme.text)
+            roster = t.get("roster") or t.get("fighters") or []
+            y = rect.y + 64
+            for f in roster[:10]:
+                nm = f.get("name", "Unknown"); cls = f.get("class", "Fighter")
+                lvl = int(f.get("level", 1)); ovr = int(f.get("ovr", 40))
+                draw_text(surf, f"{nm} — {cls}  L{lvl}  OVR {ovr}", (rect.x + 12, y), 18, self.theme.text)
+                y += 22
 
-    def draw(self, surface: "pygame.Surface") -> None:
-        th = Theme()
-        surface.fill(th.bg)
-        draw_text(surface, "Exhibition — Pick Home & Away", (surface.get_width() // 2, 20), size=30, align="center")
+    def draw(self, surface) -> None:
+        if not self._built:
+            self.enter()
+        surface.fill(self.theme.bg)
+        draw_text(surface, "Exhibition — Pick Home & Away", (surface.get_width() // 2, 12), size=30, color=self.theme.text, align="center")
 
-        self.home_lv.draw(surface, title="Home — Teams")
-        self.away_lv.draw(surface, title="Away — Teams")
-        self.home_roster_lv.draw(surface, title="Home — Roster")
-        self.away_roster_lv.draw(surface, title="Away — Roster")
+        # Left: Home list
+        draw_panel(surface, self.left_rect, self.theme)
+        draw_text(surface, "Home — Teams", (self.left_rect.centerx, self.left_rect.y + 6), 20, self.theme.subt, align="center")
+        self.home_lv.draw(surface, self.theme)
 
-        self.btn_start.draw(surface)
-        self.btn_back.draw(surface)
-
-        # Small hint
-        draw_text(surface, "Tip: mouse wheel scrolls lists", (surface.get_width() // 2, surface.get_height() - 28),
-                  size=16, align="center", color=th.muted)
-
-    # ------------- helpers -------------
-
-    def _refresh_roster(self, *, is_home: bool) -> None:
-        if self.career is None:
-            return
-        tid = self.home_team if is_home else self.away_team
-        if tid is None:
-            (self.home_roster_lv if is_home else self.away_roster_lv).set_items([])
-            return
-        roster = self.career.rosters[tid]
-        labels = [f"{f['name']}  (OVR {f.get('ovr', 50)})" for f in roster]
-        (self.home_roster_lv if is_home else self.away_roster_lv).set_items(labels)
-
-    def _start_match(self) -> None:
-        if self.home_team is None or self.away_team is None:
-            self._msg("Pick both Home and Away teams")
-            return
-
-        # seed for exhibition (deterministic wrt app.seed and selection)
-        try:
-            seed = self.app.derive_seed("exhibition", self.home_team, self.away_team)
-        except Exception:
-            seed = None
-
-        # Try to push your exhibition/match viewer if present; otherwise show a message
-        try:
-            from .state_exhibition import ExhibitionState
-            self.app.replace_state(ExhibitionState(home_team_id=self.home_team, away_team_id=self.away_team, seed=seed))
-        except Exception:
-            self._msg("Exhibition viewer not wired yet")
-
-    def _msg(self, text: str) -> None:
-        try:
-            from .state_message import MessageState
-            self.app.safe_push(MessageState, message=text)
-        except Exception:
-            print(text)
+        # Right: Away list (top) + preview below
+        draw_panel(surface, self.right_rect, self.theme)
+        draw_text(surface, "Away — Teams", (self.right_rect.centerx, self.right_rect.y + 6), 20, self.theme.subt, align="center")
+        self.away_lv.draw(surface, self.theme)
+        self.btn_start.draw(surface, self.theme)
+        self.btn_back.draw(surface, self.theme)
