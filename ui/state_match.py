@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import pygame
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Dict, Any, List
 
 from .app import BaseState
 from .uiutil import Theme, Button, draw_text, draw_panel
 
 # --- Import TBCombat & helpers, but be resilient if some symbols are missing ---
-from engine.tbcombat import TBCombat, fighter_from_dict  # these should exist
+from engine.tbcombat import TBCombat  # core class should exist
 
 # Optional imports with fallbacks (to tolerate API differences across branches)
 try:
@@ -21,11 +22,49 @@ except Exception:
         name: str
         color: tuple[int, int, int]
 
+# fighter_from_dict may not exist on your local branch — provide a robust fallback
+try:
+    from engine.tbcombat import fighter_from_dict as _fighter_from_dict
+except Exception:
+    def _fighter_from_dict(fd: Dict[str, Any]):
+        """
+        Convert a plain fighter dict into a SimpleNamespace that looks like
+        what TBCombat expects (attributes instead of dict keys).
+        We keep the original dict fields and add safe defaults.
+        """
+        d = dict(fd)
+
+        # IDs & names
+        pid = d.get("pid") or d.get("id") or d.get("name") or "F"
+        d.setdefault("pid", str(pid))
+        d.setdefault("name", f"{d['pid']}")
+
+        # Team & class info
+        d.setdefault("team_id", d.get("team") or 0)
+        d.setdefault("class", d.get("cls") or d.get("class_", "Fighter"))
+        d.setdefault("level", d.get("level", d.get("lvl", 1)))
+
+        # Core combat stats (very conservative defaults)
+        d.setdefault("hp", d.get("hp", 12))
+        d.setdefault("max_hp", d.get("max_hp", d["hp"]))
+        d.setdefault("ac", d.get("ac", 10))
+        d.setdefault("atk", d.get("atk", 2))
+        d.setdefault("alive", d.get("alive", True))
+        d.setdefault("xp", d.get("xp", 0))
+
+        # Position
+        d.setdefault("x", d.get("x", 0))
+        d.setdefault("y", d.get("y", 0))
+
+        return SimpleNamespace(**d)
+
+# Optional layout helper
 try:
     from engine.tbcombat import layout_teams_tiles as _layout_teams_tiles
 except Exception:
     _layout_teams_tiles = None
 
+# Grid size (fallback if not exported)
 try:
     from engine.tbcombat import GRID_W as _GRID_W, GRID_H as _GRID_H
 except Exception:
@@ -62,23 +101,25 @@ class MatchState(BaseState):
 
     # --- setup ---------------------------------------------------------------
     def _build_match(self):
-        th = TBTeam(self.home_d["tid"], self.home_d.get("name", "Home"), tuple(self.home_d.get("color", (180,180,220))))
-        ta = TBTeam(self.away_d["tid"], self.away_d.get("name", "Away"), tuple(self.away_d.get("color", (220,180,180))))
+        th = TBTeam(self.home_d["tid"], self.home_d.get("name", "Home"),
+                    tuple(self.home_d.get("color", (180, 180, 220))))
+        ta = TBTeam(self.away_d["tid"], self.away_d.get("name", "Away"),
+                    tuple(self.away_d.get("color", (220, 180, 180))))
 
         # Build fighter list (ensure team_id is attached)
         h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
         a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
-        fighters = [fighter_from_dict({**fd, "team_id": th.tid}) for fd in h_roster]
-        fighters += [fighter_from_dict({**fd, "team_id": ta.tid}) for fd in a_roster]
+        fighters = [_fighter_from_dict({**fd, "team_id": th.tid}) for fd in h_roster]
+        fighters += [_fighter_from_dict({**fd, "team_id": ta.tid}) for fd in a_roster]
 
         # Place fighters on grid
         if _layout_teams_tiles:
             _layout_teams_tiles(fighters, _GRID_W, _GRID_H)
         else:
-            # crude fallback: left/right columns
+            # crude fallback: left/right columns with spacing
             y = 1
             for f in fighters:
-                if f.team_id == th.tid:
+                if getattr(f, "team_id", th.tid) == th.tid:
                     f.x, f.y = 1, y
                 else:
                     f.x, f.y = _GRID_W - 2, y
@@ -113,6 +154,7 @@ class MatchState(BaseState):
         self.app.pop_state()
 
     def _tick_once(self):
+        assert self.combat is not None
         self.combat.take_turn()
 
         # Prefer typed events if available; else legacy strings
@@ -124,7 +166,7 @@ class MatchState(BaseState):
             except Exception:
                 new_lines = [str(e) for e in evs[-4:]]
         else:
-            new_lines = [str(s) for s in self.combat.events[-4:]]
+            new_lines = [str(s) for s in getattr(self.combat, "events", [])[-4:]]
 
         self.events.extend(new_lines)
         if len(self.events) > 40:
@@ -167,7 +209,13 @@ class MatchState(BaseState):
         # Winner/status line
         status_y = self.rect_panel.y + 10
         if self.combat and self.combat.winner is not None:
-            wtxt = {"home": self.home_d.get("name","Home"), "away": self.away_d.get("name","Away"), "draw": "Draw"}.get(self.combat.winner, str(self.combat.winner))
+            wtxt = {
+                "home": self.home_d.get("name", "Home"),
+                "away": self.away_d.get("name", "Away"),
+                "draw": "Draw",
+                0: self.home_d.get("name", "Home"),
+                1: self.away_d.get("name", "Away"),
+            }.get(self.combat.winner, str(self.combat.winner))
             draw_text(surf, f"Winner: {wtxt}", (self.rect_panel.x + 12, status_y), 22, th.text)
         else:
             draw_text(surf, "Running…", (self.rect_panel.x + 12, status_y), 22, th.subt)
