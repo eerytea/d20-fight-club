@@ -1,6 +1,5 @@
-# ui/state_match.py (framework-aligned)
+# ui/state_match.py — aligned to project framework + lineup + accurate HP bars
 from __future__ import annotations
-
 from typing import Any, Dict, List, Optional, Tuple
 
 import pygame
@@ -8,14 +7,14 @@ import pygame
 from .app import BaseState
 from .uiutil import Theme, Button, draw_panel, draw_text, get_font
 
-# Grid dims come from core.sim (shared with exhibition/schedule)
+# Source of truth for grid size
 try:
-    from core.sim import GRID_W, GRID_H
+    from core.config import GRID_W, GRID_H
 except Exception:
-    GRID_W, GRID_H = 12, 8
+    GRID_W, GRID_H = 15, 9
 
-# Engine public API (lazy exports in engine/__init__.py)
-from engine import TBCombat, Team, fighter_from_dict, layout_teams_tiles
+# Engine public API
+from engine import TBCombat, Team, fighter_from_dict
 
 
 def _norm_tid(x: Any) -> int:
@@ -102,10 +101,41 @@ def _choose_events(obj: Any) -> List[Dict[str, Any]]:
         return []
 
 
+def _lineup_teams_tiles(fighters: List[Any], grid_w: int, grid_h: int) -> None:
+    """
+    Deterministic, non-overlapping lineup:
+      - Team 0 (left) columns at x = 2, 4
+      - Team 1 (right) columns at x = grid_w-3, grid_w-5
+      - Rows y = 1,3,5,... (clamped to grid)
+    Sets f.tx, f.ty for each fighter.
+    """
+    team0 = [f for f in fighters if getattr(f, "team_id", 0) == 0]
+    team1 = [f for f in fighters if getattr(f, "team_id", 0) == 1]
+
+    def place_line(fs: List[Any], cols: List[int]):
+        y_positions = list(range(1, max(2, grid_h - 1), 2))
+        col_idx = 0
+        y_idx = 0
+        for f in fs:
+            if y_idx >= len(y_positions):
+                y_idx = 0
+                col_idx = min(col_idx + 1, len(cols) - 1)
+            x = max(0, min(grid_w - 1, cols[col_idx]))
+            y = max(0, min(grid_h - 1, y_positions[y_idx]))
+            setattr(f, "tx", int(x))
+            setattr(f, "ty", int(y))
+            y_idx += 1
+
+    left_cols = [2, 4]
+    right_cols = [grid_w - 3, grid_w - 5]
+    place_line(team0, left_cols)
+    place_line(team1, right_cols)
+
+
 class MatchState(BaseState):
     """
     Season Hub calls: MatchState(app, tH_dict, tA_dict)
-    This state also accepts: MatchState(app, combat_obj [, None])
+    Also accepts: MatchState(app, combat_obj [, None])
     """
 
     def __init__(self, app, home_or_engine: Any, away: Any | None = None, *, on_finish=None, auto: bool = False):
@@ -135,11 +165,17 @@ class MatchState(BaseState):
         else:
             self.engine = self._build_engine_from_teams(home_or_engine, away)
 
+        # Ensure fighters all carry max_hp for accurate bars
+        self._fighters = getattr(self.engine, "fighters", [])
+        for f in self._fighters:
+            if not hasattr(f, "max_hp"):
+                try:
+                    setattr(f, "max_hp", int(getattr(f, "hp")))
+                except Exception:
+                    setattr(f, "max_hp", int(getattr(f, "hp", 1)))
+
         # Event list
         self.events = _choose_events(self.engine)
-
-        # Fighters reference (for draw)
-        self._fighters = getattr(self.engine, "fighters", [])
 
         # Log
         self.log_lines: List[str] = []
@@ -166,18 +202,23 @@ class MatchState(BaseState):
             setattr(f, "team_id", 1)
         fighters = fH + fA
 
-        # Lay out desired tiles; engine will fall back from tx/ty → x/y if x/y missing
-        layout_teams_tiles(fighters, GRID_W, GRID_H)
+        # Initial lineup (tx,ty)
+        _lineup_teams_tiles(fighters, GRID_W, GRID_H)
+
+        # Pre-set max_hp for accurate bars; engine will leave it alone
+        for f in fighters:
+            if not hasattr(f, "max_hp"):
+                setattr(f, "max_hp", int(getattr(f, "hp", 1)))
 
         # Seed: attempt to derive from names for stability
         seed = (hash(nameH) ^ (hash(nameA) << 1)) & 0xFFFFFFFF
 
+        # Build engine (it will copy tx/ty → x/y if x/y are None and fix collisions)
         return TBCombat(teamA, teamB, fighters, GRID_W, GRID_H, seed=seed)
 
     # --- state lifecycle ---
     def enter(self) -> None:
         self._build_layout()
-        # Ingest any preexisting round marker
         self._ingest_new_events(initial=True)
 
     def handle(self, event) -> None:
@@ -229,7 +270,7 @@ class MatchState(BaseState):
             x = int(getattr(f, "x", 0))
             y = int(getattr(f, "y", 0))
             name = getattr(f, "name", "?")
-            max_hp = getattr(f, "max_hp", hp)
+            max_hp = int(getattr(f, "max_hp", hp))
             self._draw_fighter(surf, x, y, name, tid, hp, max_hp)
 
         # log
@@ -244,20 +285,20 @@ class MatchState(BaseState):
     def _build_layout(self) -> None:
         W, H = self.app.width, self.app.height
         pad = 12
-        sidebar_w = 360
-        btn_h = 64
+        sidebar_w = 300          # narrower to enlarge grid area
+        btn_h = 56               # a bit shorter to give grid more height
 
         self._grid_rect = pygame.Rect(pad, pad, W - sidebar_w - pad * 3, H - btn_h - pad * 2)
         self._side_rect = pygame.Rect(self._grid_rect.right + pad, pad, sidebar_w, self._grid_rect.height)
         self._btn_rect = pygame.Rect(pad, self._grid_rect.bottom + pad, W - pad * 2, btn_h)
 
         # grid cell sizes
-        self._cell_w = max(24, self._grid_rect.w // int(getattr(self.engine, "GRID_W", GRID_W)))
-        self._cell_h = max(24, self._grid_rect.h // int(getattr(self.engine, "GRID_H", GRID_H)))
+        self._cell_w = max(26, self._grid_rect.w // int(getattr(self.engine, "GRID_W", GRID_W)))
+        self._cell_h = max(26, self._grid_rect.h // int(getattr(self.engine, "GRID_H", GRID_H)))
 
         # fonts
         tile_h = self._cell_h
-        self._font_name = get_font(max(12, min(int(tile_h * 0.28), 28)))
+        self._font_name = get_font(max(12, min(int(tile_h * 0.30), 28)))
         self._font_log = get_font(18)
         self._log_line_h = self._font_log.get_sized_height()
 
@@ -295,7 +336,8 @@ class MatchState(BaseState):
         self._font_name.render_to(surf, txt_rect.topleft, nm, self.theme.text)
 
         # HP bar
-        frac = 0.0 if max_hp <= 0 else max(0.0, min(1.0, hp / float(max_hp)))
+        denom = max(1, int(max_hp))
+        frac = max(0.0, min(1.0, float(hp) / float(denom)))
         bar_w = int(r.w * 0.9)
         bar_h = max(6, int(r.h * 0.12))
         bar_x = r.centerx - bar_w // 2
@@ -424,7 +466,7 @@ class MatchState(BaseState):
         return 1
 
 
-# Back-compat: some code may also import create() or State_Match
+# Back-compat: also export create() and alias
 def create(app, *args, **kwargs) -> MatchState:
     return MatchState(app, *args, **kwargs)
 
