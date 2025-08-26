@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 # -------- League / Season --------
-LEAGUE_TEAMS: int = 8            # total teams in the league (adjust as you like)
-TEAM_SIZE: int = 5               # roster size per team
-ROUNDS_DOUBLE_ROUND_ROBIN: int = 2  # each opponent twice (home/away)
+LEAGUE_TEAMS: int = 8                 # total teams in the league
+TEAM_SIZE: int = 5
+ROUNDS_DOUBLE_ROUND_ROBIN: int = 2    # each opponent twice (home/away)
 
 # Points (W-D-L = 3-1-0)
 POINTS_WIN: int = 3
