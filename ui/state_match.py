@@ -4,7 +4,8 @@ from __future__ import annotations
 import pygame
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, DefaultDict
+from collections import defaultdict
 
 from .app import BaseState
 from .uiutil import Theme, Button, draw_text, draw_panel, get_font
@@ -58,11 +59,12 @@ def _mk_fighter(fd: Dict[str, Any]) -> Any:
 
 
 class MatchState(BaseState):
-    """Match viewer:
-       - Larger cells that fit dot + name + HP bar (all inside the cell)
-       - Scrollable log with real names
-       - Next Turn (one actor only) / Next Round / Auto / Finish
-       - HP bars decrease as damage happens (event-driven cache)"""
+    """Match viewer with:
+       - Larger cells (auto-scaled) to fit name + HP bar + dot
+       - Draw-time offsets when multiple fighters share a tile (no overlap)
+       - Downed fighters hidden
+       - Home/away forced colors: red & blue
+       - Next Turn (one actor), Next Round, Auto, Finish"""
 
     def __init__(self, app, home_team: Dict[str, Any], away_team: Dict[str, Any]):
         self.app = app
@@ -73,6 +75,10 @@ class MatchState(BaseState):
 
         self.combat: Optional[TBCombat] = None
         self._started = False
+
+        # force team colors: red & blue
+        self._team_color_home = (220, 70, 70)
+        self._team_color_away = (70, 120, 230)
 
         # teams (don’t depend on TBCombat attr names)
         self._teams_by_tid: Dict[int, TBTeam] = {}
@@ -128,9 +134,7 @@ class MatchState(BaseState):
             self._name_to_pid[name] = pid
 
     def _team_color_for_tid(self, tid: int) -> Tuple[int, int, int]:
-        t = self._teams_by_tid.get(int(tid))
-        if t: return tuple(getattr(t, "color", (200, 200, 200)))
-        return (200, 200, 200)
+        return self._team_color_home if int(tid) == 0 else self._team_color_away
 
     def _current_round_from_engine(self) -> Optional[int]:
         return getattr(self.combat, "round", None) if self.combat else None
@@ -192,7 +196,7 @@ class MatchState(BaseState):
         if isinstance(e, dict):
             t = e.get("type") or e.get("event") or e.get("kind") or "event"
 
-            # your engine emits {"type":"move","name":"Sam Kane", ...}
+            # engine emits {"type":"move","name":"Sam Kane", ...}
             actor_keys = ("name","who","actor","src","attacker","unit","who_id","actor_id","src_id","attacker_id")
             targ_keys  = ("target","defender","dst","target_id","defender_id","dst_id")
 
@@ -257,8 +261,9 @@ class MatchState(BaseState):
         self._built = True
 
     def _build_match(self) -> None:
-        tA = TBTeam(0, self.home_d.get("name","Home"), tuple(self.home_d.get("color",(180,180,220))))
-        tB = TBTeam(1, self.away_d.get("name","Away"), tuple(self.away_d.get("color",(220,180,180))))
+        # force colors
+        tA = TBTeam(0, self.home_d.get("name","Home"), self._team_color_home)
+        tB = TBTeam(1, self.away_d.get("name","Away"), self._team_color_away)
         self._teams_by_tid = {0: tA, 1: tB}
 
         h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
@@ -301,9 +306,13 @@ class MatchState(BaseState):
     def _build_ui(self) -> None:
         W, H = self.app.width, self.app.height
         self.rect_panel = pygame.Rect(16, 60, W - 32, H - 76)
-        split = int(self.rect_panel.w * 0.62)
-        self.rect_grid = pygame.Rect(self.rect_panel.x + 12, self.rect_panel.y + 12, split - 24, self.rect_panel.h - 84)
-        self.rect_log  = pygame.Rect(self.rect_panel.x + split, self.rect_panel.y + 12, self.rect_panel.w - split - 24, self.rect_panel.h - 84)
+
+        # give the grid more width so cells can be larger
+        split = int(self.rect_panel.w * 0.70)  # was 0.62
+        self.rect_grid = pygame.Rect(self.rect_panel.x + 12, self.rect_panel.y + 12,
+                                     split - 24, self.rect_panel.h - 84)
+        self.rect_log  = pygame.Rect(self.rect_panel.x + split, self.rect_panel.y + 12,
+                                     self.rect_panel.w - split - 24, self.rect_panel.h - 84)
 
         # controls
         btn_w, btn_h, gap = 160, 44, 10
@@ -318,7 +327,6 @@ class MatchState(BaseState):
 
     # ---------- raw event tracker (for Next Turn) ----------
     def _reset_raw_tracker(self) -> None:
-        # choose one raw/typed attribute to watch
         for attr in ("events_typed","typed_events","event_log_typed","events","log"):
             if isinstance(getattr(self.combat, attr, None), list):
                 self._raw_attr = attr
@@ -359,12 +367,11 @@ class MatchState(BaseState):
             return
         self._started = True
 
-        # Advance until the ACTOR changes (i.e., only the next character's turn)
         base_raw = len(getattr(self.combat, self._raw_attr, [])) if self._raw_attr else 0
         start_round = self._current_round_from_engine() or self._last_round_seen
         actor_name: Optional[str] = None
 
-        for _ in range(500):  # hard cap safety
+        for _ in range(500):  # safety cap
             self._advance_once()
             self._harvest_and_refresh()
 
@@ -372,7 +379,6 @@ class MatchState(BaseState):
                 break
 
             new_raw = self._raw_since(base_raw)
-            # try to capture the acting name from raw events
             for e in new_raw:
                 if isinstance(e, dict):
                     nm = e.get("name") or e.get("actor") or e.get("who") or e.get("src")
@@ -383,7 +389,6 @@ class MatchState(BaseState):
                         elif nm != actor_name:
                             return  # next actor observed -> stop
 
-            # also stop if the round bumped (end of turn cycle)
             cur_round = self._current_round_from_engine() or self._last_round_seen
             if cur_round is not None and start_round is not None and cur_round > start_round:
                 return
@@ -413,7 +418,6 @@ class MatchState(BaseState):
     def _harvest_new_events(self):
         if not self.combat: return
 
-        # detect newly dead fighters if engine doesn't name them on "down"
         def detect_newly_dead() -> List[str]:
             newly: List[str] = []
             for f in self._fighters():
@@ -441,7 +445,6 @@ class MatchState(BaseState):
                         t = e.get("type") or e.get("event") or e.get("kind")
                         if t in ("hit","Hit"):
                             dmg = int(e.get("dmg") or e.get("damage") or e.get("amount") or 0)
-                            # prefer explicit target, fallback to defender/dst
                             tgt = e.get("target")
                             if tgt is None: tgt = e.get("defender", e.get("dst"))
                             pid = self._pid_from_event_field(tgt)
@@ -460,7 +463,6 @@ class MatchState(BaseState):
                 try:
                     s = self._fmt_event(e)
                     if s.strip() == "? is down!":
-                        # try to substitute the real name if the engine didn't provide one
                         new_dead = detect_newly_dead()
                         if new_dead:
                             s = f"{new_dead[0]} is down!"
@@ -534,71 +536,103 @@ class MatchState(BaseState):
         if self.btn_auto:   self.btn_auto.draw(surf, th)
         if self.btn_finish: self.btn_finish.draw(surf, th)
 
-    # ---------- grid (larger cells; name+HP+dot INSIDE each cell) ----------
+    # ---------- grid (auto-scaled cells; offsets for crowded tiles; hide downed) ----------
     def _draw_grid(self, surf: pygame.Surface) -> None:
         rg = self.rect_grid
         gw, gh = _GRID_W, _GRID_H
 
-        # Each cell must fit (name 16px) + (HP bar 8px) + gap + dot + bottom gap
-        # so choose cell height generously:
-        min_cell_h = 16 + 8 + 6 + 18 + 6     # ≈ 54px
-        min_cell_w = 40                       # keep dots readable + name width
-        cell_w = max(min_cell_w, (rg.w - 12) // gw)
-        cell_h = max(min_cell_h, (rg.h - 12) // gh)
+        # Target sizes that can comfortably fit name + HP + dot
+        target_cell_w = 72
+        target_cell_h = 92
 
-        # center the used grid inside the panel
+        # Compute scale so all cells fit inside the grid rect
+        scale_w = max(0.1, min(1.0, (rg.w - 12) / (gw * target_cell_w)))
+        scale_h = max(0.1, min(1.0, (rg.h - 12) / (gh * target_cell_h)))
+        s = min(scale_w, scale_h)
+
+        cell_w = max(32, int(target_cell_w * s))
+        cell_h = max(48, int(target_cell_h * s))
+
         used_w, used_h = cell_w * gw, cell_h * gh
         ox = rg.x + max(0, (rg.w - used_w) // 2)
         oy = rg.y + max(0, (rg.h - used_h) // 2)
 
+        # group alive fighters by tile to offset dots and avoid overlap
+        per_tile: DefaultDict[Tuple[int,int], List[Any]] = defaultdict(list)
         for f in self._fighters():
+            pid = str(getattr(f, "pid", getattr(f, "name", "")))
+            hp  = self._hp_cur.get(pid, int(getattr(f, "hp", 1)))
+            alive = bool(getattr(f, "alive", True))
+            if hp <= 0 or not alive:
+                continue  # hide downed
             x = int(getattr(f, "x", getattr(f, "tx", 0)))
             y = int(getattr(f, "y", getattr(f, "ty", 0)))
+            per_tile[(x,y)].append(f)
 
-            # compute the cell rect for (x,y)
+        # offsets for up to 4 fighters in a single tile
+        # positions are relative within the cell (around center)
+        def offsets(n: int) -> List[Tuple[float,float]]:
+            if n <= 1:
+                return [(0.0, 0.0)]
+            if n == 2:
+                return [(-0.22, 0.0), (0.22, 0.0)]
+            if n == 3:
+                return [(-0.22, -0.18), (0.22, -0.18), (0.0, 0.22)]
+            # 4 or more
+            return [(-0.22, -0.18), (0.22, -0.18), (-0.22, 0.22), (0.22, 0.22)]
+
+        # draw each tile's fighters with per-fighter name + HP inside the same cell
+        for (x, y), flist in per_tile.items():
             cx = ox + x * cell_w
             cy = oy + y * cell_h
             cell_rect = pygame.Rect(cx, cy, cell_w, cell_h)
 
-            # content layout within the cell:
-            # [name (centered)]
-            # [HP bar]
-            # [dot]
-            name_y = cell_rect.y + 6
-            bar_y  = name_y + 18
-            dot_y  = bar_y + 10 + 12  # gap + half dot height (we’ll compute exact radius)
+            # layout within cell
+            name_y = cell_rect.y + max(6, int(cell_h * 0.08))
+            bar_y  = name_y + max(16, int(cell_h * 0.18))
+            # dot row is lower; we’ll place each dot with offsets
+            dot_row_y = bar_y + 12
 
-            tid = int(getattr(f, "team_id", 0))
-            base = self._team_color_for_tid(tid)
-            alive = bool(getattr(f, "alive", True))
-            color = base if alive else (110, 110, 110)
-
-            # HP (from cache if available)
-            pid = str(getattr(f, "pid", getattr(f, "name", "")))
-            mh  = self._hp_max.get(pid, int(getattr(f, "max_hp", getattr(f, "hp", 12))))
-            hp  = self._hp_cur.get(pid, int(getattr(f, "hp", mh)))
-            mh = max(1, mh)
-            hp = max(0, min(mh, hp))
-
-            # draw name (centered in cell)
-            name = str(getattr(f, "name", getattr(f, "pid", "F")))
-            draw_text(surf, name, (cell_rect.centerx, name_y), 16, self.theme.text, align="center")
-
-            # draw HP bar
-            bar_w = int(cell_rect.w * 0.9)
-            bar_h = 8
-            bx = cell_rect.centerx - bar_w // 2
-            by = bar_y
-            pygame.draw.rect(surf, (50, 55, 60), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
-            fill_w = int(bar_w * (hp / mh))
-            pygame.draw.rect(surf, (90, 200, 120), pygame.Rect(bx, by, fill_w, bar_h), border_radius=3)
-
-            # draw fighter dot
+            # dot sizing
             r = max(10, int(min(cell_w, cell_h) * 0.22))
-            dot_cx = cell_rect.centerx
-            dot_cy = by + bar_h + 10 + r
-            pygame.draw.circle(surf, color, (dot_cx, dot_cy), r)
-            pygame.draw.circle(surf, self.theme.panel_border, (dot_cx, dot_cy), r, 1)
+
+            # compute base dot center
+            base_cx = cell_rect.centerx
+            base_cy = dot_row_y + r
+
+            offs = offsets(len(flist))
+            # if more than 4, we still only show first 4; others stack on last position
+            for idx, f in enumerate(flist):
+                dx, dy = offs[min(idx, len(offs)-1)]
+                dot_cx = int(base_cx + dx * cell_w)
+                dot_cy = int(base_cy + dy * cell_h)
+
+                tid = int(getattr(f, "team_id", 0))
+                color = self._team_color_for_tid(tid)
+
+                pid = str(getattr(f, "pid", getattr(f, "name", "")))
+                mh  = self._hp_max.get(pid, int(getattr(f, "max_hp", getattr(f, "hp", 12))))
+                hp  = self._hp_cur.get(pid, int(getattr(f, "hp", mh)))
+                mh = max(1, mh); hp = max(0, min(mh, hp))
+
+                # name (centered per dot)
+                name = str(getattr(f, "name", getattr(f, "pid", "F")))
+                # shrink name if many in tile
+                name_size = 16 if len(flist) <= 2 else 14
+                draw_text(surf, name, (dot_cx, name_y), name_size, self.theme.text, align="center")
+
+                # HP bar (centered per dot)
+                bar_w = int(min(cell_rect.w * 0.9, max(48, cell_w * (0.8 if len(flist) <= 2 else 0.7))))
+                bar_h = 8
+                bx = dot_cx - bar_w // 2
+                by = bar_y
+                pygame.draw.rect(surf, (50, 55, 60), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
+                fill_w = int(bar_w * (hp / mh))
+                pygame.draw.rect(surf, (90, 200, 120), pygame.Rect(bx, by, fill_w, bar_h), border_radius=3)
+
+                # dot
+                pygame.draw.circle(surf, color, (dot_cx, dot_cy), r)
+                pygame.draw.circle(surf, self.theme.panel_border, (dot_cx, dot_cy), r, 1)
 
     # ---------- log ----------
     def _measure_w(self, text: str, font_px: int) -> int:
