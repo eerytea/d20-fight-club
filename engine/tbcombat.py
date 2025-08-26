@@ -1,334 +1,288 @@
 # engine/tbcombat.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Iterable
 import random
+from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Any, Dict, List, Tuple, Optional
 
-try:
-    from .events import format_event  # type: ignore
-except Exception:
-    def format_event(e) -> str:
-        t = e.get("type", "?")
-        if t == "move":
-            return f"{e['name']} moves to {e['to']}"
-        if t == "hit":
-            return f"{e['name']} hits {e['target']} for {e['dmg']}!"
-        if t == "miss":
-            return f"{e['name']} misses {e['target']}"
-        if t == "down":
-            return f"{e['target']} is down!"
-        if t == "level_up":
-            return f"{e['name']} reached level {e['level']}!"
-        if t == "round":
-            return f"— Round {e['round']} —"
-        if t == "end":
-            w = e.get("winner", None)
-            return f"Match ended: {w if w is not None else 'draw'}"
-        return str(e)
-
-try:
-    from core.ratings import level_up
-except Exception:
-    def level_up(f):
-        f["level"] = f.get("level", 1) + 1
-
-def ability_mod(score: int) -> int:
-    return (int(score) - 10) // 2
-
-def d20(rng: random.Random) -> int:
-    return rng.randint(1, 20)
-
-def expected_hp(f: Dict) -> int:
-    return int(f.get("hp", 10))
-
-def attack_bonus(f: Dict) -> int:
-    prof = int(f.get("prof", 2))
-    atk_mod = int(f.get("atk_mod", ability_mod(f.get("str", 10)) + prof))
-    return atk_mod
-
-def target_ac(f: Dict) -> int:
-    return int(f.get("ac", 12))
-
-def damage_roll(f: Dict, crit: bool, rng: random.Random) -> int:
-    dmg = 0
-    w = f.get("weapon", {"damage": "1d6"})
-    try:
-        s = w.get("damage", "1d6").lower()
-        n, s = s.split("d")
-        n = int(n) * (2 if crit else 1)
-        s = int(s)
-        dmg = sum(rng.randint(1, s) for _ in range(max(1, n)))
-    except Exception:
-        dmg = rng.randint(1, 6) * (2 if crit else 1)
-    dmg += max(0, ability_mod(int(f.get("str", 10))))
-    return max(0, dmg)
+GRID_W, GRID_H = 15, 9
 
 @dataclass
-class _F:
-    name: str
+class Team:
     tid: int
-    tx: int
-    ty: int
-    hp: int
-    ac: int
-    spd: int
-    alive: bool
-    ref: Dict                # dict snapshot for combat math
-    xp: int
-    level: int
-    origin: Optional[Any] = None  # original object to propagate XP/level to (if not dict)
+    name: str
+    color: Tuple[int, int, int]
 
-def _mk_from_external(ob: Any, default_tx: int = 0, default_ty: int = 0) -> _F:
-    get = lambda k, d=None: (getattr(ob, k, None) if not isinstance(ob, dict) else ob.get(k, None)) or d
-    name = get("name", "F")
-    tid = int(get("team_id", 0))
-    tx = int(get("x", get("tx", default_tx)))
-    ty = int(get("y", get("ty", default_ty)))
-    hp = int(get("hp", 10))
-    ac = int(get("ac", 12))
-    spd = int(get("speed", 6))
-    lvl = int(get("level", 1))
-    xp  = int(get("xp", 0))
-    if isinstance(ob, dict):
-        ref = ob
-        origin = None
-    else:
-        # keep a dict for fast math but remember origin to propagate XP/level
-        ref = {
-            "name": name, "team_id": tid, "hp": hp, "ac": ac, "speed": spd,
-            "level": lvl, "xp": xp, "str": getattr(ob, "str", 10),
-            "prof": getattr(ob, "prof", 2), "atk_mod": getattr(ob, "atk_mod", ability_mod(getattr(ob, "str", 10)) + 2),
-            "weapon": getattr(ob, "weapon", {"damage": "1d6"}),
-            "ovr": getattr(ob, "ovr", 50),
-        }
-        origin = ob
-    return _F(name=name, tid=tid, tx=tx, ty=ty, hp=hp, ac=ac, spd=spd, alive=True, ref=ref, xp=xp, level=lvl, origin=origin)
+def fighter_from_dict(d: Dict[str, Any]) -> Any:
+    dd = dict(d)
+    dd.setdefault("pid", str(dd.get("pid") or dd.get("id") or dd.get("name") or "F"))
+    dd.setdefault("name", str(dd.get("name") or dd["pid"]))
+    dd.setdefault("team_id", int(dd.get("team_id", 0)))
+    lv = int(dd.get("level", dd.get("lvl", 1)))
+    hp = int(dd.get("hp", 10 + lv * 2))
+    dd.setdefault("level", lv)
+    dd.setdefault("hp", hp)
+    dd.setdefault("max_hp", int(dd.get("max_hp", hp)))
+    dd.setdefault("ac", int(dd.get("ac", 10 + lv // 2)))
+    dd.setdefault("atk", int(dd.get("atk", 2 + lv // 2)))
+    dd.setdefault("alive", bool(dd.get("alive", True)))
+    dd.setdefault("x", int(dd.get("x", 0)))
+    dd.setdefault("y", int(dd.get("y", 0)))
+    dd.setdefault("tx", int(dd.get("tx", dd["x"])))
+    dd.setdefault("ty", int(dd.get("ty", dd["y"])))
+    dd.setdefault("xp", int(dd.get("xp", 0)))
+    return SimpleNamespace(**dd)
 
-def _mk_from_team_dict(team: Dict, tid: int, grid_w: int, grid_h: int) -> List[_F]:
-    roster = team.get("roster") or team.get("fighters") or []
-    roster = roster[:]
-    fs: List[_F] = []
-    gap = grid_h // (len(roster) + 1) if roster else max(1, grid_h // 2)
-    base_x = 1 if tid == 0 else max(0, grid_w - 2)
-    for i, rd in enumerate(roster, start=1):
-        fs.append(_F(
-            name=rd.get("name", f"P{tid}-{i}"),
-            tid=tid,
-            tx=base_x,
-            ty=min(grid_h - 1, i * gap),
-            hp=expected_hp(rd),
-            ac=target_ac(rd),
-            spd=int(rd.get("speed", 6)),
-            alive=True,
-            ref=rd,
-            xp=int(rd.get("xp", 0)),
-            level=int(rd.get("level", 1)),
-            origin=None,
-        ))
-    return fs
-
-def _nearest_enemy(me: _F, fighters: List[_F]) -> Optional[_F]:
-    enemies = [f for f in fighters if f.alive and f.tid != me.tid]
-    if not enemies:
-        return None
-    return min(enemies, key=lambda e: abs(e.tx - me.tx) + abs(e.ty - me.ty))
-
-def _step_toward(me: _F, tgt: _F, fighters: List[_F], grid_w: int, grid_h: int) -> None:
-    if not tgt:
-        return
-    def free(nx, ny) -> bool:
-        if nx < 0 or ny < 0 or nx >= grid_w or ny >= grid_h:
-            return False
-        for o in fighters:
-            if o.alive and o.tx == nx and o.ty == ny:
-                return False
-        return True
-    dx = 1 if tgt.tx > me.tx else -1 if tgt.tx < me.tx else 0
-    dy = 1 if tgt.ty > me.ty else -1 if tgt.ty < me.ty else 0
-    nx, ny = me.tx + dx, me.ty
-    if dx != 0 and free(nx, ny):
-        me.tx, me.ty = nx, ny
-        return
-    nx, ny = me.tx, me.ty + dy
-    if dy != 0 and free(nx, ny):
-        me.tx, me.ty = nx, ny
-
-def _adjacent(a: _F, b: _F) -> bool:
-    return abs(a.tx - b.tx) + abs(a.ty - b.ty) == 1
-
-def _challenge_xp_for_ovr(ovr: int) -> int:
-    if ovr < 35:   return 25
-    if ovr < 45:   return 50
-    if ovr < 55:   return 100
-    if ovr < 65:   return 200
-    if ovr < 70:   return 450
-    if ovr < 75:   return 700
-    if ovr < 80:   return 1100
-    if ovr < 85:   return 1800
-    return 2300
-
-def _next_level_threshold(lvl: int) -> int:
-    thresholds = [0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000]
-    return thresholds[min(max(lvl, 0), len(thresholds) - 1)]
-
-def _award_xp(contributors: List[_F], defeated_ref: Dict, events_typed: List[Dict], events_str: List[str]) -> None:
-    xp_val = _challenge_xp_for_ovr(int(defeated_ref.get("ovr", 50)))
-    if not contributors or xp_val <= 0:
-        return
-    share = max(1, xp_val // len(contributors))
-    for f in contributors:
-        f.xp = int(getattr(f, "xp", 0)) + share
-        f.ref["xp"] = f.xp
-        leveled = 0
-        while f.xp >= _next_level_threshold(f.level):
-            level_up(f.ref)
-            f.level = int(f.ref.get("level", f.level + 1))
-            events_typed.append({"type": "level_up", "name": f.name, "level": f.level})
-            events_str.append(format_event({"type": "level_up", "name": f.name, "level": f.level}))
-            leveled += 1
-            if leveled > 10:
-                break
-        # propagate XP/level back to original object if present
-        if f.origin is not None:
-            try:
-                setattr(f.origin, "xp", f.xp)
-            except Exception:
-                pass
-            try:
-                setattr(f.origin, "level", f.level)
-            except Exception:
-                pass
+def layout_teams_tiles(fighters: List[Any], W: int, H: int) -> None:
+    """Simple left/right columns — exclusive tiles by construction."""
+    home = [f for f in fighters if getattr(f, "team_id", 0) == 0]
+    away = [f for f in fighters if getattr(f, "team_id", 0) == 1]
+    gapL = max(1, H // (len(home) + 1)) if home else 2
+    gapR = max(1, H // (len(away) + 1)) if away else 2
+    for i, f in enumerate(home, start=1):
+        f.x = f.tx = 1; f.y = f.ty = min(H - 1, i * gapL)
+    for i, f in enumerate(away, start=1):
+        f.x = f.tx = max(0, W - 2); f.y = f.ty = min(H - 1, i * gapR)
 
 class TBCombat:
-    """
-    Flexible ctor:
-      (1) New path:
-          TBCombat(home_team_dict, away_team_dict, seed: int, turn_limit=100, grid_w=15, grid_h=9)
-      (2) Legacy test path:
-          TBCombat(teamA, teamB, fighters_list, GRID_W, GRID_H, seed=999)
-    """
-    def __init__(self, home_team: Any, away_team: Any, *args, **kwargs):
-        self.turn_limit = int(kwargs.pop("turn_limit", 100))
-        self.grid_w = int(kwargs.pop("grid_w", 15))
-        self.grid_h = int(kwargs.pop("grid_h", 9))
+    """Minimal deterministic TB combat with typed events and no-tile-stacking rule."""
 
-        self.round_no = 1
-        self.winner: Optional[int] = None  # tests expect 0 or 1
-        self.events_typed: List[Dict] = []
-        self.events_str: List[str] = []
-        self.k_home = 0
-        self.k_away = 0
+    def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], W: int, H: int, seed: int = 0):
+        self.teamA = teamA
+        self.teamB = teamB
+        self.W, self.H = int(W), int(H)
+        self.fighters: List[Any] = [fighter_from_dict(f.__dict__ if hasattr(f, "__dict__") else f) for f in fighters]
+        self.rng = random.Random(int(seed))
 
-        # Legacy signature: third positional is fighter list
-        if args and isinstance(args[0], (list, tuple)):
-            fighters_in: Iterable[Any] = args[0]
-            if len(args) >= 3:
-                self.grid_w = int(args[1])
-                self.grid_h = int(args[2])
-            self.seed = int(kwargs.get("seed", 0))
-            self.rng = random.Random(self.seed)
-            self.fighters: List[_F] = [_mk_from_external(ob, 0, idx) for idx, ob in enumerate(fighters_in)]
-            return
+        # public logs (string and typed)
+        self.events: List[str] = []
+        self.events_typed: List[Dict[str, Any]] = []
+        # alias some names other code may look for
+        self.typed_events = self.events_typed
+        self.event_log_typed = self.events_typed
+        self.log = self.events
 
-        # New path (team dicts + seed positional or kw)
-        if args:
-            seed = int(args[0])
-        else:
-            seed = int(kwargs.get("seed", 0))
-        self.seed = seed
-        self.rng = random.Random(self.seed)
+        self.round: int = 1
+        self.turn_index: int = 0
+        self.winner: Optional[str] = None  # 'home' | 'away' | 'draw'
+        self._push_round_banner()
 
-        self.grid_w = int(kwargs.get("grid_w", self.grid_w))
-        self.grid_h = int(kwargs.get("grid_h", self.grid_h))
+        # ensure initial exclusivity
+        self._enforce_exclusive_tiles()
 
-        self.home = _mk_from_team_dict(home_team, 0, self.grid_w, self.grid_h)
-        self.away = _mk_from_team_dict(away_team, 1, self.grid_w, self.grid_h)
-        self.fighters: List[_F] = self.home + self.away
+    # ---------- occupancy helpers ----------
+    def _alive(self, f: Any) -> bool:
+        return bool(getattr(f, "alive", True)) and int(getattr(f, "hp", 0)) > 0
 
-    def step(self) -> None:
-        if self.winner is not None or self.round_no > self.turn_limit:
-            return
-        self.events_typed.append({"type": "round", "round": self.round_no})
-        self.events_str.append(format_event({"type": "round", "round": self.round_no}))
+    def _occupied(self, x: int, y: int, ignore: Optional[Any] = None) -> bool:
+        for g in self.fighters:
+            if g is ignore: continue
+            if not self._alive(g): continue
+            if int(getattr(g, "x", -1)) == x and int(getattr(g, "y", -1)) == y:
+                return True
+        return False
 
-        order = [f for f in self.fighters if f.alive]
-        self.rng.shuffle(order)
-        for me in order:
-            if not me.alive:
-                continue
-            maybe = self._end_if_done()
-            if maybe is not None:
-                self.winner = maybe
-                break
-            tgt = _nearest_enemy(me, self.fighters)
-            if tgt is None:
-                continue
-            steps = max(1, int(me.spd))
-            for _ in range(steps):
-                if _adjacent(me, tgt):
-                    break
-                _step_toward(me, tgt, self.fighters, self.grid_w, self.grid_h)
-                self.events_typed.append({"type":"move","name":me.name,"to":(me.tx,me.ty)})
-                self.events_str.append(format_event({"type":"move","name":me.name,"to":(me.tx,me.ty)}))
-                tgt = _nearest_enemy(me, self.fighters)
-                if tgt is None:
-                    break
-            if tgt is None:
-                continue
-            if _adjacent(me, tgt):
-                roll = d20(self.rng)
-                crit = (roll == 20)
-                total = roll + attack_bonus(me.ref)
-                if crit or total >= tgt.ac:
-                    dmg = damage_roll(me.ref, crit, self.rng)
-                    tgt.hp -= dmg
-                    self.events_typed.append({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit})
-                    self.events_str.append(format_event({"type":"hit","name":me.name,"target":tgt.name,"dmg":dmg,"crit":crit}))
-                    if tgt.hp <= 0 and tgt.alive:
-                        tgt.alive = False
-                        if tgt.tid == 0: self.k_away += 1
-                        else:            self.k_home += 1
-                        self.events_typed.append({"type":"down","target":tgt.name})
-                        self.events_str.append(format_event({"type":"down","target":tgt.name}))
-                        _award_xp([me], tgt.ref, self.events_typed, self.events_str)
-                else:
-                    self.events_typed.append({"type":"miss","name":me.name,"target":tgt.name})
-                    self.events_str.append(format_event({"type":"miss","name":me.name,"target":tgt.name}))
-        maybe = self._end_if_done()
-        if maybe is not None and self.winner is None:
-            self.winner = maybe  # 0 or 1
-            self.events_typed.append({"type":"end","winner":maybe})
-            self.events_str.append(format_event({"type":"end","winner":maybe}))
-        self.round_no += 1
-        if self.round_no > self.turn_limit and self.winner is None:
-            # If somehow nobody died, force a winner by comparing kills
-            self.winner = 0 if self.k_home >= self.k_away else 1
-            self.events_typed.append({"type":"end","winner":self.winner})
-            self.events_str.append(format_event({"type":"end","winner":self.winner}))
+    def _neighbors_8(self, x: int, y: int) -> List[Tuple[int, int]]:
+        out = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0: continue
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < self.W and 0 <= ny < self.H:
+                    out.append((nx, ny))
+        return out
 
-    # alias expected by tests
-    def take_turn(self) -> None:
-        self.step()
-
-    def run(self, auto: bool = True) -> Dict[str, Any]:
-        while self.winner is None and self.round_no <= self.turn_limit:
-            self.step()
-        return {
-            "kills_home": self.k_home,
-            "kills_away": self.k_away,
-            "winner": self.winner,
-            "events_typed": self.events_typed,
-            "events": self.events_str,
-        }
-
-    def _alive_team(self, tid: int) -> bool:
-        return any(f.alive and f.tid == tid for f in self.fighters)
-
-    def _end_if_done(self) -> Optional[int]:
-        a = self._alive_team(0)
-        b = self._alive_team(1)
-        if a and b: return None
-        if a and not b: return 0
-        if b and not a: return 1
+    def _find_alt_free(self, x: int, y: int, actor: Any) -> Optional[Tuple[int, int]]:
+        # Prefer neighbors closer to target tile if possible
+        neigh = self._neighbors_8(x, y)
+        self.rng.shuffle(neigh)
+        for nx, ny in neigh:
+            if not self._occupied(nx, ny, ignore=actor):
+                return (nx, ny)
         return None
+
+    def _enforce_exclusive_tiles(self) -> None:
+        """Resolve any accidental stacking by gently nudging later occupants to nearest free."""
+        seen = set()
+        for f in self.fighters:
+            if not self._alive(f): continue
+            x, y = int(getattr(f, "x", 0)), int(getattr(f, "y", 0))
+            key = (x, y)
+            if key in seen:
+                alt = self._find_alt_free(x, y, f)
+                if alt:
+                    f.x, f.y = alt
+                else:
+                    # if totally surrounded, leave as-is; draw path will still offset visually
+                    pass
+            else:
+                seen.add(key)
+
+    # ---------- events ----------
+    def _push_round_banner(self) -> None:
+        self.events_typed.append({"type": "round", "round": self.round})
+        self.events.append(f"— Round {self.round} —")
+
+    def _emit_move(self, f: Any, to_xy: Tuple[int, int]) -> None:
+        self.events_typed.append({"type": "move", "name": f.name, "to": tuple(to_xy)})
+        self.events.append(f"{f.name} moves to {tuple(to_xy)}")
+
+    def _emit_hit(self, a: Any, d: Any, dmg: int) -> None:
+        self.events_typed.append({"type": "hit", "name": a.name, "target": d.name, "dmg": int(dmg)})
+        self.events.append(f"{a.name} hits {d.name} for {int(dmg)}")
+
+    def _emit_miss(self, a: Any, d: Any) -> None:
+        self.events_typed.append({"type": "miss", "name": a.name, "target": d.name})
+        self.events.append(f"{a.name} misses {d.name}")
+
+    def _emit_down(self, d: Any) -> None:
+        self.events_typed.append({"type": "down", "name": d.name})
+        self.events.append(f"{d.name} is down!")
+
+    def _emit_end(self) -> None:
+        self.events_typed.append({"type": "end"})
+        self.events.append("End of match")
+
+    # ---------- turn loop ----------
+    def _teams_alive(self) -> Tuple[bool, bool]:
+        a_alive = any(self._alive(f) and f.team_id == 0 for f in self.fighters)
+        b_alive = any(self._alive(f) and f.team_id == 1 for f in self.fighters)
+        return a_alive, b_alive
+
+    def _closest_enemy(self, f: Any) -> Optional[Any]:
+        best = None
+        best_d = 1e9
+        fx, fy = int(f.x), int(f.y)
+        for g in self.fighters:
+            if not self._alive(g): continue
+            if g.team_id == f.team_id: continue
+            d = abs(int(g.x) - fx) + abs(int(g.y) - fy)
+            if d < best_d:
+                best_d = d
+                best = g
+        return best
+
+    def _step_move_towards(self, f: Any, tgt: Any) -> None:
+        # Move by 1 step towards target; respect no-stacking rule
+        fx, fy = int(f.x), int(f.y)
+        tx, ty = int(tgt.x), int(tgt.y)
+        dx = 0 if tx == fx else (1 if tx > fx else -1)
+        dy = 0 if ty == fy else (1 if ty > fy else -1)
+
+        intended = (fx + dx, fy + dy)
+        nx, ny = intended
+        # clamp
+        nx = max(0, min(self.W - 1, nx))
+        ny = max(0, min(self.H - 1, ny))
+
+        if not self._occupied(nx, ny, ignore=f):
+            f.x, f.y = nx, ny
+            self._emit_move(f, (nx, ny))
+            return
+
+        # try an alternative neighbor that is free (prefer those closer to target)
+        choices = self._neighbors_8(fx, fy)
+        # sort by manhattan distance to target, then shuffle stable by rng
+        choices.sort(key=lambda p: abs(p[0] - tx) + abs(p[1] - ty))
+        for cx, cy in choices:
+            if not self._occupied(cx, cy, ignore=f):
+                f.x, f.y = cx, cy
+                self._emit_move(f, (cx, cy))
+                return
+
+        # stuck: don't move this turn
+        # (we still emit nothing; that’s fine)
+
+    def _adjacent(self, a: Any, b: Any) -> bool:
+        return max(abs(int(a.x) - int(b.x)), abs(int(a.y) - int(b.y))) <= 1
+
+    def _attack(self, a: Any, d: Any) -> None:
+        roll = self.rng.randint(1, 20)
+        atk  = int(getattr(a, "atk", 2))
+        ac   = int(getattr(d, "ac", 10))
+        total = roll + atk
+        if total >= ac:
+            dmg = max(1, self.rng.randint(1, 6) + (getattr(a, "level", 1)//2))
+            d.hp = max(0, int(d.hp) - dmg)
+            if d.hp <= 0:
+                d.alive = False
+            self._emit_hit(a, d, dmg)
+            if not self._alive(d):
+                # award XP on down
+                a.xp = int(getattr(a, "xp", 0)) + 10
+                self._emit_down(d)
+        else:
+            self._emit_miss(a, d)
+
+    def _maybe_end_match(self) -> bool:
+        a_alive, b_alive = self._teams_alive()
+        if a_alive and b_alive:
+            return False
+        if a_alive and not b_alive:
+            self.winner = "home"
+        elif b_alive and not a_alive:
+            self.winner = "away"
+        else:
+            self.winner = "draw"
+        self._emit_end()
+        return True
+
+    def take_turn(self, n: int = 1) -> None:
+        for _ in range(max(1, int(n))):
+            if self.winner is not None:
+                return
+
+            # find next alive actor
+            N = len(self.fighters)
+            idx = self.turn_index
+            for _spin in range(N):
+                f = self.fighters[idx]
+                idx = (idx + 1) % N
+                if self._alive(f):
+                    self.turn_index = idx
+                    break
+            actor = self.fighters[(idx - 1) % N]
+            if not self._alive(actor):
+                # everyone is dead? end match
+                if self._maybe_end_match():
+                    return
+                continue
+
+            # pick closest enemy
+            tgt = self._closest_enemy(actor)
+            if tgt is None:
+                if self._maybe_end_match():
+                    return
+                continue
+
+            # if adjacent -> attack, else move
+            if self._adjacent(actor, tgt):
+                self._attack(actor, tgt)
+            else:
+                self._step_move_towards(actor, tgt)
+
+            # after action, enforce exclusivity in case external effects stacked tiles
+            self._enforce_exclusive_tiles()
+
+            if self._maybe_end_match():
+                return
+
+            # start-of-next-round banner after everyone acted roughly once
+            # (simple round handling: every N actions, bump round)
+            if self.turn_index == 0:
+                self.round += 1
+                self._push_round_banner()
+
+    # aliases used by some callers
+    def step(self, n: int = 1) -> None:
+        self.take_turn(n)
+
+    def advance(self, n: int = 1) -> None:
+        self.take_turn(n)
+
+    def tick(self, n: int = 1) -> None:
+        self.take_turn(n)
+
+    def update(self, n: int = 1) -> None:
+        self.take_turn(n)
