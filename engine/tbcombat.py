@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 import random
 
-# Global grid defaults (UI also uses 11×11 as the common baseline)
+# Default grid (UI also targets 11×11 by default)
 GRID_W = 11
 GRID_H = 11
 
@@ -46,7 +46,7 @@ class Fighter:
         self.tx, self.ty = xy
 
 
-# -------------------- helpers used by tests --------------------
+# -------------------- helpers used by tests/content --------------------
 
 def fighter_from_dict(d: Dict) -> Fighter:
     """Create a Fighter from a flexible dict used by tests and content."""
@@ -57,7 +57,7 @@ def fighter_from_dict(d: Dict) -> Fighter:
         x=int(d.get("x", d.get("tx", 0))),
         y=int(d.get("y", d.get("ty", 0))),
         tx=int(d.get("tx", d.get("x", 0))),
-        ty=int(d.get("ty", d.get("y", 0))),  # <-- fixed keyword
+        ty=int(d.get("ty", d.get("y", 0))),
         hp=int(d.get("hp", d.get("max_hp", 10))),
         max_hp=int(d.get("max_hp", d.get("hp", 10))),
         ac=int(d.get("ac", 10)),
@@ -95,14 +95,15 @@ def layout_teams_tiles(fighters: List[Fighter], W: int, H: int) -> None:
 
 class TBCombat:
     """
-    Minimal, deterministic TB combat engine with:
-      - single-occupancy grid enforcement
-      - typed events: round/move/hit/miss/down/end
+    Deterministic TB combat engine with:
+      - single-occupancy grid enforcement (spawn + movement)
+      - typed events: round / move / hit / miss / down / blocked / end
       - take_turn() that either moves or attacks
       - XP awarded (+1) to attacker when a defender is downed
 
-    API expected by UI/tests:
-      TBCombat(teamA, teamB, fighters, GRID_W, GRID_H, seed=...)
+    API used by tests/UI:
+      TBCombat(teamA, teamB, fighters, grid_w, grid_h, seed=...)
+      (also accepts GRID_W/GRID_H kw aliases and string team names)
       .typed_events  (list of dict events)
       .events_typed  (alias)
       .events        (alias)
@@ -111,12 +112,25 @@ class TBCombat:
       .step_action() (alias to take_turn)
     """
     def __init__(self,
-                 teamA: Team,
-                 teamB: Team,
+                 teamA,
+                 teamB,
                  fighters: List[Fighter],
-                 grid_w: int,
-                 grid_h: int,
-                 seed: Optional[int] = None):
+                 grid_w: Optional[int] = None,
+                 grid_h: Optional[int] = None,
+                 seed: Optional[int] = None,
+                 **kwargs):
+        # Accept legacy/alias kwargs used in tests: GRID_W/GRID_H
+        if grid_w is None:
+            grid_w = kwargs.pop("GRID_W", GRID_W)
+        if grid_h is None:
+            grid_h = kwargs.pop("GRID_H", GRID_H)
+
+        # Accept strings for team names in tests
+        if not isinstance(teamA, Team):
+            teamA = Team(0, str(teamA))
+        if not isinstance(teamB, Team):
+            teamB = Team(1, str(teamB))
+
         self.teamA = teamA
         self.teamB = teamB
         self.GRID_W = int(grid_w)
@@ -125,8 +139,10 @@ class TBCombat:
 
         # normalize team ids to 0/1 defensively
         for f in fighters:
-            if f.team_id not in (0, 1):
-                f.team_id = 0 if f.team_id in (teamA.tid, 0) else 1
+            if getattr(f, "team_id", 0) not in (0, 1):
+                # If unknown, map by original tid against our team tids; else default to 0
+                orig = getattr(f, "team_id", 0)
+                f.team_id = 0 if orig in (teamA.tid, 0) else 1
 
         self.fighters: List[Fighter] = fighters[:]
         self.typed_events: List[Dict] = []
@@ -206,9 +222,13 @@ class TBCombat:
     # -------- turn logic --------
 
     def _build_turn_order(self) -> List[int]:
-        # deterministic by (team_id, pid) so tests are stable
+        # deterministic by (team_id, pid/id/index) so tests are stable
         order = list(range(len(self.fighters)))
-        order.sort(key=lambda i: (self.fighters[i].team_id, self.fighters[i].pid))
+        def _key(i: int):
+            f = self.fighters[i]
+            pid = getattr(f, "pid", getattr(f, "id", i))
+            return (getattr(f, "team_id", 0), pid)
+        order.sort(key=_key)
         return order
 
     def _emit_round(self) -> None:
@@ -267,11 +287,14 @@ class TBCombat:
                 actor.set_pos((nx, ny))
                 self.typed_events.append({"type": "move", "name": actor.name, "to": (nx, ny)})
                 return True
+        # blocked: movement not possible
+        self.typed_events.append({"type": "blocked", "name": actor.name, "at": actor.pos})
         return False
 
     def _attack(self, attacker: Fighter, defender: Fighter) -> None:
         # very simple d20 vs AC proxy
         roll = self.rng.randint(1, 20)
+        # keep hit rate reasonable against varied AC
         hit = roll >= max(5, int(defender.ac) // 2 + 5)
         if hit:
             dmg = max(1, self.rng.randint(1, 6))
@@ -292,7 +315,7 @@ class TBCombat:
         foes = [f for f in self.fighters if f.alive and f.team_id != actor.team_id]
         if not foes:
             return None
-        foes.sort(key=lambda f: (self._distance(actor.pos, f.pos), f.pid))
+        foes.sort(key=lambda f: (self._distance(actor.pos, f.pos), getattr(f, "pid", getattr(f, "id", 0))))
         return foes[0]
 
     def _distance(self, a: Coord, b: Coord) -> int:
@@ -325,10 +348,7 @@ class TBCombat:
         if self._adjacent(actor.pos, target.pos):
             self._attack(actor, target)
         else:
-            moved = self._try_step_toward(actor, target)
-            if not moved:
-                # blocked: no-op turn to avoid deadlock but still advance
-                self.typed_events.append({"type": "move", "name": actor.name, "to": actor.pos})
+            self._try_step_toward(actor, target)
 
         self._advance_index()
 
