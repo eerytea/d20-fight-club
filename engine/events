@@ -1,85 +1,63 @@
 # engine/events.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Union, Tuple, Optional
 
 
-# ---- Typed events -------------------------------------------------------------
-
-@dataclass(frozen=True)
-class Event:  # base class for isinstance checks
-    pass
-
-
-@dataclass(frozen=True)
-class StartRound(Event):
+@dataclass
+class StartRound:
     round_no: int
 
 
-@dataclass(frozen=True)
-class Move(Event):
-    actor_id: int
-    target_id: int
+@dataclass
+class Move:
+    pid: str
+    from_xy: Tuple[int, int]
+    to_xy: Tuple[int, int]
 
 
-@dataclass(frozen=True)
-class Hit(Event):
-    attacker_id: int
-    target_id: int
-    damage: int
-    crit: bool = False
+@dataclass
+class Hit:
+    attacker: str
+    defender: str
+    dmg: int
+    new_hp: int
 
 
-@dataclass(frozen=True)
-class Miss(Event):
-    attacker_id: int
-    target_id: int
+@dataclass
+class Miss:
+    attacker: str
+    defender: str
 
 
-@dataclass(frozen=True)
-class Down(Event):
-    target_id: int
-    by_attacker_id: Optional[int] = None
+@dataclass
+class Down:
+    attacker: Optional[str]  # can be None if downed by environment
+    defender: str
 
 
-@dataclass(frozen=True)
-class End(Event):
-    # winner is 0 (home), 1 (away), or None for draw
-    winner: Optional[int]
+@dataclass
+class End:
+    winner: str  # 'home' or 'away' or 'draw'
 
 
-# ---- String formatting --------------------------------------------------------
-
-def _default_name_of(fid: int) -> str:
-    return f"F#{fid}"
+Event = Union[StartRound, Move, Hit, Miss, Down, End]
 
 
-def format_event(
-    ev: Event,
-    name_of: Optional[Callable[[int], str]] = None,
-) -> str:
-    """
-    Convert a typed Event to a readable string. Provide a `name_of(fid)->str`
-    to map fighter ids to display names. Falls back to 'F#id'.
-    """
-    name_of = name_of or _default_name_of
-
+def format_event(ev: Event) -> str:
     if isinstance(ev, StartRound):
-        return f"--- Round {ev.round_no} ---"
+        return f"— Round {ev.round_no} —"
     if isinstance(ev, Move):
-        return f"{name_of(ev.actor_id)} closes on {name_of(ev.target_id)}"
+        return f"{ev.pid} moves {ev.from_xy} → {ev.to_xy}"
     if isinstance(ev, Hit):
-        return f"{name_of(ev.attacker_id)} hits {name_of(ev.target_id)} for {ev.damage}" + (" (crit)" if ev.crit else "")
+        return f"{ev.attacker} hits {ev.defender} for {ev.dmg} (HP {ev.new_hp})"
     if isinstance(ev, Miss):
-        return f"{name_of(ev.attacker_id)} misses {name_of(ev.target_id)}"
+        return f"{ev.attacker} misses {ev.defender}"
     if isinstance(ev, Down):
-        if ev.by_attacker_id is not None:
-            return f"{name_of(ev.target_id)} is down! (by {name_of(ev.by_attacker_id)})"
-        return f"{name_of(ev.target_id)} is down!"
+        if ev.attacker:
+            return f"{ev.attacker} downs {ev.defender}!"
+        return f"{ev.defender} is down!"
     if isinstance(ev, End):
-        if ev.winner is None:
-            return "Match ended in a draw (turn cap)."
-        return f"Winner: {'Home' if ev.winner == 0 else 'Away'}"
-
-    # Fallback for unknown event types
-    return repr(ev)
+        w = {"home": "Home", "away": "Away", "draw": "Draw"}.get(ev.winner, ev.winner)
+        return f"Match ends — {w}"
+    return str(ev)
