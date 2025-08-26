@@ -2,21 +2,23 @@
 from __future__ import annotations
 
 import os
-import time
-from typing import Optional, List, Any, Tuple
+from typing import Optional, List
 
 import pygame
 
 
 class App:
     def __init__(self, width: int = 1024, height: int = 576, title: str = "App"):
-        # Ensure Pygame is initialized
+        # Headless-safe for CI/tests
         if os.environ.get("SDL_VIDEODRIVER") == "dummy":
-            # Headless safe (tests)
             pass
         pygame.init()
         pygame.display.set_caption(title)
+
+        # Create window and keep width/height attributes for states that use them
         self.screen = pygame.display.set_mode((width, height))
+        self.width, self.height = self.screen.get_size()
+
         self.clock = pygame.time.Clock()
         self.running = True
 
@@ -44,9 +46,14 @@ class App:
         while self.running:
             dt = self.clock.tick(60) / 1000.0
             st = self.state
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
+                elif event.type == pygame.VIDEORESIZE:
+                    # If you later make the window resizable, keep size attrs in sync
+                    self.screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+                    self.width, self.height = self.screen.get_size()
                 elif st is not None and hasattr(st, "handle"):
                     st.handle(event)
 
@@ -59,9 +66,12 @@ class App:
             else:
                 self.screen.fill((16, 20, 24))
 
+            # Keep attributes in sync even without resize events (belt & suspenders)
+            self.width, self.height = self.screen.get_size()
+
             pygame.display.flip()
 
-    # Convenience; some states use this pattern
+    # Convenience
     def quit(self) -> None:
         self.running = False
 
