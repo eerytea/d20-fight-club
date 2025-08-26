@@ -4,7 +4,7 @@ from __future__ import annotations
 import pygame
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 from .app import BaseState
 from .uiutil import Theme, Button, draw_text, draw_panel, get_font
@@ -19,7 +19,7 @@ except Exception:
         name: str
         color: Tuple[int, int, int]
 
-# optional helpers if present
+# Optional helpers if present
 try:
     from engine.tbcombat import layout_teams_tiles as _layout_teams_tiles
 except Exception:
@@ -36,6 +36,7 @@ except Exception:
     _format_event = None
 
 
+# ---------- fighter helpers ----------
 def _mk_fighter(fd: Dict[str, Any]) -> Any:
     d = dict(fd)
     d.setdefault("pid", str(d.get("pid") or d.get("id") or d.get("name") or "F"))
@@ -57,7 +58,12 @@ def _mk_fighter(fd: Dict[str, Any]) -> Any:
 
 
 class MatchState(BaseState):
-    """Grid viewer with large fighter dots, name+HP above, scrollable log, and Next Turn / Next Round controls."""
+    """Match viewer:
+       - Larger cells that fit dot + name + HP bar (all inside the cell)
+       - Scrollable log with real names
+       - Next Turn (one actor only) / Next Round / Auto / Finish
+       - HP bars decrease as damage happens (event-driven cache)"""
+
     def __init__(self, app, home_team: Dict[str, Any], away_team: Dict[str, Any]):
         self.app = app
         self.theme = Theme()
@@ -65,35 +71,46 @@ class MatchState(BaseState):
         self.home_d = home_team
         self.away_d = away_team
 
-        self.combat: TBCombat | None = None
+        self.combat: Optional[TBCombat] = None
         self._started = False
 
-        # our team lookup (don’t depend on TBCombat attrs)
+        # teams (don’t depend on TBCombat attr names)
         self._teams_by_tid: Dict[int, TBTeam] = {}
 
         # UI rects + buttons
         self.rect_panel = pygame.Rect(0, 0, 0, 0)
         self.rect_grid  = pygame.Rect(0, 0, 0, 0)
         self.rect_log   = pygame.Rect(0, 0, 0, 0)
-        self.btn_turn:   Button | None = None
-        self.btn_round:  Button | None = None
-        self.btn_auto:   Button | None = None
-        self.btn_finish: Button | None = None
-        self.btn_back:   Button | None = None
+        self.btn_turn:   Optional[Button] = None
+        self.btn_round:  Optional[Button] = None
+        self.btn_auto:   Optional[Button] = None
+        self.btn_finish: Optional[Button] = None  # behaves like Back
 
-        # Event log + mapping
+        # Event log + tracking
         self.events: List[str] = []
-        self._last_seen = {k: 0 for k in ("events_typed", "typed_events", "event_log_typed", "events", "log")}
+        self._last_seen = {k: 0 for k in ("events_typed","typed_events","event_log_typed","events","log")}
+        self._last_round_seen = 0
+        self._log_scroll = 0
+
+        # name maps
         self._idx_to_name: Dict[int, str] = {}
         self._pid_to_name: Dict[str, str] = {}
-        self._log_scroll = 0
-        self._last_round_seen = 0  # parsed from events
+        self._name_to_pid: Dict[str, str] = {}
+
+        # hp cache (so bars actually drop on damage)
+        self._hp_max: Dict[str, int] = {}   # pid -> max
+        self._hp_cur: Dict[str, int] = {}   # pid -> cur
+        self._alive_prev: Dict[str, bool] = {}
+
+        # raw event tracking for Next Turn logic
+        self._raw_attr: Optional[str] = None
+        self._raw_seen: int = 0
 
         self.auto = False
         self._auto_steps_per_update = 10
         self._built = False
 
-    # ---------- helpers ----------
+    # ---------- basic getters ----------
     def _fighters(self) -> List[Any]:
         if not self.combat: return []
         f = getattr(self.combat, "fighters", None)
@@ -102,16 +119,55 @@ class MatchState(BaseState):
     def _rebuild_name_maps(self) -> None:
         self._idx_to_name.clear()
         self._pid_to_name.clear()
+        self._name_to_pid.clear()
         for i, f in enumerate(self._fighters()):
             name = str(getattr(f, "name", getattr(f, "pid", f"F{i}")))
+            pid  = str(getattr(f, "pid", name))
             self._idx_to_name[i] = name
-            pid = getattr(f, "pid", None)
-            if isinstance(pid, str):
-                self._pid_to_name[pid] = name
+            self._pid_to_name[pid] = name
+            self._name_to_pid[name] = pid
 
+    def _team_color_for_tid(self, tid: int) -> Tuple[int, int, int]:
+        t = self._teams_by_tid.get(int(tid))
+        if t: return tuple(getattr(t, "color", (200, 200, 200)))
+        return (200, 200, 200)
+
+    def _current_round_from_engine(self) -> Optional[int]:
+        return getattr(self.combat, "round", None) if self.combat else None
+
+    # ---------- hp helpers ----------
+    def _init_hp_cache(self) -> None:
+        self._hp_max.clear()
+        self._hp_cur.clear()
+        self._alive_prev.clear()
+        for f in self._fighters():
+            pid = str(getattr(f, "pid", getattr(f, "name", "")))
+            if not pid: continue
+            mh = int(getattr(f, "max_hp", getattr(f, "hp", 12)))
+            hp = int(getattr(f, "hp", mh))
+            self._hp_max[pid] = max(1, mh)
+            self._hp_cur[pid] = max(0, min(mh, hp))
+            self._alive_prev[pid] = bool(getattr(f, "alive", True))
+
+    def _pid_from_event_field(self, val: Any) -> Optional[str]:
+        # try to resolve to a PID from a field value (name/pid/index/object)
+        if val is None: return None
+        if isinstance(val, str):
+            # could be pid or name
+            return self._name_to_pid.get(val, val)
+        if isinstance(val, int):
+            nm = self._idx_to_name.get(val)
+            return self._name_to_pid.get(nm, None)
+        if isinstance(val, dict):
+            if "pid" in val: return str(val["pid"])
+            if "name" in val: return self._name_to_pid.get(str(val["name"]))
+        if hasattr(val, "pid"): return str(getattr(val, "pid"))
+        if hasattr(val, "name"): return self._name_to_pid.get(str(getattr(val, "name")))
+        return None
+
+    # ---------- event formatting ----------
     def _name_from_val(self, v: Any) -> str:
         if isinstance(v, str):
-            # try PID map first
             return self._pid_to_name.get(v, v)
         if isinstance(v, int):
             return self._idx_to_name.get(v, f"#{v}")
@@ -119,24 +175,12 @@ class MatchState(BaseState):
             if "name" in v: return str(v["name"])
             pid = v.get("pid")
             if pid is not None: return self._pid_to_name.get(str(pid), str(pid))
-        if hasattr(v, "name"):
-            return str(getattr(v, "name"))
-        if hasattr(v, "pid"):
-            pid = getattr(v, "pid")
-            return self._pid_to_name.get(str(pid), str(pid))
+        if hasattr(v, "name"): return str(getattr(v, "name"))
+        if hasattr(v, "pid"):  return self._pid_to_name.get(str(getattr(v, "pid")), str(getattr(v, "pid")))
         return "?"
 
-    def _team_color_for_tid(self, tid: int) -> Tuple[int, int, int]:
-        t = self._teams_by_tid.get(int(tid))
-        if t: return tuple(getattr(t, "color", (200, 200, 200)))
-        return (200, 200, 200)
-
-    def _current_round_from_engine(self) -> int | None:
-        return getattr(self.combat, "round", None) if self.combat else None
-
-    # ---------- event formatting ----------
     def _fmt_event(self, e: Any) -> str:
-        # If engine ships a formatter, prefer it
+        # Prefer engine formatter if available
         if _format_event:
             try:
                 s = _format_event(e)
@@ -148,32 +192,21 @@ class MatchState(BaseState):
         if isinstance(e, dict):
             t = e.get("type") or e.get("event") or e.get("kind") or "event"
 
-            # The engine you’re using emits {"type":"move","name":"Sam Kane", ...}
-            # so we treat "name" as a first-class actor key.
-            who_keys = (
-                "name",  # <— NEW: actor name provided directly
-                "who","who_id","who_idx","actor","actor_id","actor_idx",
-                "src","src_id","src_idx","attacker","att","unit","unit_idx",
-                "i","a","idx"
-            )
-            tgt_keys = (
-                "target","target_name","target_id","target_idx",
-                "defender","def","dst","dst_idx",
-                "j","b"
-            )
+            # your engine emits {"type":"move","name":"Sam Kane", ...}
+            actor_keys = ("name","who","actor","src","attacker","unit","who_id","actor_id","src_id","attacker_id")
+            targ_keys  = ("target","defender","dst","target_id","defender_id","dst_id")
 
-            def who_from():
-                # explicit *_name fields still win
+            def who_from() -> str:
                 nm = e.get("who_name") or e.get("actor_name") or e.get("attacker_name") or e.get("unit_name")
                 if nm: return str(nm)
-                for k in who_keys:
+                for k in actor_keys:
                     if k in e: return self._name_from_val(e[k])
                 return "?"
 
-            def tgt_from():
+            def tgt_from() -> str:
                 nm = e.get("target_name") or e.get("defender_name")
                 if nm: return str(nm)
-                for k in tgt_keys:
+                for k in targ_keys:
                     if k in e: return self._name_from_val(e[k])
                 return "?"
 
@@ -191,20 +224,21 @@ class MatchState(BaseState):
             if t in ("miss","Miss"):
                 return f"{who_from()} misses {tgt_from()}"
             if t in ("down","Down"):
-                w = who_from() or tgt_from()
-                return f"{w} is down!"
+                # best effort name extraction
+                nm = e.get("name") or e.get("who") or e.get("target") or e.get("defender") or who_from() or tgt_from()
+                return f"{self._name_from_val(nm)} is down!"
             if t in ("end","End","finish"):
                 return "End of match"
 
-            # fallback: pretty dict with names resolved
+            # generic fallback
             parts = []
             for k, v in e.items():
-                if k in who_keys or k in tgt_keys:
+                if k in actor_keys or k in targ_keys:
                     v = self._name_from_val(v)
                 parts.append(f"{k}={v}")
             return ", ".join(parts)
 
-        # string fallback: substitute indices with names
+        # string fallback: replace actor/target indices with names if present
         import re as _re
         s = str(e)
         def repl(m):
@@ -217,7 +251,9 @@ class MatchState(BaseState):
         self._build_match()
         self._build_ui()
         self._rebuild_name_maps()
-        self._harvest_new_events()
+        self._init_hp_cache()
+        self._reset_raw_tracker()
+        self._harvest_new_events()  # will show "Round 1"
         self._built = True
 
     def _build_match(self) -> None:
@@ -228,8 +264,10 @@ class MatchState(BaseState):
         h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
         a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
         fighters: List[Any] = []
-        for idx, fd in enumerate(h_roster): fighters.append(_mk_fighter({**fd, "team_id": 0, "pid": fd.get("pid") or f"H{idx}"}))
-        for idx, fd in enumerate(a_roster): fighters.append(_mk_fighter({**fd, "team_id": 1, "pid": fd.get("pid") or f"A{idx}"}))
+        for idx, fd in enumerate(h_roster):
+            fighters.append(_mk_fighter({**fd, "team_id": 0, "pid": fd.get("pid") or f"H{idx}"}))
+        for idx, fd in enumerate(a_roster):
+            fighters.append(_mk_fighter({**fd, "team_id": 1, "pid": fd.get("pid") or f"A{idx}"}))
 
         if _layout_teams_tiles: _layout_teams_tiles(fighters, _GRID_W, _GRID_H)
         else: self._layout_two_columns(fighters)
@@ -237,6 +275,7 @@ class MatchState(BaseState):
         self.combat = TBCombat(tA, tB, fighters, _GRID_W, _GRID_H, seed=42)
         self._ensure_layout()
 
+        # reset trackers
         for k in self._last_seen: self._last_seen[k] = 0
         self.events.clear()
         self._log_scroll = 0
@@ -248,7 +287,7 @@ class MatchState(BaseState):
         right = [f for f in fighters if getattr(f, "team_id", 0) == 1]
         gapL = max(1, _GRID_H // (len(left)  + 1)) if left  else 2
         gapR = max(1, _GRID_H // (len(right) + 1)) if right else 2
-        for i, f in enumerate(left,  start=1): f.x = f.tx = 1;            f.y = f.ty = min(_GRID_H-1, i*gapL)
+        for i, f in enumerate(left,  start=1): f.x = f.tx = 1;              f.y = f.ty = min(_GRID_H-1, i*gapL)
         for i, f in enumerate(right, start=1): f.x = f.tx = max(0,_GRID_W-2); f.y = f.ty = min(_GRID_H-1, i*gapR)
 
     def _ensure_layout(self) -> None:
@@ -266,19 +305,32 @@ class MatchState(BaseState):
         self.rect_grid = pygame.Rect(self.rect_panel.x + 12, self.rect_panel.y + 12, split - 24, self.rect_panel.h - 84)
         self.rect_log  = pygame.Rect(self.rect_panel.x + split, self.rect_panel.y + 12, self.rect_panel.w - split - 24, self.rect_panel.h - 84)
 
+        # controls
         btn_w, btn_h, gap = 160, 44, 10
         y = self.rect_panel.bottom - (btn_h + 10)
         x = self.rect_panel.x + 12
-        self.btn_turn   = Button(pygame.Rect(x, y, btn_w, btn_h), "Next Turn", self._next_turn)
+        self.btn_turn   = Button(pygame.Rect(x, y, btn_w, btn_h), "Next Turn",  self._next_turn)
         x += btn_w + gap
         self.btn_round  = Button(pygame.Rect(x, y, btn_w, btn_h), "Next Round", self._next_round)
         x += btn_w + gap
         self.btn_auto   = Button(pygame.Rect(x, y, btn_w, btn_h), f"Auto: {'ON' if self.auto else 'OFF'}", self._toggle_auto)
-        x += btn_w + gap
-        self.btn_finish = Button(pygame.Rect(x, y, btn_w, btn_h), "Finish", self._finish)
-        self.btn_back   = Button(pygame.Rect(self.rect_panel.right - (btn_w + 12), y, btn_w, btn_h), "Back", self._back)
+        self.btn_finish = Button(pygame.Rect(self.rect_panel.right - (btn_w + 12), y, btn_w, btn_h), "Finish", self._back)
 
-    # ---------- control ----------
+    # ---------- raw event tracker (for Next Turn) ----------
+    def _reset_raw_tracker(self) -> None:
+        # choose one raw/typed attribute to watch
+        for attr in ("events_typed","typed_events","event_log_typed","events","log"):
+            if isinstance(getattr(self.combat, attr, None), list):
+                self._raw_attr = attr
+                self._raw_seen = len(getattr(self.combat, attr))
+                break
+
+    def _raw_since(self, base: int) -> List[Any]:
+        if not self._raw_attr or not self.combat: return []
+        evs = getattr(self.combat, self._raw_attr, [])
+        return evs[base:]
+
+    # ---------- controls ----------
     def _advance_once(self) -> None:
         if not self.combat: return
         c = self.combat
@@ -303,10 +355,38 @@ class MatchState(BaseState):
         self._harvest_new_events()
 
     def _next_turn(self):
-        if self.combat and getattr(self.combat, "winner", None) is None:
-            self._started = True
+        if not self.combat or getattr(self.combat, "winner", None) is not None:
+            return
+        self._started = True
+
+        # Advance until the ACTOR changes (i.e., only the next character's turn)
+        base_raw = len(getattr(self.combat, self._raw_attr, [])) if self._raw_attr else 0
+        start_round = self._current_round_from_engine() or self._last_round_seen
+        actor_name: Optional[str] = None
+
+        for _ in range(500):  # hard cap safety
             self._advance_once()
             self._harvest_and_refresh()
+
+            if getattr(self.combat, "winner", None) is not None:
+                break
+
+            new_raw = self._raw_since(base_raw)
+            # try to capture the acting name from raw events
+            for e in new_raw:
+                if isinstance(e, dict):
+                    nm = e.get("name") or e.get("actor") or e.get("who") or e.get("src")
+                    if nm:
+                        nm = self._name_from_val(nm)
+                        if actor_name is None:
+                            actor_name = nm
+                        elif nm != actor_name:
+                            return  # next actor observed -> stop
+
+            # also stop if the round bumped (end of turn cycle)
+            cur_round = self._current_round_from_engine() or self._last_round_seen
+            if cur_round is not None and start_round is not None and cur_round > start_round:
+                return
 
     def _next_round(self):
         if not self.combat or getattr(self.combat, "winner", None) is not None:
@@ -327,43 +407,75 @@ class MatchState(BaseState):
         if self.btn_auto: self.btn_auto.label = f"Auto: {'ON' if self.auto else 'OFF'}"
         if self.auto: self._started = True
 
-    def _finish(self):
-        if not self.combat: return
-        self._started = True
-        for i in range(20000):
-            if getattr(self.combat, "winner", None) is not None: break
-            self._advance_once()
-            if i % 12 == 0:
-                self._harvest_and_refresh()
-        self._harvest_and_refresh()
-
     def _back(self): self.app.pop_state()
 
-    # ---------- events ----------
+    # ---------- event ingest (also drives HP cache + “down” names) ----------
     def _harvest_new_events(self):
         if not self.combat: return
+
+        # detect newly dead fighters if engine doesn't name them on "down"
+        def detect_newly_dead() -> List[str]:
+            newly: List[str] = []
+            for f in self._fighters():
+                pid = str(getattr(f, "pid", getattr(f, "name", "")))
+                if not pid: continue
+                alive = bool(getattr(f, "alive", True))
+                prev  = self._alive_prev.get(pid, True)
+                if prev and not alive:
+                    newly.append(self._pid_to_name.get(pid, pid))
+                self._alive_prev[pid] = alive
+            return newly
+
         for attr in ("events_typed","typed_events","event_log_typed","events","log"):
             evs = getattr(self.combat, attr, None)
             if not isinstance(evs, list): continue
             start = self._last_seen.get(attr, 0)
             fresh = evs[start:]
-            if fresh:
-                # print a small sample the very first time (helps debugging)
-                if start == 0:
-                    print("[Match] sample events:", fresh[:5])
-                for e in fresh:
-                    try:
-                        s = self._fmt_event(e)
-                        if isinstance(s, str) and s.startswith("— Round "):
-                            try:
-                                num = int(s.replace("— Round ","").replace(" —","").strip())
-                                self._last_round_seen = max(self._last_round_seen, num)
-                            except Exception:
-                                pass
-                        self.events.append(s)
-                    except Exception:
-                        self.events.append(str(e))
-                self._last_seen[attr] = start + len(fresh)
+            if fresh and start == 0:
+                print("[Match] sample events:", fresh[:5])
+
+            # update HP cache first, then format lines
+            for e in fresh:
+                try:
+                    if isinstance(e, dict):
+                        t = e.get("type") or e.get("event") or e.get("kind")
+                        if t in ("hit","Hit"):
+                            dmg = int(e.get("dmg") or e.get("damage") or e.get("amount") or 0)
+                            # prefer explicit target, fallback to defender/dst
+                            tgt = e.get("target")
+                            if tgt is None: tgt = e.get("defender", e.get("dst"))
+                            pid = self._pid_from_event_field(tgt)
+                            if pid and pid in self._hp_max:
+                                self._hp_cur[pid] = max(0, self._hp_cur.get(pid, self._hp_max[pid]) - dmg)
+                        elif t in ("down","Down"):
+                            nm = e.get("name") or e.get("target") or e.get("defender")
+                            pid = self._pid_from_event_field(nm) if nm is not None else None
+                            if pid and pid in self._hp_max:
+                                self._hp_cur[pid] = 0
+                    # nothing to do for move/miss
+                except Exception:
+                    pass
+
+            for e in fresh:
+                try:
+                    s = self._fmt_event(e)
+                    if s.strip() == "? is down!":
+                        # try to substitute the real name if the engine didn't provide one
+                        new_dead = detect_newly_dead()
+                        if new_dead:
+                            s = f"{new_dead[0]} is down!"
+                    if isinstance(s, str) and s.startswith("— Round "):
+                        try:
+                            num = int(s.replace("— Round ","").replace(" —","").strip())
+                            self._last_round_seen = max(self._last_round_seen, num)
+                        except Exception:
+                            pass
+                    self.events.append(s)
+                except Exception:
+                    self.events.append(str(e))
+
+            self._last_seen[attr] = start + len(fresh)
+
         if len(self.events) > 800: self.events = self.events[-800:]
 
     # ---------- update/draw ----------
@@ -372,7 +484,6 @@ class MatchState(BaseState):
         if self.btn_round:  self.btn_round.handle(event)
         if self.btn_auto:   self.btn_auto.handle(event)
         if self.btn_finish: self.btn_finish.handle(event)
-        if self.btn_back:   self.btn_back.handle(event)
         if event.type == pygame.MOUSEWHEEL and self.rect_log:
             mx, my = pygame.mouse.get_pos()
             if self.rect_log.collidepoint(mx, my):
@@ -384,7 +495,6 @@ class MatchState(BaseState):
         if self.btn_round:  self.btn_round.update((mx,my))
         if self.btn_auto:   self.btn_auto.update((mx,my))
         if self.btn_finish: self.btn_finish.update((mx,my))
-        if self.btn_back:   self.btn_back.update((mx,my))
 
         if self.auto and self.combat and getattr(self.combat, "winner", None) is None:
             for _ in range(self._auto_steps_per_update):
@@ -401,7 +511,7 @@ class MatchState(BaseState):
         draw_text(surf, title, (surf.get_width()//2, 16), 30, th.text, align="center")
 
         draw_panel(surf, self.rect_panel, th)
-        draw_panel(surf, self.rect_grid, th)   # no gridlines; just a panel background
+        draw_panel(surf, self.rect_grid, th)   # plain panel (no gridlines)
         draw_panel(surf, self.rect_log, th)
 
         status_y = self.rect_panel.y + 16
@@ -423,45 +533,72 @@ class MatchState(BaseState):
         if self.btn_round:  self.btn_round.draw(surf, th)
         if self.btn_auto:   self.btn_auto.draw(surf, th)
         if self.btn_finish: self.btn_finish.draw(surf, th)
-        if self.btn_back:   self.btn_back.draw(surf, th)
 
-    # ---------- grid (no gridlines; larger dots; name+HP above) ----------
+    # ---------- grid (larger cells; name+HP+dot INSIDE each cell) ----------
     def _draw_grid(self, surf: pygame.Surface) -> None:
         rg = self.rect_grid
         gw, gh = _GRID_W, _GRID_H
-        cell_w = max(16, (rg.w - 12) // gw)
-        cell_h = max(16, (rg.h - 12) // gh)
-        ox = rg.x + (rg.w - cell_w * gw) // 2
-        oy = rg.y + (rg.h - cell_h * gh) // 2
+
+        # Each cell must fit (name 16px) + (HP bar 8px) + gap + dot + bottom gap
+        # so choose cell height generously:
+        min_cell_h = 16 + 8 + 6 + 18 + 6     # ≈ 54px
+        min_cell_w = 40                       # keep dots readable + name width
+        cell_w = max(min_cell_w, (rg.w - 12) // gw)
+        cell_h = max(min_cell_h, (rg.h - 12) // gh)
+
+        # center the used grid inside the panel
+        used_w, used_h = cell_w * gw, cell_h * gh
+        ox = rg.x + max(0, (rg.w - used_w) // 2)
+        oy = rg.y + max(0, (rg.h - used_h) // 2)
 
         for f in self._fighters():
             x = int(getattr(f, "x", getattr(f, "tx", 0)))
             y = int(getattr(f, "y", getattr(f, "ty", 0)))
-            cx = ox + x * cell_w + cell_w // 2
-            cy = oy + y * cell_h + cell_h // 2
+
+            # compute the cell rect for (x,y)
+            cx = ox + x * cell_w
+            cy = oy + y * cell_h
+            cell_rect = pygame.Rect(cx, cy, cell_w, cell_h)
+
+            # content layout within the cell:
+            # [name (centered)]
+            # [HP bar]
+            # [dot]
+            name_y = cell_rect.y + 6
+            bar_y  = name_y + 18
+            dot_y  = bar_y + 10 + 12  # gap + half dot height (we’ll compute exact radius)
 
             tid = int(getattr(f, "team_id", 0))
             base = self._team_color_for_tid(tid)
             alive = bool(getattr(f, "alive", True))
             color = base if alive else (110, 110, 110)
 
-            r = max(8, int(min(cell_w, cell_h) * 0.38))
-            hp = max(0, int(getattr(f, "hp", 0)))
-            mh = max(1, int(getattr(f, "max_hp", max(hp, 1))))
-            bar_w = max(28, int(min(cell_w, cell_h) * 0.9))
-            bar_h = 7
-            bx = cx - bar_w // 2
-            by = cy - r - 16
-            pygame.draw.rect(surf, (50, 55, 60), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
-            if mh > 0:
-                fill_w = int(bar_w * (hp / mh))
-                pygame.draw.rect(surf, (90, 200, 120), pygame.Rect(bx, by, fill_w, bar_h), border_radius=3)
+            # HP (from cache if available)
+            pid = str(getattr(f, "pid", getattr(f, "name", "")))
+            mh  = self._hp_max.get(pid, int(getattr(f, "max_hp", getattr(f, "hp", 12))))
+            hp  = self._hp_cur.get(pid, int(getattr(f, "hp", mh)))
+            mh = max(1, mh)
+            hp = max(0, min(mh, hp))
 
+            # draw name (centered in cell)
             name = str(getattr(f, "name", getattr(f, "pid", "F")))
-            draw_text(surf, name, (cx, by - 16), 16, self.theme.text, align="center")
+            draw_text(surf, name, (cell_rect.centerx, name_y), 16, self.theme.text, align="center")
 
-            pygame.draw.circle(surf, color, (cx, cy), r)
-            pygame.draw.circle(surf, self.theme.panel_border, (cx, cy), r, 1)
+            # draw HP bar
+            bar_w = int(cell_rect.w * 0.9)
+            bar_h = 8
+            bx = cell_rect.centerx - bar_w // 2
+            by = bar_y
+            pygame.draw.rect(surf, (50, 55, 60), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
+            fill_w = int(bar_w * (hp / mh))
+            pygame.draw.rect(surf, (90, 200, 120), pygame.Rect(bx, by, fill_w, bar_h), border_radius=3)
+
+            # draw fighter dot
+            r = max(10, int(min(cell_w, cell_h) * 0.22))
+            dot_cx = cell_rect.centerx
+            dot_cy = by + bar_h + 10 + r
+            pygame.draw.circle(surf, color, (dot_cx, dot_cy), r)
+            pygame.draw.circle(surf, self.theme.panel_border, (dot_cx, dot_cy), r, 1)
 
     # ---------- log ----------
     def _measure_w(self, text: str, font_px: int) -> int:
