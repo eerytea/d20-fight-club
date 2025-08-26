@@ -18,7 +18,7 @@ except Exception:
     class TBTeam:
         tid: int
         name: str
-        color: Tuple<int, int, int>
+        color: Tuple[int, int, int]  # <- correct Python typing
 
 # Optional helpers if present
 try:
@@ -67,12 +67,11 @@ def _mk_fighter(fd: Dict[str, Any]) -> Any:
     return SimpleNamespace(**d)
 
 def _short_name(name: str) -> str:
-    """Format 'First Initial. Lastname' with modest fallback."""
+    """Format 'F. Lastname' with modest fallback."""
     parts = [p for p in str(name).strip().split() if p]
     if not parts:
         return "?"
     if len(parts) == 1:
-        # Single token—truncate a bit so it fits
         s = parts[0]
         return s if len(s) <= 14 else s[:13] + "…"
     first, last = parts[0], parts[-1]
@@ -80,11 +79,11 @@ def _short_name(name: str) -> str:
 
 
 class MatchState(BaseState):
-    """Match viewer with:
-       - in-cell dot + small 'F. Lastname' + HP bar
-       - downed fighters hidden
-       - overlapping fighters offset visually per tile
-       - user team = red, opponent = blue (fallback: Home red / Away blue)
+    """Match viewer:
+       - Smaller in-cell name as 'F. Lastname'
+       - Downed fighters hidden
+       - Overlap avoided visually via offsets (engine now also prevents same-tile)
+       - User team = red, opponent = blue (fallback Home red / Away blue)
        - Next Turn (one actor), Next Round, Auto, Finish
     """
 
@@ -99,7 +98,7 @@ class MatchState(BaseState):
         self._started = False
 
         # Will be set in _decide_team_colors()
-        self._color_for_tid: Dict[int, Tuple[int,int,int]] = {0: COLOR_RED, 1: COLOR_BLUE}
+        self._color_for_tid: Dict[int, Tuple[int, int, int]] = {0: COLOR_RED, 1: COLOR_BLUE}
 
         # teams as TBTeam objects
         self._teams_by_tid: Dict[int, TBTeam] = {}
@@ -183,7 +182,6 @@ class MatchState(BaseState):
             elif at == user_tid:
                 self._color_for_tid = {ht: COLOR_BLUE, at: COLOR_RED}
             else:
-                # user isn't in this match? keep Home=red/Away=blue
                 self._color_for_tid = {ht: COLOR_RED, at: COLOR_BLUE}
         else:
             self._color_for_tid = {ht: COLOR_RED, at: COLOR_BLUE}
@@ -283,7 +281,7 @@ class MatchState(BaseState):
                 parts.append(f"{k}={v}")
             return ", ".join(parts)
 
-        # fallback: try to replace indices with names
+        # fallback: replace indices with names where possible
         import re as _re
         s = str(e)
         def repl(m):
@@ -345,7 +343,6 @@ class MatchState(BaseState):
         if len(set(coords)) <= 2:
             if _layout_teams_tiles: _layout_teams_tiles(fs, _GRID_W, _GRID_H)
             else:
-                # fallback spreads by team_id 0/1
                 tids = {int(getattr(f,"team_id",0)) for f in fs}
                 if len(tids) == 2:
                     ht, at = sorted(list(tids))[:2]
@@ -595,7 +592,7 @@ class MatchState(BaseState):
             y = int(getattr(f, "y", getattr(f, "ty", 0)))
             per_tile[(x,y)].append(f)
 
-        # offsets for up to 4 fighters; beyond 4, stack on last position
+        # small visual offsets for up to 4 fighters; engine also prevents stacking now
         def offsets(n: int) -> List[Tuple[float,float]]:
             if n <= 1: return [(0.0, 0.0)]
             if n == 2: return [(-0.22, 0.0), (0.22, 0.0)]
@@ -629,7 +626,7 @@ class MatchState(BaseState):
                 name_full = str(getattr(f, "name", getattr(f, "pid", "F")))
                 name_disp = _short_name(name_full)
 
-                # smaller text as requested
+                # smaller name as requested
                 name_size = 14 if len(flist) <= 2 else 12
                 draw_text(surf, name_disp, (dot_cx, name_y), name_size, self.theme.text, align="center")
 
