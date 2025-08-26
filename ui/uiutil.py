@@ -1,133 +1,142 @@
-# ui/uiutil.py
+# ui/uiutil.py — tiny UI kit: Theme, Button, ListView, text/panel helpers
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Tuple, Optional, List
-
+from typing import Callable, List, Optional, Tuple
 import pygame
-import pygame.freetype as ft
+import pygame.freetype
 
-# --- Fonts & text (freetype-based, Windows-safe) -----------------------------
+# --------------- FONTS ---------------
 
-_font_cache: dict[int, ft.Font] = {}
+_FONT_CACHE: dict[int, pygame.freetype.Font] = {}
 
-def _ensure_init():
-    if not pygame.get_init():
-        pygame.init()
-    if not ft.get_init():
-        ft.init()
+def get_font(size: int) -> pygame.freetype.Font:
+    """Cached freetype font (system default)."""
+    if size not in _FONT_CACHE:
+        # SysFont(None, size) picks a default; stable in headless and Windows
+        _FONT_CACHE[size] = pygame.freetype.SysFont(None, size)
+        # Slightly tighter baseline for crisper UI text
+        _FONT_CACHE[size].pad = True
+    return _FONT_CACHE[size]
 
-def get_font(size: int) -> ft.Font:
-    _ensure_init()
-    size = int(size)
-    f = _font_cache.get(size)
-    if f is None:
-        # Default font via freetype is far more robust than SysFont on Windows
-        _font_cache[size] = f = ft.Font(None, size)
-    return f
+
+# --------------- THEME ---------------
+
+class Theme:
+    """Centralized colors used across screens."""
+    def __init__(self):
+        # Background and panels
+        self.bg: Tuple[int, int, int]     = (20, 22, 26)
+        self.panel: Tuple[int, int, int]  = (34, 37, 44)
+
+        # Text
+        self.text: Tuple[int, int, int]   = (230, 230, 236)
+        self.subt: Tuple[int, int, int]   = (168, 173, 182)
+
+        # Accents
+        self.accent: Tuple[int, int, int] = (70, 110, 190)   # selection / primary
+        self.accent2: Tuple[int, int, int]= (90, 130, 210)
+
+        # List row highlight fill
+        self.sel_row: Tuple[int, int, int]= (70, 110, 190)
+
+        # Buttons
+        self.btn_bg: Tuple[int, int, int] = (52, 56, 64)
+        self.btn_hover: Tuple[int, int, int] = (62, 66, 74)
+        self.btn_text: Tuple[int, int, int]  = self.text
+
+        # Panel borders / grid lines (subtle)
+        self.grid: Tuple[int, int, int] = self.subt
+
+
+# --------------- TEXT/PANEL HELPERS ---------------
 
 def draw_text(
     surf: pygame.Surface,
     text: str,
     pos: Tuple[int, int],
-    size: int = 24,
-    color=(230, 232, 236),
-    align: Optional[str] = None,
+    size: int,
+    color: Tuple[int, int, int],
+    align: str = "center",
 ) -> None:
     """
-    Draw text with optional alignment.
-      align=None or "topleft"  -> pos is top-left (default)
-      align="center"           -> centerx=pos[0], top=pos[1] (headline style)
-      also supports any pygame.Rect anchor: "center","midtop","midleft",
-      "midright","midbottom","topleft","topright","bottomleft","bottomright"
+    Render text using freetype with alignment.
+    align: 'center', 'topleft', 'topright', 'bottomleft', 'bottomright',
+           'midleft', 'midright', 'left', 'right'
+    For 'left'/'right', we anchor at midleft/midright using the given (x,y).
     """
-    font = get_font(size)
-    text = str(text)
+    fnt = get_font(int(size))
+    rect = fnt.get_rect(text)
 
-    # Measure first to position accurately
-    r = font.get_rect(text, size=size)
-
-    if not align or align == "topleft":
-        r.topleft = pos
-    elif align == "center":
-        # Keep prior behavior used across states: centered horizontally, top anchored
-        r.midtop = (pos[0], pos[1])
-    elif hasattr(r, align):
-        setattr(r, align, pos)
+    ax = align.lower()
+    if ax == "left":
+        rect.midleft = pos
+    elif ax == "right":
+        rect.midright = pos
+    elif ax in ("center", "topleft", "topright", "bottomleft", "bottomright", "midleft", "midright"):
+        setattr(rect, ax, pos)
     else:
-        r.topleft = pos
+        rect.center = pos
 
-    font.render_to(surf, r.topleft, text, color, size=size)
+    fnt.render_to(surf, rect.topleft, text, color)
 
-# --- Simple theme ------------------------------------------------------------
 
-@dataclass
-class Theme:
-    bg: Tuple[int, int, int] = (20, 24, 28)
-    panel: Tuple[int, int, int] = (30, 35, 40)
-    panel_border: Tuple[int, int, int] = (50, 55, 60)
-    text: Tuple[int, int, int] = (220, 225, 230)
-    subt: Tuple[int, int, int] = (190, 195, 205)
-    button_bg: Tuple[int, int, int] = (45, 50, 58)
-    button_hover: Tuple[int, int, int] = (65, 72, 84)
-    button_text: Tuple[int, int, int] = (230, 232, 236)
-    sel_row: Tuple[int, int, int] = (55, 60, 75)
+def draw_panel(surf: pygame.Surface, rect: pygame.Rect, theme: Theme, radius: int = 8) -> None:
+    """Rounded panel with a subtle border."""
+    pygame.draw.rect(surf, theme.panel, rect, border_radius=radius)
+    pygame.draw.rect(surf, theme.grid,  rect, width=1, border_radius=radius)
 
-def draw_panel(surf: pygame.Surface, rect: pygame.Rect, theme: Theme) -> None:
-    pygame.draw.rect(surf, theme.panel, rect, border_radius=10)
-    pygame.draw.rect(surf, theme.panel_border, rect, width=2, border_radius=10)
 
-# --- Widgets ----------------------------------------------------------------
+# --------------- BUTTON ---------------
 
 class Button:
-    def __init__(self, rect: pygame.Rect, label: str, on_click: Callable[[], None] | None):
+    def __init__(self, rect: pygame.Rect, label: str, onclick: Callable[[], None] | None = None, *,
+                 font_size: int = 22):
         self.rect = pygame.Rect(rect)
         self.label = label
-        self.on_click = on_click
-        self._hover = False
-        self._pressed = False
-
-    def update(self, mouse_pos) -> None:
-        self._hover = self.rect.collidepoint(mouse_pos)
+        self.onclick = onclick
+        self.enabled = True
+        self.hovered = False
+        self._font_size = font_size
 
     def handle(self, event) -> None:
-        if event.type == pygame.MOUSEMOTION:
-            self._hover = self.rect.collidepoint(event.pos)
-        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            self._hover = self.rect.collidepoint(event.pos)
-            if self._hover:
-                self._pressed = True
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self._hover = self.rect.collidepoint(event.pos)
-            if self._pressed and self._hover and callable(self.on_click):
-                try:
-                    self.on_click()
-                finally:
-                    self._pressed = False
-            else:
-                self._pressed = False
+        if not self.enabled:
+            return
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                if callable(self.onclick):
+                    self.onclick()
+
+    def update(self, mouse_pos: Tuple[int, int]) -> None:
+        self.hovered = self.enabled and self.rect.collidepoint(mouse_pos)
 
     def draw(self, surf: pygame.Surface, theme: Theme) -> None:
-        color = theme.button_hover if self._hover else theme.button_bg
-        pygame.draw.rect(surf, color, self.rect, border_radius=12)
-        pygame.draw.rect(surf, theme.panel_border, self.rect, width=2, border_radius=12)
+        col = theme.btn_hover if self.hovered else theme.btn_bg
+        pygame.draw.rect(surf, col, self.rect, border_radius=10)
+        pygame.draw.rect(surf, theme.grid, self.rect, width=1, border_radius=10)
+        draw_text(
+            surf,
+            self.label,
+            (self.rect.centerx, self.rect.centery),
+            self._font_size,
+            theme.btn_text,
+            align="center",
+        )
 
-        # Centered label via freetype
-        font = get_font(24)
-        r = font.get_rect(self.label)
-        r.center = self.rect.center
-        font.render_to(surf, r.topleft, self.label, theme.button_text)
+
+# --------------- LISTVIEW ---------------
 
 class ListView:
     """
-    Simple scrollable, selectable list.
+    Scrollable, selectable list with reliable clipping and selection.
+    - Pass `on_select(index)` to get click callbacks.
+    - Use `draw(..., top_offset=...)` to leave space for a header you draw outside.
     """
     def __init__(
         self,
         rect: pygame.Rect,
         items: List[str],
         row_h: int = 28,
-        on_select: Callable[[int], None] | None = None
+        on_select: Callable[[int], None] | None = None,
     ):
         self.rect = pygame.Rect(rect)
         self.items = items[:]
@@ -135,6 +144,7 @@ class ListView:
         self.scroll = 0
         self.selected = 0 if items else -1
         self.on_select = on_select
+        self._last_top = self.rect.y + 8  # set during draw()
 
     def set_items(self, items: List[str]):
         self.items = items[:]
@@ -143,35 +153,56 @@ class ListView:
 
     def handle(self, event) -> None:
         if event.type == pygame.MOUSEWHEEL:
-            self.scroll = max(0, self.scroll - event.y * self.row_h)
+            if self.rect.collidepoint(pygame.mouse.get_pos()):
+                self.scroll = max(0, self.scroll - event.y * self.row_h * 3)
+                self._clamp_scroll()
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
-                rel_y = event.pos[1] - self.rect.y + self.scroll
-                idx = rel_y // self.row_h
+                rel_y = event.pos[1] - self._last_top + self.scroll
+                idx = int(rel_y // self.row_h)
                 if 0 <= idx < len(self.items):
-                    self.selected = int(idx)
+                    self.selected = idx
                     if callable(self.on_select):
-                        self.on_select(self.selected)
+                        self.on_select(idx)
 
-    def draw(self, surf: pygame.Surface, theme: Theme, title: str | None = None) -> None:
+    def update(self, _mouse_pos: Optional[Tuple[int, int]] = None) -> None:
+        # Present for API compatibility with states; nothing needed here.
+        pass
+
+    def _clamp_scroll(self) -> None:
+        inner_h = self.rect.h - 16  # symmetric 8px padding top/bottom
+        content_h = len(self.items) * self.row_h
+        max_scroll = max(0, content_h - inner_h)
+        if self.scroll > max_scroll:
+            self.scroll = max_scroll
+        if self.scroll < 0:
+            self.scroll = 0
+
+    def draw(self, surf: pygame.Surface, theme: Theme, *, top_offset: int = 8, font_size: int = 20) -> None:
+        """
+        Draws only the list content area inside `self.rect` (caller draws panel/header).
+        top_offset: pixels from rect.y to start the first row (to leave space for a title).
+        """
+        # Store for click mapping
+        self._last_top = self.rect.y + int(top_offset)
+
+        # Compute inner content rect (clipping)
+        inner_x = self.rect.x + 8
+        inner_y = self._last_top
+        inner_w = self.rect.w - 16
+        inner_h = (self.rect.bottom - 8) - inner_y  # NOTE: height, not bottom-y
+        inner = pygame.Rect(inner_x, inner_y, inner_w, max(0, inner_h))
+
         clip = surf.get_clip()
-        draw_panel(surf, self.rect, theme)
-
-        if title:
-            draw_text(surf, title, (self.rect.centerx, self.rect.y + 6), 20, theme.subt, align="center")
-            top = self.rect.y + 28
-        else:
-            top = self.rect.y + 8
-
-        inner = pygame.Rect(self.rect.x + 8, top, self.rect.w - 16, self.rect.bottom - 8)
         surf.set_clip(inner)
 
-        y = top - self.scroll
+        # Draw rows
+        y = inner_y - self.scroll
         for i, it in enumerate(self.items):
-            row_rect = pygame.Rect(inner.x, y, inner.w, self.row_h)
+            row_rect = pygame.Rect(inner_x, int(y), inner_w, self.row_h)
             if i == self.selected:
                 pygame.draw.rect(surf, theme.sel_row, row_rect, border_radius=6)
-            draw_text(surf, str(it), (row_rect.x + 8, row_rect.y + 5), 20, theme.text)
+            draw_text(surf, str(it), (row_rect.x + 8, row_rect.y + self.row_h // 2), font_size, theme.text, align="left")
             y += self.row_h
 
         surf.set_clip(clip)
