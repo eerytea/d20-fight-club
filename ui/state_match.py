@@ -9,12 +9,11 @@ from typing import Any, Dict, List, Tuple
 from .app import BaseState
 from .uiutil import Theme, Button, draw_text, draw_panel
 
-# Core combat class (should exist on all branches)
 from engine.tbcombat import TBCombat
 
-# --- Optional engine symbols (tolerant to API differences) -------------------
+# Optional engine symbols (tolerant to branch/API differences)
 try:
-    from engine.tbcombat import Team as TBTeam  # preferred
+    from engine.tbcombat import Team as TBTeam
 except Exception:
     @dataclass
     class TBTeam:
@@ -26,7 +25,6 @@ try:
     from engine.tbcombat import fighter_from_dict as _fighter_from_dict
 except Exception:
     def _fighter_from_dict(fd: Dict[str, Any]):
-        """Fallback: turn a plain dict into a fighter-like object."""
         d = dict(fd)
         d.setdefault("pid", str(d.get("pid") or d.get("id") or d.get("name") or "F"))
         d.setdefault("name", str(d.get("name") or d["pid"]))
@@ -51,23 +49,59 @@ except Exception:
 try:
     from engine.tbcombat import GRID_W as _GRID_W, GRID_H as _GRID_H
 except Exception:
-    _GRID_W, _GRID_H = 15, 9  # safe defaults
+    _GRID_W, _GRID_H = 15, 9
 
-# Optional typed events formatter
+# Optional typed events formatter (fallback to robust pretty-printer)
 try:
-    from engine.events import format_event
+    from engine.events import format_event as _format_event
 except Exception:
-    def format_event(e):  # type: ignore
+    _format_event = None  # will use _fmt_event below
+
+
+def _fmt_event(e: Any) -> str:
+    """Best-effort event stringifier: supports dicts, objects, strings."""
+    if _format_event:
+        try:
+            return _format_event(e)
+        except Exception:
+            pass
+    # dict-like typed event
+    if isinstance(e, dict):
+        t = e.get("type") or e.get("event") or "event"
+        # Common shapes
+        if t == "round":
+            return f"— Round {e.get('round', '?')} —"
+        if t in ("start", "StartRound"):
+            return "Start of round"
+        if t in ("move", "Move"):
+            who = e.get("who") or e.get("actor") or "?"
+            to = e.get("to") or (e.get("x"), e.get("y"))
+            return f"{who} moves to {to}"
+        if t in ("hit", "Hit"):
+            who = e.get("who") or e.get("attacker") or "?"
+            tgt = e.get("target") or e.get("defender") or "?"
+            dmg = e.get("dmg") or e.get("damage") or "?"
+            return f"{who} hits {tgt} for {dmg}"
+        if t in ("miss", "Miss"):
+            who = e.get("who") or e.get("attacker") or "?"
+            tgt = e.get("target") or e.get("defender") or "?"
+            return f"{who} misses {tgt}"
+        if t in ("down", "Down"):
+            who = e.get("who") or e.get("target") or "?"
+            return f"{who} is down!"
+        if t in ("end", "End", "finish"):
+            return "End of match"
+        # Fallback pretty dict
+        return ", ".join(f"{k}={v}" for k, v in e.items())
+    # simple strings / repr
+    try:
         return str(e)
+    except Exception:
+        return repr(e)
 
 
 class MatchState(BaseState):
-    """
-    Classic viewer:
-      - Left: grid with fighters (colored dots), names, HP bars
-      - Right: scrolling event log
-      - Bottom buttons: Step, Auto, Finish, Back
-    """
+    """Left grid (fighters + HP), right event log, bottom controls."""
     def __init__(self, app, home_team: Dict[str, Any], away_team: Dict[str, Any]):
         self.app = app
         self.theme = Theme()
@@ -95,20 +129,26 @@ class MatchState(BaseState):
 
         # Log handling
         self.events: List[str] = []
-        self._last_typed_len = 0
-        self._last_str_len = 0
+        # Track how many items we've already harvested from each stream
+        self._last_seen: Dict[str, int] = {
+            "events_typed": 0,
+            "typed_events": 0,
+            "event_log_typed": 0,
+            "events": 0,
+            "log": 0,
+        }
 
-        # Auto settings
-        self._auto_steps_per_update = 256  # fast enough to finish quickly
+        # Auto pacing (kept gentle so you can watch the fight)
+        self._auto_steps_per_update = 12
 
     # --- Lifecycle -----------------------------------------------------------
     def enter(self) -> None:
         self._build_match()
         self._build_ui()
+        self._harvest_new_events()  # show initial round banner if any
 
     # --- Build match from team dicts ----------------------------------------
     def _build_match(self):
-        # Teams
         self.teamA = TBTeam(
             self.home_d["tid"],
             self.home_d.get("name", "Home"),
@@ -120,17 +160,15 @@ class MatchState(BaseState):
             tuple(self.away_d.get("color", (220, 180, 180))),
         )
 
-        # Fighters
         h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
         a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
         self.fighters = [_fighter_from_dict({**fd, "team_id": self.teamA.tid}) for fd in h_roster]
         self.fighters += [_fighter_from_dict({**fd, "team_id": self.teamB.tid}) for fd in a_roster]
 
-        # Place on grid
         if _layout_teams_tiles:
             _layout_teams_tiles(self.fighters, _GRID_W, _GRID_H)
         else:
-            # Fallback: left vs right columns
+            # Fallback layout
             y = 1
             for f in self.fighters:
                 if getattr(f, "team_id", self.teamA.tid) == self.teamA.tid:
@@ -139,56 +177,61 @@ class MatchState(BaseState):
                     f.x, f.y = _GRID_W - 2, y
                 y = 1 if y >= _GRID_H - 2 else y + 2
 
-        # Start combat
         self.combat = TBCombat(self.teamA, self.teamB, self.fighters, _GRID_W, _GRID_H, seed=42)
         self.events.clear()
-        self._last_typed_len = 0
-        self._last_str_len = 0
+        for k in self._last_seen.keys():
+            self._last_seen[k] = 0
 
     # --- UI layout -----------------------------------------------------------
     def _build_ui(self):
         W, H = self.app.width, self.app.height
         self.rect_panel = pygame.Rect(16, 60, W - 32, H - 76)
 
-        # Split: 62% grid / 38% log
         split = int(self.rect_panel.w * 0.62)
-        self.rect_grid = pygame.Rect(
-            self.rect_panel.x + 12,
-            self.rect_panel.y + 12,
-            split - 24,
-            self.rect_panel.h - 84,
-        )
-        self.rect_log = pygame.Rect(
-            self.rect_panel.x + split,
-            self.rect_panel.y + 12,
-            self.rect_panel.w - split - 12,
-            self.rect_panel.h - 84,
-        )
+        self.rect_grid = pygame.Rect(self.rect_panel.x + 12, self.rect_panel.y + 12, split - 24, self.rect_panel.h - 84)
+        self.rect_log = pygame.Rect(self.rect_panel.x + split, self.rect_panel.y + 12, self.rect_panel.w - split - 12, self.rect_panel.h - 84)
 
-        # Buttons along bottom of panel
         btn_w, btn_h, gap = 140, 42, 10
         y = self.rect_panel.bottom - (btn_h + 10)
         x = self.rect_panel.x + 12
-
         self.btn_step = Button(pygame.Rect(x, y, btn_w, btn_h), "Step", self._step)
         x += btn_w + gap
         self.btn_auto = Button(pygame.Rect(x, y, btn_w, btn_h), "Auto: OFF", self._toggle_auto)
         x += btn_w + gap
         self.btn_finish = Button(pygame.Rect(x, y, btn_w, btn_h), "Finish", self._finish)
-
-        # Back on far right
-        self.btn_back = Button(
-            pygame.Rect(self.rect_panel.right - (btn_w + 12), y, btn_w, btn_h),
-            "Back",
-            self._back,
-        )
+        self.btn_back = Button(pygame.Rect(self.rect_panel.right - (btn_w + 12), y, btn_w, btn_h), "Back", self._back)
 
         self._built = True
 
     # --- Buttons / actions ---------------------------------------------------
+    def _advance_once(self) -> None:
+        """Advance the simulation by exactly one step/turn, regardless of engine API."""
+        if not self.combat:
+            return
+        c = self.combat
+        # Try a few common method names in order
+        for name in ("step", "take_turn", "advance", "tick", "update"):
+            fn = getattr(c, name, None)
+            if not callable(fn):
+                continue
+            try:
+                # some APIs take count parameter
+                fn(1)
+                return
+            except TypeError:
+                try:
+                    fn()
+                    return
+                except Exception:
+                    continue
+            except Exception:
+                continue
+        # If we get here, we couldn't advance — fail silently to avoid crashes.
+
     def _step(self):
-        if self.combat and self.combat.winner is None:
-            self._tick_once()
+        if self.combat and getattr(self.combat, "winner", None) is None:
+            self._advance_once()
+            self._harvest_new_events()
 
     def _toggle_auto(self):
         self.auto = not self.auto
@@ -196,50 +239,50 @@ class MatchState(BaseState):
             self.btn_auto.label = f"Auto: {'ON' if self.auto else 'OFF'}"
 
     def _finish(self):
-        """Run to completion with a generous cap to avoid infinite loops."""
-        if not self.combat or self.combat.winner is not None:
+        if not self.combat or getattr(self.combat, "winner", None) is not None:
             return
         for _ in range(20000):
-            if self.combat.winner is not None:
+            if getattr(self.combat, "winner", None) is not None:
                 break
-            self._tick_once()
+            self._advance_once()
+            # harvest occasionally to keep UI responsive
+            if _ % 16 == 0:
+                self._harvest_new_events()
+        self._harvest_new_events()
 
     def _back(self):
         self.app.pop_state()
 
-    # --- Advancing and harvesting events ------------------------------------
-    def _tick_once(self):
-        assert self.combat is not None
-        self.combat.take_turn()
-        self._harvest_new_events()
-
+    # --- Event harvesting ----------------------------------------------------
     def _harvest_new_events(self):
-        """Append only the new events since last harvest."""
+        """Append only new events from any known streams without duplicates."""
         if not self.combat:
             return
 
-        evs_t = getattr(self.combat, "events_typed", None)
-        if evs_t is not None:
-            fresh = evs_t[self._last_typed_len:]
-            if fresh:
-                for e in fresh:
-                    try:
-                        self.events.append(format_event(e))
-                    except Exception:
-                        self.events.append(str(e))
-                self._last_typed_len += len(fresh)
+        streams = [
+            "events_typed",
+            "typed_events",
+            "event_log_typed",
+            "events",
+            "log",
+        ]
+        for attr in streams:
+            evs = getattr(self.combat, attr, None)
+            if isinstance(evs, list):
+                start = self._last_seen.get(attr, 0)
+                fresh = evs[start:]
+                if fresh:
+                    for e in fresh:
+                        try:
+                            self.events.append(_fmt_event(e))
+                        except Exception:
+                            # never crash the log
+                            self.events.append(str(e))
+                    self._last_seen[attr] = start + len(fresh)
 
-        # Legacy string events (if present)
-        evs_s = getattr(self.combat, "events", None)
-        if evs_s is not None and isinstance(evs_s, list):
-            fresh_s = evs_s[self._last_str_len:]
-            if fresh_s:
-                self.events.extend([str(s) for s in fresh_s])
-                self._last_str_len += len(fresh_s)
-
-        # Trim
-        if len(self.events) > 400:
-            self.events = self.events[-400:]
+        # Trim log
+        if len(self.events) > 500:
+            self.events = self.events[-500:]
 
     # --- State interface -----------------------------------------------------
     def handle(self, event) -> None:
@@ -254,18 +297,19 @@ class MatchState(BaseState):
         if not self._built:
             self.enter()
             return
+
         mx, my = pygame.mouse.get_pos()
         self.btn_step.update((mx, my))
         self.btn_auto.update((mx, my))
         self.btn_finish.update((mx, my))
         self.btn_back.update((mx, my))
 
-        if self.auto and self.combat and self.combat.winner is None:
-            # Advance a chunk each frame; usually enough to finish quickly
+        if self.auto and self.combat and getattr(self.combat, "winner", None) is None:
             for _ in range(self._auto_steps_per_update):
-                if self.combat.winner is not None:
+                if getattr(self.combat, "winner", None) is not None:
                     break
-                self._tick_once()
+                self._advance_once()
+            self._harvest_new_events()
 
     # --- Drawing -------------------------------------------------------------
     def draw(self, surf) -> None:
@@ -274,18 +318,16 @@ class MatchState(BaseState):
         th = self.theme
         surf.fill(th.bg)
 
-        # Title
         title = f"{self.home_d.get('name','Home')} vs {self.away_d.get('name','Away')}"
         draw_text(surf, title, (surf.get_width() // 2, 16), 30, th.text, align="center")
 
-        # Panel and sub-panels
         draw_panel(surf, self.rect_panel, th)
         draw_panel(surf, self.rect_grid, th)
         draw_panel(surf, self.rect_log, th)
 
-        # Winner/status
         status_y = self.rect_panel.y + 16
-        if self.combat and self.combat.winner is not None:
+        winner = getattr(self.combat, "winner", None)
+        if winner is not None:
             wmap = {
                 "home": self.home_d.get("name", "Home"),
                 "away": self.away_d.get("name", "Away"),
@@ -293,18 +335,15 @@ class MatchState(BaseState):
                 0: self.home_d.get("name", "Home"),
                 1: self.away_d.get("name", "Away"),
             }
-            wtxt = wmap.get(self.combat.winner, str(self.combat.winner))
+            wtxt = wmap.get(winner, str(winner))
             draw_text(surf, f"Winner: {wtxt}", (self.rect_panel.x + 16, status_y), 22, th.text)
         else:
             draw_text(surf, "Status: Running" if self.auto else "Status: Paused",
                       (self.rect_panel.x + 16, status_y), 22, th.subt)
 
-        # Grid
         self._draw_grid(surf)
-        # Log
         self._draw_log(surf)
 
-        # Buttons
         self.btn_step.draw(surf, th)
         self.btn_auto.draw(surf, th)
         self.btn_finish.draw(surf, th)
@@ -313,17 +352,13 @@ class MatchState(BaseState):
     def _draw_grid(self, surf: pygame.Surface) -> None:
         if not (self.rect_grid and self.fighters):
             return
-
         rg = self.rect_grid
         gw, gh = _GRID_W, _GRID_H
-
-        # cell size
         cell_w = max(12, (rg.w - 12) // gw)
         cell_h = max(12, (rg.h - 12) // gh)
         origin_x = rg.x + (rg.w - cell_w * gw) // 2
         origin_y = rg.y + (rg.h - cell_h * gh) // 2
 
-        # grid lines
         for x in range(gw + 1):
             X = origin_x + x * cell_w
             pygame.draw.line(surf, self.theme.panel_border, (X, origin_y), (X, origin_y + gh * cell_h), 1)
@@ -331,13 +366,11 @@ class MatchState(BaseState):
             Y = origin_y + y * cell_h
             pygame.draw.line(surf, self.theme.panel_border, (origin_x, Y), (origin_x + gw * cell_w, Y), 1)
 
-        # draw fighters
         for f in self.fighters:
             x, y = int(getattr(f, "x", 0)), int(getattr(f, "y", 0))
             cx = origin_x + x * cell_w + cell_w // 2
             cy = origin_y + y * cell_h + cell_h // 2
 
-            # color by team; dim if down
             team_id = getattr(f, "team_id", self.teamA.tid if self.teamA else 0)
             base = (
                 self.teamA.color if self.teamA and team_id == self.teamA.tid
@@ -347,16 +380,13 @@ class MatchState(BaseState):
             alive = bool(getattr(f, "alive", True))
             color = base if alive else (110, 110, 110)
 
-            # dot
             radius = max(6, min(cell_w, cell_h) // 3)
             pygame.draw.circle(surf, color, (cx, cy), radius)
             pygame.draw.circle(surf, self.theme.panel_border, (cx, cy), radius, 1)
 
-            # name
             name = str(getattr(f, "name", getattr(f, "pid", "F")))
             draw_text(surf, name, (cx, cy + radius + 2), 16, self.theme.text, align="center")
 
-            # HP bar
             hp = max(0, int(getattr(f, "hp", 0)))
             mh = max(1, int(getattr(f, "max_hp", max(hp, 1))))
             bar_w = max(24, cell_w - 6)
@@ -372,16 +402,14 @@ class MatchState(BaseState):
         rl = self.rect_log
         if not rl:
             return
-        # Title
         draw_text(surf, "Event Log", (rl.centerx, rl.y + 6), 20, self.theme.subt, align="center")
 
-        # Clip inside
         clip = surf.get_clip()
         inner = pygame.Rect(rl.x + 8, rl.y + 28, rl.w - 16, rl.h - 36)
         surf.set_clip(inner)
 
         y = inner.y
-        for line in self.events[-200:]:
+        for line in self.events[-220:]:
             draw_text(surf, line, (inner.x + 4, y), 18, self.theme.text)
             y += 20
 
