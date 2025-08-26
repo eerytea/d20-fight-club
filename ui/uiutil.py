@@ -5,28 +5,25 @@ from dataclasses import dataclass
 from typing import Callable, Tuple, Optional, List
 
 import pygame
+import pygame.freetype as ft
 
-# --- Fonts & text ------------------------------------------------------------
+# --- Fonts & text (freetype-based, Windows-safe) -----------------------------
 
-_font_cache: dict[int, pygame.font.Font] = {}
+_font_cache: dict[int, ft.Font] = {}
 
-def _ensure_font_init():
+def _ensure_init():
     if not pygame.get_init():
         pygame.init()
-    if not pygame.font.get_init():
-        pygame.font.init()
+    if not ft.get_init():
+        ft.init()
 
-def get_font(size: int) -> pygame.font.Font:
-    """
-    Use the built-in default font (None) for maximum Windows stability.
-    Avoid SysFont registry scans which can trigger heap issues on Windows.
-    """
-    _ensure_font_init()
+def get_font(size: int) -> ft.Font:
+    _ensure_init()
     size = int(size)
     f = _font_cache.get(size)
     if f is None:
-        # Default font is safer than SysFont on some Windows setups
-        _font_cache[size] = f = pygame.font.Font(None, size)
+        # Default font via freetype is far more robust than SysFont on Windows
+        _font_cache[size] = f = ft.Font(None, size)
     return f
 
 def draw_text(
@@ -40,25 +37,27 @@ def draw_text(
     """
     Draw text with optional alignment.
       align=None or "topleft"  -> pos is top-left (default)
-      align="center"           -> centerx=pos[0], top=pos[1]
-      also supports any pygame.Rect anchor name:
-        "center","midtop","midleft","midright","midbottom",
-        "topleft","topright","bottomleft","bottomright"
+      align="center"           -> centerx=pos[0], top=pos[1] (headline style)
+      also supports any pygame.Rect anchor: "center","midtop","midleft",
+      "midright","midbottom","topleft","topright","bottomleft","bottomright"
     """
     font = get_font(size)
-    img = font.render(str(text), True, color)
-    r = img.get_rect()
+    text = str(text)
+
+    # Measure first to position accurately
+    r = font.get_rect(text, size=size)
 
     if not align or align == "topleft":
         r.topleft = pos
     elif align == "center":
+        # Keep prior behavior used across states: centered horizontally, top anchored
         r.midtop = (pos[0], pos[1])
     elif hasattr(r, align):
         setattr(r, align, pos)
     else:
         r.topleft = pos
 
-    surf.blit(img, r)
+    font.render_to(surf, r.topleft, text, color, size=size)
 
 # --- Simple theme ------------------------------------------------------------
 
@@ -92,7 +91,6 @@ class Button:
         self._hover = self.rect.collidepoint(mouse_pos)
 
     def handle(self, event) -> None:
-        # Keep hover accurate even if update() hasn't run yet this frame
         if event.type == pygame.MOUSEMOTION:
             self._hover = self.rect.collidepoint(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -113,11 +111,12 @@ class Button:
         color = theme.button_hover if self._hover else theme.button_bg
         pygame.draw.rect(surf, color, self.rect, border_radius=12)
         pygame.draw.rect(surf, theme.panel_border, self.rect, width=2, border_radius=12)
-        # Centered label
+
+        # Centered label via freetype
         font = get_font(24)
-        img = font.render(self.label, True, theme.button_text)
-        r = img.get_rect(center=self.rect.center)
-        surf.blit(img, r)
+        r = font.get_rect(self.label)
+        r.center = self.rect.center
+        font.render_to(surf, r.topleft, self.label, theme.button_text)
 
 class ListView:
     """
@@ -157,14 +156,13 @@ class ListView:
     def draw(self, surf: pygame.Surface, theme: Theme, title: str | None = None) -> None:
         clip = surf.get_clip()
         draw_panel(surf, self.rect, theme)
-        # Optional title
+
         if title:
             draw_text(surf, title, (self.rect.centerx, self.rect.y + 6), 20, theme.subt, align="center")
             top = self.rect.y + 28
         else:
             top = self.rect.y + 8
 
-        # viewport
         inner = pygame.Rect(self.rect.x + 8, top, self.rect.w - 16, self.rect.bottom - 8)
         surf.set_clip(inner)
 
