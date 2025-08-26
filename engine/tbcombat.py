@@ -1,9 +1,8 @@
 # engine/tbcombat.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Optional, Iterable
+from typing import List, Tuple, Dict, Optional
 import random
-import math
 
 # Global grid defaults (UI also uses 11×11 as the common baseline)
 GRID_W = 11
@@ -58,7 +57,7 @@ def fighter_from_dict(d: Dict) -> Fighter:
         x=int(d.get("x", d.get("tx", 0))),
         y=int(d.get("y", d.get("ty", 0))),
         tx=int(d.get("tx", d.get("x", 0))),
-        ty:int(d.get("ty", d.get("y", 0))),
+        ty=int(d.get("ty", d.get("y", 0))),  # <-- fixed keyword
         hp=int(d.get("hp", d.get("max_hp", 10))),
         max_hp=int(d.get("max_hp", d.get("hp", 10))),
         ac=int(d.get("ac", 10)),
@@ -78,7 +77,6 @@ def layout_teams_tiles(fighters: List[Fighter], W: int, H: int) -> None:
     t0 = [f for f in fighters if f.team_id == 0]
     t1 = [f for f in fighters if f.team_id == 1]
 
-    # space vertically
     def positions(xs: int, count: int) -> List[Coord]:
         if count <= 0:
             return []
@@ -182,7 +180,7 @@ class TBCombat:
                     x, y = sx + dx, sy + dy
                     if self._in_bounds(x, y) and (x, y) not in occ:
                         return (x, y)
-        # as absolute fallback
+        # fallback
         for y in range(self.GRID_H):
             for x in range(self.GRID_W):
                 if (x, y) not in occ:
@@ -200,7 +198,6 @@ class TBCombat:
                            min(self.GRID_H-1, max(0, f.y))))
                 xy = f.pos
             if xy in seen:
-                # move this fighter to nearest free
                 nx, ny = self._nearest_free(xy)
                 f.set_pos((nx, ny))
             else:
@@ -221,7 +218,7 @@ class TBCombat:
         a_alive = any(f.alive and f.team_id == 0 for f in self.fighters)
         b_alive = any(f.alive and f.team_id == 1 for f in self.fighters)
         if not a_alive and not b_alive:
-            self.winner = None  # draw
+            self.winner = None
             self.typed_events.append({"type": "end"})
         elif not a_alive:
             self.winner = 1
@@ -231,7 +228,6 @@ class TBCombat:
             self.typed_events.append({"type": "end"})
 
     def _advance_index(self) -> None:
-        # move to next alive actor; if we looped, new round
         n = len(self._order)
         for _ in range(n):
             self._idx = (self._idx + 1) % n
@@ -242,7 +238,6 @@ class TBCombat:
                     self._round += 1
                     self._emit_round()
                 return
-        # nobody alive on either side ends game
         self._emit_end_if_finished()
 
     def _award_xp(self, fighter: Fighter, amount: int = 1) -> None:
@@ -252,7 +247,6 @@ class TBCombat:
         except Exception:
             pass
 
-    # movement try: one step toward target if free
     def _try_step_toward(self, actor: Fighter, target: Fighter) -> bool:
         ax, ay = actor.x, actor.y
         tx, ty = target.x, target.y
@@ -261,13 +255,10 @@ class TBCombat:
         dx = 1 if tx > ax else (-1 if tx < ax else 0)
         dy = 1 if ty > ay else (-1 if ty < ay else 0)
 
-        # prefer axis that reduces distance most
         if dx != 0:
             cand.append((ax + dx, ay))
         if dy != 0:
             cand.append((ax, ay + dy))
-
-        # add simple alternatives
         cand.extend([(ax+1, ay), (ax-1, ay), (ax, ay+1), (ax, ay-1)])
 
         occ = set(self.occupied.keys())
@@ -276,13 +267,12 @@ class TBCombat:
                 actor.set_pos((nx, ny))
                 self.typed_events.append({"type": "move", "name": actor.name, "to": (nx, ny)})
                 return True
-        # blocked
         return False
 
     def _attack(self, attacker: Fighter, defender: Fighter) -> None:
-        # very simple d20 vs AC
+        # very simple d20 vs AC proxy
         roll = self.rng.randint(1, 20)
-        hit = roll >= max(5, int(defender.ac) // 2 + 5)  # keep hit rate reasonable
+        hit = roll >= max(5, int(defender.ac) // 2 + 5)
         if hit:
             dmg = max(1, self.rng.randint(1, 6))
             defender.hp = max(0, defender.hp - dmg)
@@ -291,9 +281,8 @@ class TBCombat:
             if defender.hp <= 0 and defender.alive:
                 defender.alive = False
                 self.typed_events.append({"type": "down", "name": defender.name})
-                # >>> Award XP to attacker on down (fixes unit test) <<<
+                # award XP to attacker on down (fixes unit test)
                 self._award_xp(attacker, 1)
-                # ensure tile is now free (defender disappears)
                 self._emit_end_if_finished()
         else:
             self.typed_events.append({"type": "miss", "name": attacker.name,
@@ -305,6 +294,12 @@ class TBCombat:
             return None
         foes.sort(key=lambda f: (self._distance(actor.pos, f.pos), f.pid))
         return foes[0]
+
+    def _distance(self, a: Coord, b: Coord) -> int:
+        return abs(a[0]-b[0]) + abs(a[1]-b[1])
+
+    def _adjacent(self, a: Coord, b: Coord) -> bool:
+        return self._distance(a, b) == 1
 
     def take_turn(self) -> None:
         """Perform one atomic action for the current actor."""
@@ -335,7 +330,6 @@ class TBCombat:
                 # blocked: no-op turn to avoid deadlock but still advance
                 self.typed_events.append({"type": "move", "name": actor.name, "to": actor.pos})
 
-        # advance to next actor, maybe new round
         self._advance_index()
 
     # historical alias some UIs called
