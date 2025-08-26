@@ -1,4 +1,4 @@
-# ui/state_match.py — aligned to project framework + lineup + accurate HP bars
+# ui/state_match.py — larger grid, collision-free lineup, accurate HP bars
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -7,13 +7,10 @@ import pygame
 from .app import BaseState
 from .uiutil import Theme, Button, draw_panel, draw_text, get_font
 
-# Source of truth for grid size
-try:
-    from core.config import GRID_W, GRID_H
-except Exception:
-    GRID_W, GRID_H = 15, 9
+# Use larger grid in this viewer (we can move this to core.config later if you want it global)
+GRID_W, GRID_H = 19, 11
 
-# Engine public API
+# Engine API (re-exported in engine/__init__.py)
 from engine import TBCombat, Team, fighter_from_dict
 
 
@@ -79,13 +76,11 @@ def _wrap_lines(text: str, font, max_w: int) -> List[str]:
 
 
 def _choose_events(obj: Any) -> List[Dict[str, Any]]:
-    # engine preferred
     for attr in ("events_typed", "typed_events", "events", "_events"):
         if hasattr(obj, attr):
             ev = getattr(obj, attr)
             if isinstance(ev, list):
                 return ev
-    # dict wrapper fallback
     if isinstance(obj, dict):
         for k in ("events_typed", "typed_events", "events", "_events"):
             v = obj.get(k)
@@ -93,7 +88,6 @@ def _choose_events(obj: Any) -> List[Dict[str, Any]]:
                 return v
         obj["typed_events"] = []
         return obj["typed_events"]
-    # last resort: attach to object
     try:
         setattr(obj, "typed_events", [])
         return getattr(obj, "typed_events")
@@ -101,40 +95,112 @@ def _choose_events(obj: Any) -> List[Dict[str, Any]]:
         return []
 
 
+# ---------- Lineup helpers (no initial overlaps) ----------
+
+def _ring_positions(cx: int, cy: int, r: int):
+    # Generate ring coordinates around (cx,cy) for radius r in a deterministic order
+    for dx in range(-r, r + 1):
+        yield cx + dx, cy - r
+        yield cx + dx, cy + r
+    for dy in range(-r + 1, r):
+        yield cx - r, cy + dy
+        yield cx + r, cy + dy
+
+
+def _nearest_free_on_side(start: Tuple[int, int], used: set, w: int, h: int, side: int) -> Tuple[int, int]:
+    sx, sy = start
+    sx = max(0, min(w - 1, sx))
+    sy = max(0, min(h - 1, sy))
+    # Keep placement on each team's half if we can
+    mid = w // 2
+    def on_side(x):
+        return x < mid if side == 0 else x >= mid
+
+    if (sx, sy) not in used and on_side(sx):
+        return sx, sy
+    # Expand search
+    maxr = max(w, h) + 2
+    for r in range(1, maxr):
+        for x, y in _ring_positions(sx, sy, r):
+            if 0 <= x < w and 0 <= y < h and (x, y) not in used and on_side(x):
+                return x, y
+    # If we must, allow crossing sides as a last resort
+    for r in range(1, maxr):
+        for x, y in _ring_positions(sx, sy, r):
+            if 0 <= x < w and 0 <= y < h and (x, y) not in used:
+                return x, y
+    return sx, sy
+
+
 def _lineup_teams_tiles(fighters: List[Any], grid_w: int, grid_h: int) -> None:
     """
-    Deterministic, non-overlapping lineup:
-      - Team 0 (left) columns at x = 2, 4
-      - Team 1 (right) columns at x = grid_w-3, grid_w-5
-      - Rows y = 1,3,5,... (clamped to grid)
-    Sets f.tx, f.ty for each fighter.
+    Deterministic, non-overlapping lineup with as many columns as needed.
+
+    Team 0: x = 2, 4, 6, ... (stays on the left half)
+    Team 1: x = w-3, w-5, w-7, ... (stays on the right half)
+    Rows prefer odd indices (1,3,5,...) then even (0,2,4,...) if needed.
+    Writes BOTH (tx,ty) AND (x,y) to avoid any transient overlap.
     """
     team0 = [f for f in fighters if getattr(f, "team_id", 0) == 0]
     team1 = [f for f in fighters if getattr(f, "team_id", 0) == 1]
 
-    def place_line(fs: List[Any], cols: List[int]):
-        y_positions = list(range(1, max(2, grid_h - 1), 2))
-        col_idx = 0
-        y_idx = 0
-        for f in fs:
-            if y_idx >= len(y_positions):
-                y_idx = 0
-                col_idx = min(col_idx + 1, len(cols) - 1)
-            x = max(0, min(grid_w - 1, cols[col_idx]))
-            y = max(0, min(grid_h - 1, y_positions[y_idx]))
-            setattr(f, "tx", int(x))
-            setattr(f, "ty", int(y))
-            y_idx += 1
+    def y_rows(h: int) -> List[int]:
+        odds = list(range(1, h, 2))
+        evens = list(range(0, h, 2))
+        rows = odds + evens
+        # Avoid very top/bottom edges if possible
+        return [y for y in rows if 0 <= y < h]
 
-    left_cols = [2, 4]
-    right_cols = [grid_w - 3, grid_w - 5]
-    place_line(team0, left_cols)
-    place_line(team1, right_cols)
+    rows = y_rows(grid_h)
+    cap_per_col = max(1, len(rows))
+
+    def columns_for_side(side: int) -> List[int]:
+        if side == 0:
+            cols = list(range(2, grid_w // 2, 2))  # 2,4,6,... up to left half
+        else:
+            cols = list(range(grid_w - 3, grid_w // 2 - 1, -2))  # w-3,w-5,... down to right half
+        # Ensure at least one column per side
+        return cols if cols else ([1] if side == 0 else [grid_w - 2])
+
+    def place_group(fs: List[Any], side: int):
+        cols = columns_for_side(side)
+        need_cols = (len(fs) + cap_per_col - 1) // cap_per_col
+        if need_cols > len(cols):
+            # If we run out of spaced columns, extend by stepping 1
+            if side == 0:
+                extra = [x for x in range(cols[-1] + 1, grid_w // 2)]
+            else:
+                extra = [x for x in range(cols[-1] - 1, grid_w // 2 - 1, -1)]
+            cols = cols + extra
+
+        used = set()
+        c_idx = 0
+        r_idx = 0
+        for f in fs:
+            if r_idx >= len(rows):
+                r_idx = 0
+                c_idx += 1
+            if c_idx >= len(cols):
+                c_idx = len(cols) - 1  # clamp, we’ll spill vertically and then search nearest
+            cx, cy = cols[c_idx], rows[r_idx]
+            x, y = _nearest_free_on_side((cx, cy), used, grid_w, grid_h, side)
+            used.add((x, y))
+            # write both desired and actual
+            for k, v in (("tx", x), ("ty", y), ("x", x), ("y", y)):
+                try:
+                    setattr(f, k, v)
+                except Exception:
+                    if isinstance(f, dict):
+                        f[k] = v
+            r_idx += 1
+
+    place_group(team0, 0)
+    place_group(team1, 1)
 
 
 class MatchState(BaseState):
     """
-    Season Hub calls: MatchState(app, tH_dict, tA_dict)
+    Season Hub calls: MatchState(app, home_team_dict, away_team_dict)
     Also accepts: MatchState(app, combat_obj [, None])
     """
 
@@ -157,7 +223,7 @@ class MatchState(BaseState):
         self._auto_timer = 0.0
         self._auto_period = 0.20
 
-        # Create or accept engine
+        # Accept TBCombat directly or build from team dicts
         if isinstance(home_or_engine, TBCombat):
             self.engine = home_or_engine
         elif away is None and isinstance(home_or_engine, dict) and "combat" in home_or_engine:
@@ -165,7 +231,7 @@ class MatchState(BaseState):
         else:
             self.engine = self._build_engine_from_teams(home_or_engine, away)
 
-        # Ensure fighters all carry max_hp for accurate bars
+        # Fighters & max_hp guard (for HP bars)
         self._fighters = getattr(self.engine, "fighters", [])
         for f in self._fighters:
             if not hasattr(f, "max_hp"):
@@ -180,12 +246,11 @@ class MatchState(BaseState):
         # Log
         self.log_lines: List[str] = []
         self._ev_idx = 0
-        self._log_line_h = 22  # set after fonts built
+        self._log_line_h = 22
         self.log_scroll = 0
 
     # --- engine construction ---
     def _build_engine_from_teams(self, home: dict, away: dict) -> TBCombat:
-        # Convert team dicts → Team objects and Fighter objects
         nameH = str(home.get("name", "Home"))
         nameA = str(away.get("name", "Away"))
         colH = tuple(home.get("color", (220, 64, 64)))
@@ -202,18 +267,12 @@ class MatchState(BaseState):
             setattr(f, "team_id", 1)
         fighters = fH + fA
 
-        # Initial lineup (tx,ty)
+        # Place everyone neatly; assigns both (tx,ty) and (x,y) with no duplicates.
         _lineup_teams_tiles(fighters, GRID_W, GRID_H)
 
-        # Pre-set max_hp for accurate bars; engine will leave it alone
-        for f in fighters:
-            if not hasattr(f, "max_hp"):
-                setattr(f, "max_hp", int(getattr(f, "hp", 1)))
-
-        # Seed: attempt to derive from names for stability
+        # Seed derived from names for determinism between same teams
         seed = (hash(nameH) ^ (hash(nameA) << 1)) & 0xFFFFFFFF
 
-        # Build engine (it will copy tx/ty → x/y if x/y are None and fix collisions)
         return TBCombat(teamA, teamB, fighters, GRID_W, GRID_H, seed=seed)
 
     # --- state lifecycle ---
@@ -236,7 +295,6 @@ class MatchState(BaseState):
         if not self._layout_built:
             self._build_layout()
 
-        # button hovers
         mx, my = pygame.mouse.get_pos()
         for b in (self.btn_next_turn, self.btn_next_round, self.btn_auto, self.btn_finish):
             if b is not None:
@@ -255,12 +313,10 @@ class MatchState(BaseState):
             self._build_layout()
         surf.fill(self.theme.bg)
 
-        # panels
         draw_panel(surf, self._grid_rect, self.theme)
         draw_panel(surf, self._side_rect, self.theme)
         draw_panel(surf, self._btn_rect, self.theme)
 
-        # fighters
         for f in self._fighters:
             alive = getattr(f, "alive", True)
             hp = getattr(f, "hp", 0)
@@ -273,10 +329,8 @@ class MatchState(BaseState):
             max_hp = int(getattr(f, "max_hp", hp))
             self._draw_fighter(surf, x, y, name, tid, hp, max_hp)
 
-        # log
         self._draw_log(surf)
 
-        # buttons
         for b in (self.btn_next_turn, self.btn_next_round, self.btn_auto, self.btn_finish):
             if b is not None:
                 b.draw(surf, self.theme)
@@ -285,16 +339,16 @@ class MatchState(BaseState):
     def _build_layout(self) -> None:
         W, H = self.app.width, self.app.height
         pad = 12
-        sidebar_w = 300          # narrower to enlarge grid area
-        btn_h = 56               # a bit shorter to give grid more height
+        sidebar_w = 300
+        btn_h = 56
 
         self._grid_rect = pygame.Rect(pad, pad, W - sidebar_w - pad * 3, H - btn_h - pad * 2)
         self._side_rect = pygame.Rect(self._grid_rect.right + pad, pad, sidebar_w, self._grid_rect.height)
         self._btn_rect = pygame.Rect(pad, self._grid_rect.bottom + pad, W - pad * 2, btn_h)
 
-        # grid cell sizes
-        self._cell_w = max(26, self._grid_rect.w // int(getattr(self.engine, "GRID_W", GRID_W)))
-        self._cell_h = max(26, self._grid_rect.h // int(getattr(self.engine, "GRID_H", GRID_H)))
+        # cell sizes for 19x11 look
+        self._cell_w = max(26, self._grid_rect.w // GRID_W)
+        self._cell_h = max(26, self._grid_rect.h // GRID_H)
 
         # fonts
         tile_h = self._cell_h
@@ -324,18 +378,15 @@ class MatchState(BaseState):
 
     def _draw_fighter(self, surf, gx: int, gy: int, name: str, tid: int, hp: int, max_hp: int):
         r = self._cell_rect(gx, gy)
-        # dot
         color = (220, 64, 64) if tid == 0 else (64, 110, 220)
         dot = min(r.w, r.h) // 4 + 4
         pygame.draw.circle(surf, color, (r.centerx, r.top + dot + 4), dot)
 
-        # name
         nm = _short_name(name)
         txt_rect = self._font_name.get_rect(nm)
         txt_rect.midtop = (r.centerx, r.top + dot * 2 + 6)
         self._font_name.render_to(surf, txt_rect.topleft, nm, self.theme.text)
 
-        # HP bar
         denom = max(1, int(max_hp))
         frac = max(0.0, min(1.0, float(hp) / float(denom)))
         bar_w = int(r.w * 0.9)
@@ -352,10 +403,8 @@ class MatchState(BaseState):
         pad = 10
         inner = self._side_rect.inflate(-2 * pad, -2 * pad)
         y = inner.y - self.log_scroll
-        # clip
         clip = surf.get_clip()
         surf.set_clip(inner)
-        # draw lines
         for line in self.log_lines:
             self._font_log.render_to(surf, (inner.x, y), line, self.theme.text)
             y += self._log_line_h
@@ -466,7 +515,7 @@ class MatchState(BaseState):
         return 1
 
 
-# Back-compat: also export create() and alias
+# Back-compat
 def create(app, *args, **kwargs) -> MatchState:
     return MatchState(app, *args, **kwargs)
 
