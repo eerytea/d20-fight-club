@@ -1,7 +1,7 @@
 # ui/state_season_hub.py — Season hub focused on weekly matchups + clear "Your Team" header
 from __future__ import annotations
 
-from typing import Optional, List
+from typing import Optional
 
 import pygame
 
@@ -73,7 +73,7 @@ class SeasonHubState(BaseState):
         x = self.rect_buttons.x
         y = self.rect_buttons.y
         btns = []
-        for i, (lab, fn) in enumerate(zip(labels, handlers)):
+        for lab, fn in zip(labels, handlers):
             btns.append(Button(pygame.Rect(x, y, bw, self.rect_buttons.h), lab, fn))
             x += bw + gap
 
@@ -119,7 +119,7 @@ class SeasonHubState(BaseState):
                 kills_home = 0
                 kills_away = 0
                 if eng and hasattr(eng, "fighters"):
-                    # In our MatchState._build_engine_from_teams we set home team_id=0, away team_id=1
+                    # In MatchState._build_engine_from_teams we set home team_id=0, away team_id=1
                     fighters = list(getattr(eng, "fighters"))
                     kills_home = sum(1 for f in fighters if getattr(f, "team_id", 0) == 1 and not getattr(f, "alive", True))
                     kills_away = sum(1 for f in fighters if getattr(f, "team_id", 0) == 0 and not getattr(f, "alive", True))
@@ -197,9 +197,9 @@ class SeasonHubState(BaseState):
         draw_panel(surf, self.rect_toolbar, th)
         user_name = self._user_team_name()
         week = getattr(self.career, "week", 1)
-        # Left side: Back is in bottom buttons; toolbar shows title info
-        draw_text(surf, f"Your Team: {user_name}", (self.rect_toolbar.x + 12, self.rect_toolbar.centery), 26, th.text, align="left")
-        draw_text(surf, f"Week {week}", (self.rect_toolbar.right - 12, self.rect_toolbar.centery), 26, th.subt, align="right")
+        # Use valid Rect anchors: midleft / midright
+        draw_text(surf, f"Your Team: {user_name}", (self.rect_toolbar.x + 12, self.rect_toolbar.centery), 26, th.text, align="midleft")
+        draw_text(surf, f"Week {week}", (self.rect_toolbar.right - 12, self.rect_toolbar.centery), 26, th.subt, align="midright")
 
         # Optional flash/status line right under toolbar
         if self._flash:
@@ -213,11 +213,17 @@ class SeasonHubState(BaseState):
         draw_text(surf, "This Week's Matchups", (self.rect_panel.centerx, y), 22, th.text, align="center")
         y += 30
 
-        fixtures = self._week_fixtures()
+        fixtures = list(self._week_fixtures())
         if not fixtures:
             draw_text(surf, "No fixtures scheduled.", (x, y), 20, th.subt)
         else:
             user_tid = getattr(self.career, "user_team_id", None)
+
+            # Sort so the user's fixture, if present, appears first
+            def _is_user_fx(fx) -> int:
+                return 0 if (user_tid is not None and (fx.home_id == user_tid or fx.away_id == user_tid)) else 1
+            fixtures.sort(key=_is_user_fx)
+
             for fx in fixtures:
                 hn = _team_name(self.career, fx.home_id)
                 an = _team_name(self.career, fx.away_id)
@@ -233,7 +239,7 @@ class SeasonHubState(BaseState):
                 # Emphasize the user's matchup
                 if is_user:
                     line = "▶  " + line
-                    color = th.accent if hasattr(th, "accent") else color
+                    color = getattr(th, "accent", color)
 
                 draw_text(surf, line, (x, y), 20, color)
                 y += 24
