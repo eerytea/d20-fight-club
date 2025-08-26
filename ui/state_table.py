@@ -1,4 +1,4 @@
-# ui/state_table.py
+# ui/state_table.py — show real team names from career.teams
 from __future__ import annotations
 
 import pygame
@@ -9,20 +9,24 @@ from core.standings import table_rows_sorted
 
 
 def _get(r, keys, default=0):
-    """Support dict-like or attribute-like rows and multiple key aliases."""
     if isinstance(keys, str):
         keys = (keys,)
-    # dict?
     if isinstance(r, dict):
         for k in keys:
             if k in r:
-                return r[k]
+                return r.get(k, default)
         return default
-    # object with attrs?
     for k in keys:
         if hasattr(r, k):
             return getattr(r, k)
     return default
+
+
+def _team_name(career, tid: int) -> str:
+    try:
+        return next(t.get("name", f"Team {tid}") for t in career.teams if int(t.get("tid")) == int(tid))
+    except StopIteration:
+        return f"Team {tid}"
 
 
 class TableState(BaseState):
@@ -30,20 +34,17 @@ class TableState(BaseState):
         self.app = app
         self.career = career
         self.theme = Theme()
-        self._built = False
-
-        self.btn_back = None
-        self.rect_panel = None
+        self.btn_back: Button | None = None
+        self.rect_panel = pygame.Rect(0, 0, 0, 0)
 
     def enter(self) -> None:
-        self._build_ui()
+        self._build()
 
-    def _build_ui(self):
+    def _build(self) -> None:
         W, H = self.app.width, self.app.height
-        self.rect_panel = pygame.Rect(16, 60, W - 32, H - 76)
-        btn_w, btn_h = 140, 42
-        self.btn_back = Button(pygame.Rect(self.rect_panel.right - (btn_w + 12), self.rect_panel.bottom - (btn_h + 10), btn_w, btn_h), "Back", self._back)
-        self._built = True
+        pad = 16
+        self.rect_panel = pygame.Rect(pad, pad + 50, W - pad * 2, H - (pad * 2 + 50))
+        self.btn_back = Button(pygame.Rect(self.rect_panel.right - 160, self.rect_panel.bottom + 8, 160, 44), "Back", self._back)
 
     def _back(self):
         self.app.pop_state()
@@ -61,19 +62,15 @@ class TableState(BaseState):
         draw_text(surf, "Standings", (surf.get_width() // 2, 16), 30, th.text, align="center")
         draw_panel(surf, self.rect_panel, th)
 
-        # Rows normalized from standings helper
         rows = table_rows_sorted(self.career.table, self.career.h2h)
 
-        # Header
         x0, y = self.rect_panel.x + 12, self.rect_panel.y + 14
         draw_text(surf, "Pos  Team                 P  W  D  L   K  KD  PTS", (x0, y), 20, th.subt)
         y += 26
 
         for i, r in enumerate(rows, start=1):
-            # Team name
             tid = _get(r, ("tid", "team_id", "id"))
-            name = (self.career.team_names[tid] if hasattr(self.career, "team_names") and 0 <= tid < len(self.career.team_names)
-                    else str(tid))
+            name = _team_name(self.career, tid)
 
             PL = _get(r, ("PL", "played", "P"))
             W  = _get(r, ("W", "wins"))
