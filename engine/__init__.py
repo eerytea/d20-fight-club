@@ -1,40 +1,13 @@
 # engine/__init__.py
-# engine package marker
-"""
-Public API for the engine package.
+from .tbcombat import TBCombat, Team, fighter_from_dict
 
-We lazily expose:
-- TBCombat                (from engine.tbcombat)
-- Team, Fighter, Weapon,
-  fighter_from_dict       (from engine.model)
-- layout_teams_tiles      (from engine.grid)
+# --- Back-compat shim for tests that call TBCombat.take_turn() ---
+# Your engine's public step method is step_action(); older tests call take_turn().
+# Attach a method alias at import time so both names work.
+if not hasattr(TBCombat, "take_turn"):
+    def _take_turn(self):
+        # Advance one atomic action; mirrors step_action()
+        return self.step_action()
+    setattr(TBCombat, "take_turn", _take_turn)
 
-Using lazy exports avoids circular import issues during package import.
-"""
-
-__all__ = [
-    "TBCombat",
-    "Team",
-    "Fighter",
-    "Weapon",
-    "fighter_from_dict",
-    "layout_teams_tiles",
-]
-
-def __getattr__(name: str):
-    if name == "TBCombat":
-        from . import tbcombat as _tb
-        return _tb.TBCombat
-
-    if name in ("Team", "Fighter", "Weapon", "fighter_from_dict"):
-        from . import model as _model
-        return getattr(_model, name)
-
-    if name == "layout_teams_tiles":
-        from . import grid as _grid
-        return _grid.layout_teams_tiles
-
-    raise AttributeError(f"module 'engine' has no attribute {name!r}")
-
-def __dir__():
-    return sorted(__all__)
+__all__ = ["TBCombat", "Team", "fighter_from_dict"]
