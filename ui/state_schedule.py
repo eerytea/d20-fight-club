@@ -1,112 +1,133 @@
-# ui/state_schedule.py — visible Back + Prev/Next in a fixed top toolbar
+# ui/state_schedule.py — clean, left-aligned matchups with clipping
 from __future__ import annotations
-
+from typing import List, Dict, Any, Tuple
 import pygame
 
 from .app import BaseState
-from .uiutil import Theme, Button, draw_text, draw_panel
+from .uiutil import Theme, Button, draw_panel, draw_text, get_font
 
-try:
-    from core.types import Fixture
-except Exception:
-    Fixture = object  # type: ignore
+# ---- helpers ---------------------------------------------------------------
 
+def _team_name_map(career) -> Dict[int, str]:
+    m: Dict[int, str] = {}
+    for t in getattr(career, "teams", []) or []:
+        if isinstance(t, dict):
+            tid = int(t.get("tid", -1)); nm = str(t.get("name", f"Team {tid}"))
+        else:
+            tid = int(getattr(t, "tid", -1)); nm = str(getattr(t, "name", f"Team {tid}"))
+        if tid >= 0: m[tid] = nm
+    return m
 
-def _team_name(career, tid: int) -> str:
-    try:
-        return next(t.get("name", f"Team {tid}") for t in career.teams if int(t.get("tid")) == int(tid))
-    except StopIteration:
-        return f"Team {tid}"
+def _fixtures_for_week(career, week_idx: int) -> List[Tuple[int, int]]:
+    """
+    Return list of (home_tid, away_tid) or (a,b). Tries several shapes.
+    """
+    # 1) explicit helper
+    if hasattr(career, "fixtures_for_week"):
+        try:
+            out = career.fixtures_for_week(week_idx)
+            if out: return [(int(a), int(b)) for (a,b) in out]
+        except Exception:
+            pass
+    # 2) schedule attr (list or dict)
+    sched = getattr(career, "schedule", None)
+    if sched is not None:
+        try:
+            wk = sched[week_idx] if isinstance(sched, list) else sched.get(week_idx, [])
+        except Exception:
+            wk = []
+        pairs: List[Tuple[int, int]] = []
+        for f in wk or []:
+            if isinstance(f, dict):
+                a = f.get("home_tid", f.get("home", f.get("a", None)))
+                b = f.get("away_tid", f.get("away", f.get("b", None)))
+            else:
+                try:
+                    a, b = f
+                except Exception:
+                    a = b = None
+            if a is not None and b is not None:
+                pairs.append((int(a), int(b)))
+        if pairs: return pairs
+    # 3) fallback none
+    return []
 
+# ---- state -----------------------------------------------------------------
 
 class ScheduleState(BaseState):
-    def __init__(self, app, career):
+    def __init__(self, app, career, week_index: int):
         self.app = app
-        self.theme = Theme()
         self.career = career
+        self.week_index = week_index
+        self.theme = Theme()
 
-        self.week_idx = int(getattr(career, "week", 1))
         self.rect_toolbar = pygame.Rect(0, 0, 0, 0)
-        self.rect_panel = pygame.Rect(0, 0, 0, 0)
+        self.rect_panel   = pygame.Rect(0, 0, 0, 0)
 
         self.btn_back: Button | None = None
         self.btn_prev: Button | None = None
         self.btn_next: Button | None = None
 
-        self._built = False
+        self.f_title = get_font(36)
+        self.f_row   = get_font(28)
 
     def enter(self) -> None:
-        self._build()
+        self._layout()
 
-    # --- UI ---
-    def _build(self):
+    def _layout(self) -> None:
         W, H = self.app.width, self.app.height
         pad = 16
-        toolbar_h = 56
-
+        toolbar_h = 74
         self.rect_toolbar = pygame.Rect(pad, pad, W - pad * 2, toolbar_h)
-        self.rect_panel   = pygame.Rect(pad, self.rect_toolbar.bottom + pad, W - pad * 2, H - (self.rect_toolbar.bottom + pad * 2))
+        self.rect_panel   = pygame.Rect(pad, self.rect_toolbar.bottom + pad, W - pad * 2, H - (toolbar_h + pad * 3))
 
-        bw, bh = 140, 44
-        yb = self.rect_toolbar.y + (self.rect_toolbar.h - bh) // 2
+        bw, bh = 160, 46
+        by = self.rect_toolbar.y + (self.rect_toolbar.h - bh) // 2
+        self.btn_back = Button(pygame.Rect(self.rect_toolbar.x, by, bw, bh), "Back", self._back)
+        self.btn_prev = Button(pygame.Rect(self.rect_toolbar.right - (bw * 2 + 12), by, bw, bh), "Prev Week", self._prev)
+        self.btn_next = Button(pygame.Rect(self.rect_toolbar.right - bw, by, bw, bh), "Next Week", self._next)
 
-        # Back on the left; Prev/Next on the right
-        self.btn_back = Button(pygame.Rect(self.rect_toolbar.x, yb, bw, bh), "Back", self._back)
+    def _back(self) -> None: self.app.pop_state()
+    def _prev(self) -> None: self.week_index = max(0, self.week_index - 1)
+    def _next(self) -> None: self.week_index = self.week_index + 1
 
-        right_x = self.rect_toolbar.right
-        self.btn_next = Button(pygame.Rect(right_x - bw, yb, bw, bh), "Next Week", self._next)
-        self.btn_prev = Button(pygame.Rect(right_x - bw*2 - 8, yb, bw, bh), "Prev Week", self._prev)
-
-        self._built = True
-
-    def _back(self):
-        self.app.pop_state()
-
-    def _prev(self):
-        self.week_idx = max(1, self.week_idx - 1)
-
-    def _next(self):
-        self.week_idx = min(self.week_idx + 1, 999)
-
-    # --- pygame loop hooks ---
     def handle(self, event) -> None:
-        if not self._built:
-            return
-        self.btn_back.handle(event)
-        self.btn_prev.handle(event)
-        self.btn_next.handle(event)
+        self.btn_back.handle(event); self.btn_prev.handle(event); self.btn_next.handle(event)
 
     def update(self, dt: float) -> None:
-        if not self._built:
-            return
-        mx, my = pygame.mouse.get_pos()
-        self.btn_back.update((mx, my))
-        self.btn_prev.update((mx, my))
-        self.btn_next.update((mx, my))
+        mp = pygame.mouse.get_pos()
+        self.btn_back.update(mp); self.btn_prev.update(mp); self.btn_next.update(mp)
 
     def draw(self, surf) -> None:
         th = self.theme
         surf.fill(th.bg)
 
-        # Toolbar
+        # toolbar
         draw_panel(surf, self.rect_toolbar, th)
-        draw_text(surf, f"Schedule — Week {self.week_idx}", (self.rect_toolbar.centerx, self.rect_toolbar.centery), 26, th.text, align="center")
-        self.btn_back.draw(surf, th)
-        self.btn_prev.draw(surf, th)
-        self.btn_next.draw(surf, th)
+        title = f"Schedule — Week {self.week_index + 1}"
+        tr = self.f_title.get_rect(title); tr.center = self.rect_toolbar.center
+        self.f_title.render_to(surf, tr.topleft, title, th.text)
+        self.btn_back.draw(surf, th); self.btn_prev.draw(surf, th); self.btn_next.draw(surf, th)
 
-        # Content
+        # list panel
         draw_panel(surf, self.rect_panel, th)
-        y = self.rect_panel.y + 14
-        week_fx = [fx for fx in getattr(self.career, "fixtures", []) if int(getattr(fx, "week", 0)) == int(self.week_idx)]
-        if not week_fx:
-            draw_text(surf, "No fixtures this week.", (self.rect_panel.x + 12, y), 20, th.subt)
-        else:
-            for fx in week_fx:
-                hn = _team_name(self.career, fx.home_id)
-                an = _team_name(self.career, fx.away_id)
-                status = "vs"
-                if getattr(fx, "played", False):
-                    status = f"{getattr(fx, 'kills_home', 0)}-{getattr(fx, 'kills_away', 0)}"
-                draw_text(surf, f"{hn} {status} {an}", (self.rect_panel.x + 12, y), 20, th.text)
-                y += 24
+        inner = self.rect_panel.inflate(-20, -20)
+
+        # clipping
+        clip = surf.get_clip(); surf.set_clip(inner)
+
+        # names + fixtures
+        name_by_tid = _team_name_map(self.career)
+        fixtures = _fixtures_for_week(self.career, self.week_index)
+
+        y = inner.y + 8
+        lh = max(30, int(self.f_row.height * 1.25))
+        for (a, b) in fixtures:
+            left  = name_by_tid.get(int(a), f"Team {a}")
+            right = name_by_tid.get(int(b), f"Team {b}")
+            line = f"{left}  vs  {right}"
+            # STRICT top-left anchor so it never creeps off the panel
+            self.f_row.render_to(surf, (inner.x + 10, y), line, th.text)
+            y += lh
+
+        surf.set_clip(clip)
