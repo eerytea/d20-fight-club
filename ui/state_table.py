@@ -1,20 +1,63 @@
-# ui/state_table.py — 9×21 grid, fonts reduced slightly to fit the panel
+# ui/state_table.py — standings table with grid lines and better name fallback
 from __future__ import annotations
 from typing import Dict, List, Any, Tuple
 import pygame
 
 from .app import BaseState
-from .uiutil import Theme, Button, draw_panel, get_font
+from .uiutil import Theme, Button, draw_panel, get_font, draw_text
 
+
+def _get(obj: Any, key: str, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+def _safe_int(v, default: int = -1) -> int:
+    try:
+        if v is None: return default
+        return int(v)
+    except Exception:
+        return default
+
+def _team_id_from(obj: Any, default: int = -1) -> int:
+    for k in ("tid", "team_id", "id", "index"):
+        val = _get(obj, k, None)
+        if val is not None:
+            try:
+                return int(val)
+            except Exception:
+                pass
+    return default
+
+def _name_from(obj: Any, default: str = "Team") -> str:
+    for k in ("name", "full_name", "display_name", "abbr", "short"):
+        v = _get(obj, k, None)
+        if v:
+            return str(v)
+    return default
 
 def _team_name_map(career) -> Dict[int, str]:
     m: Dict[int, str] = {}
+    if hasattr(career, "team_name"):
+        for t in getattr(career, "teams", []) or []:
+            tid = _team_id_from(t, -1)
+            if tid >= 0:
+                try: m[tid] = str(career.team_name(tid))
+                except Exception: pass
+    if m:
+        return m
+
     for t in getattr(career, "teams", []) or []:
-        if isinstance(t, dict):
-            tid = int(t.get("tid", -1)); nm = str(t.get("name", f"Team {tid}"))
-        else:
-            tid = int(getattr(t, "tid", -1)); nm = str(getattr(t, "name", f"Team {tid}"))
-        if tid >= 0: m[tid] = nm
+        tid = _team_id_from(t, -1)
+        nm = _name_from(t, f"Team {tid}")
+        if tid >= 0:
+            m[tid] = nm
+
+    tn = getattr(career, "team_names", None)
+    if isinstance(tn, dict):
+        for k, v in tn.items():
+            try: m[int(k)] = str(v)
+            except Exception: pass
     return m
 
 def _rows_from_career(career) -> List[Dict[str, Any]]:
@@ -33,29 +76,43 @@ def _rows_from_career(career) -> List[Dict[str, Any]]:
     if not rows_raw:
         # Safe fallback
         teams = getattr(career, "teams", []) or []
-        return [{"tid": int(_t.get("tid", -1) if isinstance(_t, dict) else getattr(_t, "tid", -1)),
-                 "name": str(_t.get("name", "Team") if isinstance(_t, dict) else getattr(_t, "name", "Team")),
+        return [{"tid": _team_id_from(_t, -1),
+                 "name": name_by_tid.get(_team_id_from(_t, -1), _name_from(_t, "Team")),
                  "P": 0, "W": 0, "D": 0, "L": 0, "K": 0, "KD": 0, "PTS": 0}
                 for _t in teams]
 
     norm: List[Dict[str, Any]] = []
     for r in rows_raw:
-        tid = int(r.get("tid", r.get("id", -1)))
-        P   = int(r.get("P",   r.get("PL", r.get("played", 0))))
-        W   = int(r.get("W",   r.get("wins", 0)))
-        PTS = int(r.get("PTS", r.get("points", 0)))
-        GF  = int(r.get("GF",  r.get("K", r.get("for", 0))))
-        GA  = int(r.get("GA",  r.get("against", 0)))
-        GD  = int(r.get("GD",  r.get("KD", GF - GA)))
-        D   = int(r.get("D", max(0, PTS - 3*W)))
-        L   = int(r.get("L", max(0, P - W - D)))
-        name = r.get("name") or name_by_tid.get(tid, f"Team {tid}")
-        norm.append({"tid": tid, "name": name, "P": P, "W": W, "D": D, "L": L, "K": GF, "KD": GD, "PTS": PTS})
+        tid = _safe_int(r.get("tid", r.get("id", _get(r, "tid", -1))), -1)
+        name = r.get("name") or r.get("team") or name_by_tid.get(tid, f"Team {tid}")
+        P   = _safe_int(r.get("P", r.get("PL", r.get("played", r.get("Gp", 0)))), 0)
+        W   = _safe_int(r.get("W", r.get("wins", 0)), 0)
+        D   = _safe_int(r.get("D", r.get("draws", r.get("ties", 0))), 0)
+        L   = _safe_int(r.get("L", r.get("losses", 0)), 0)
+        GF  = _safe_int(r.get("K", r.get("GF", r.get("for", 0))), 0)
+        GA  = _safe_int(r.get("GA", r.get("against", 0)), 0)
+        KD  = _safe_int(r.get("KD", r.get("GD", GF - GA)), GF - GA)
+        PTS = _safe_int(r.get("PTS", r.get("points", 3*W + D)), 3*W + D)
+        norm.append({"tid": tid, "name": name, "P": P, "W": W, "D": D, "L": L, "K": GF, "KD": KD, "PTS": PTS})
     return norm
+
+def _ellipsize(font, text: str, max_w: int) -> str:
+    if not text:
+        return ""
+    t = text
+    # freetype.Font.get_rect works without specifying size
+    while font.get_rect(t).width > max_w and len(t) > 1:
+        t = t[:-1]
+    if t != text and len(t) >= 1:
+        if len(t) > 1:
+            t = t[:-1] + "…"
+        else:
+            t = "…"
+    return t
 
 
 class TableState(BaseState):
-    """Fixed 9 columns × 21 rows (1 header + 20 teams), slightly smaller fonts."""
+    """Fixed 9 columns × 21 rows (1 header + 20 teams)."""
     def __init__(self, app, career):
         self.app = app
         self.career = career
@@ -66,9 +123,9 @@ class TableState(BaseState):
 
         self.btn_back: Button | None = None
 
-        self.f_title = get_font(26)  # down 2
-        self.f_hdr   = get_font(20)  # down 2
-        self.f_cell  = get_font(18)  # down 2
+        self.f_title = get_font(26)
+        self.f_hdr   = get_font(20)
+        self.f_cell  = get_font(18)
 
     def enter(self) -> None:
         self._layout()
@@ -108,84 +165,91 @@ class TableState(BaseState):
         draw_panel(surf, self.rect_panel, th)
         inner = self.rect_panel.inflate(-24, -24)
 
-        ROWS = 21  # header + 20
-        COLS = 9
-        # Give a tad more breathing room than before
-        row_h = max(21, (inner.h - 4) // ROWS)
+        # Data
+        rows = _rows_from_career(self.career)
+        # ensure max 20 teams visually (header + 20 rows)
+        rows = rows[:20]
 
-        # Fonts scaled off row_h, then nudged down 1
+        # Grid metrics
+        ROWS = 1 + len(rows)  # header + teams
+        COLS = 9
+        row_h = max(21, (inner.h - 4) // max(ROWS, 1))
+
+        # Font sizing to fit comfortably
         self.f_hdr  = get_font(max(16, min(24, int(row_h * 0.82))) - 1)
         self.f_cell = get_font(max(14, min(22, int(row_h * 0.78))) - 1)
 
+        # Column widths
         fixed_cols: List[Tuple[str, int, str]] = [
             ("Pos", 54, "right"),
-            ("P",   42, "right"),
-            ("W",   42, "right"),
-            ("D",   42, "right"),
-            ("L",   42, "right"),
-            ("K",   50, "right"),
-            ("KD",  58, "right"),
-            ("PTS", 60, "right"),
+            ("P",   44, "right"),
+            ("W",   44, "right"),
+            ("D",   44, "right"),
+            ("L",   44, "right"),
+            ("K",   54, "right"),
+            ("KD",  60, "right"),
+            ("PTS", 66, "right"),
         ]
         fixed_w = sum(w for _, w, _ in fixed_cols)
-        team_w  = max(150, inner.w - fixed_w)
+        team_w  = max(160, inner.w - fixed_w)
         columns = [("Pos", 54, "right"), ("Team", team_w, "left")] + fixed_cols[1:]
 
+        # Column x positions
         xs = [inner.x]
         for _, w, _ in columns:
             xs.append(xs[-1] + w)
 
-        grid = th.grid
+        # Colors
+        grid_color = getattr(th, "grid", (72, 72, 72))
         line_w = 1
 
+        # Draw header background
         header_rect = pygame.Rect(inner.x, inner.y, inner.w, row_h)
         pygame.draw.rect(surf, th.panel, header_rect)
+
+        # Header labels
         headers = ["Pos", "Team", "P", "W", "D", "L", "K", "KD", "PTS"]
-        for i, (name, w, align) in enumerate(columns):
-            cell = pygame.Rect(xs[i], header_rect.y, w, row_h)
-            txt = headers[i]
-            r = self.f_hdr.get_rect(txt)
-            if name == "Team":     r.topleft  = (cell.x + 10, cell.y + (row_h - r.height)//2)
-            elif align == "right": r.topright = (cell.right - 10, cell.y + (row_h - r.height)//2)
-            else:                  r.center   = cell.center
-            self.f_hdr.render_to(surf, r.topleft, txt, th.text)
+        for ci, (label, width, align) in enumerate(columns):
+            cx = xs[ci]
+            cell_rect = pygame.Rect(cx, inner.y, width, row_h)
+            text_pos = (cell_rect.right - 6, cell_rect.centery) if align == "right" else (cell_rect.x + 6, cell_rect.centery)
+            draw_text(surf, headers[ci], text_pos, self.f_hdr.size, th.text, align="midright" if align == "right" else "midleft")
 
-        for x in xs:
-            pygame.draw.line(surf, grid, (x, header_rect.top), (x, header_rect.bottom), line_w)
-        pygame.draw.line(surf, grid, (header_rect.left, header_rect.bottom), (header_rect.right, header_rect.bottom), line_w)
+        # Horizontal line below header
+        pygame.draw.line(surf, grid_color, (inner.x, inner.y + row_h), (inner.right, inner.y + row_h), line_w)
 
-        y = header_rect.bottom
-        rows = _rows_from_career(self.career)[:20]
-        while len(rows) < 20:
-            rows.append({"name": "—", "P":0,"W":0,"D":0,"L":0,"K":0,"KD":0,"PTS":0})
+        # Team rows
+        for ri, r in enumerate(rows):
+            y = inner.y + row_h * (ri + 1)
+            # grid line for each row
+            pygame.draw.line(surf, grid_color, (inner.x, y + row_h), (inner.right, y + row_h), line_w)
 
-        for idx, row in enumerate(rows, start=1):
-            row_rect = pygame.Rect(inner.x, y, inner.w, row_h)
-            for i, (name, w, align) in enumerate(columns):
-                cell = pygame.Rect(xs[i], row_rect.y, w, row_h)
-                if name == "Pos":
-                    txt = f"{idx}."
-                elif name == "Team":
-                    txt = str(row.get("name", "—"))
-                    if self.f_cell.get_rect(txt).width > w - 14:
-                        s = txt
-                        while s and self.f_cell.get_rect(s + "…").width > w - 14:
-                            s = s[:-1]
-                        txt = (s + "…") if s else "…"
+            pos = ri + 1
+            name = str(r.get("name", f"Team {r.get('tid', ri)}"))
+            P = r.get("P", 0); W = r.get("W", 0); D = r.get("D", 0); L = r.get("L", 0)
+            K = r.get("K", 0); KD = r.get("KD", 0); PTS = r.get("PTS", 0)
+
+            vals = [pos, name, P, W, D, L, K, KD, PTS]
+            # draw cells
+            for ci, (col, width, align) in enumerate(columns):
+                cx = xs[ci]
+                rect = pygame.Rect(cx, y, width, row_h)
+                if ci == 1:  # Team col, ellipsize
+                    t = _ellipsize(self.f_cell, str(vals[ci]), width - 12)
+                    posxy = (rect.x + 6, rect.centery)
+                    draw_text(surf, t, posxy, self.f_cell.size, th.text, align="midleft")
                 else:
-                    txt = str(row.get(name, 0))
+                    t = str(vals[ci])
+                    posxy = (rect.right - 6, rect.centery) if align == "right" else (rect.x + 6, rect.centery)
+                    draw_text(surf, t, posxy, self.f_cell.size, th.text, align="midright" if align == "right" else "midleft")
 
-                r = self.f_cell.get_rect(txt)
-                if name == "Team":     r.topleft  = (cell.x + 10, cell.y + (row_h - r.height)//2)
-                elif align == "right": r.topright = (cell.right - 10, cell.y + (row_h - r.height)//2)
-                else:                  r.center   = cell.center
-                self.f_cell.render_to(surf, r.topleft, txt, th.text)
+        # Vertical grid lines
+        for xi in xs:
+            pygame.draw.line(surf, grid_color, (xi, inner.y), (xi, inner.y + row_h * ROWS), line_w)
 
-            pygame.draw.line(surf, grid, (row_rect.left, row_rect.bottom), (row_rect.right, row_rect.bottom), line_w)
-            y += row_h
+        # Outer border
+        pygame.draw.rect(surf, grid_color, pygame.Rect(inner.x, inner.y, inner.w, row_h * ROWS), line_w)
 
-        body_top = header_rect.bottom
-        body_bottom = header_rect.bottom + 20 * row_h
-        for x in xs:
-            pygame.draw.line(surf, grid, (x, body_top), (x, body_bottom), line_w)
-        pygame.draw.rect(surf, grid, inner, 1, border_radius=6)
+
+def create(app, career):
+    return TableState(app, career)
