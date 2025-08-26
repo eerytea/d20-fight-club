@@ -2,167 +2,183 @@
 from __future__ import annotations
 
 import pygame
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any, Optional
+import random
+
+from .app import BaseState
+from .uiutil import Theme, Button, ListView, draw_text, draw_panel
+
+# Core bits
 from core.config import LEAGUE_TEAMS, TEAM_SIZE, DEFAULT_SEED
 from core.career import Career
-from core.rng import child_seed
-
-try:
-    from .uiutil import Theme, Button, ListView, draw_panel, draw_text
-except Exception:
-    class Theme:
-        def __init__(self):
-            self.bg = (20, 24, 28)
-            self.panel = (32, 36, 44)
-            self.btn_bg = (50, 55, 64)
-            self.btn_bg_hover = (70, 75, 84)
-            self.btn_text = (240, 240, 245)
-        @staticmethod
-        def default(): return Theme()
-    def draw_panel(surf, rect, title=None):
-        pygame.draw.rect(surf, (32, 36, 44), rect, border_radius=8)
-        if title:
-            font = pygame.font.SysFont(None, 20)
-            surf.blit(font.render(title, True, (220,220,225)), (rect.x + 10, rect.y + 8))
-    def draw_text(surf, text, pos, size=18, color=(230,230,235)):
-        font = pygame.font.SysFont(None, size)
-        surf.blit(font.render(text, True, color), pos)
-    class Button:
-        def __init__(self, rect: pygame.Rect, text: str, on_click):
-            self.rect = pygame.Rect(rect); self.text = text; self.on_click = on_click
-            self._hover = False; self._font = pygame.font.SysFont(None, 22)
-        def handle_event(self, ev):
-            if ev.type == pygame.MOUSEMOTION: self._hover = self.rect.collidepoint(ev.pos)
-            elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
-                if self.rect.collidepoint(ev.pos) and callable(self.on_click): self.on_click()
-        def draw(self, surf):
-            pygame.draw.rect(surf, (70,75,84) if self._hover else (50,55,64), self.rect, border_radius=8)
-            txt = self._font.render(self.text, True, (240,240,245)); surf.blit(txt, txt.get_rect(center=self.rect.center))
-    class ListView:
-        def __init__(self, rect: pygame.Rect, items: List[str], on_select=None, row_height: int = 28):
-            self.rect = pygame.Rect(rect); self.items = items[:]; self.on_select = on_select
-            self.row_height = row_height; self.selected = 0 if items else -1; self.scroll = 0
-            self._font = pygame.font.SysFont(None, 20)
-        def set_items(self, items: List[str]):
-            self.items = items[:]; self.selected = 0 if items else -1; self.scroll = 0
-        def handle_event(self, ev):
-            if ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
-                if ev.button == 1:
-                    idx = (ev.pos[1] - self.rect.y) // self.row_height + self.scroll
-                    if 0 <= idx < len(self.items):
-                        self.selected = idx
-                        if callable(self.on_select): self.on_select(idx)
-                elif ev.button in (4,5):
-                    if ev.button == 4: self.scroll = max(0, self.scroll - 1)
-                    else:
-                        max_scroll = max(0, len(self.items) - self.rect.height // self.row_height)
-                        self.scroll = min(max_scroll, self.scroll + 1)
-        def draw(self, surf):
-            pygame.draw.rect(surf, (30,34,40), self.rect, border_radius=8)
-            visible = self.rect.height // self.row_height
-            start = self.scroll; end = min(len(self.items), start + visible); y = self.rect.y
-            for i in range(start, end):
-                r = pygame.Rect(self.rect.x + 2, y + 2, self.rect.w - 4, self.row_height - 4)
-                if i == self.selected: pygame.draw.rect(surf, (55,60,75), r, border_radius=6)
-                surf.blit(self._font.render(str(self.items[i]), True, (230,230,235)), (r.x + 8, r.y + 4)); y += self.row_height
 
 
-class RosterBrowserState:
+class RosterBrowserState(BaseState):
+    """
+    Simple two-pane browser:
+      - Left: list of teams
+      - Right: roster preview for the selected team
+    Bottom right has "Generate All" (regenerates rosters) and "Back".
+    """
+
     def __init__(self, app):
         self.app = app
-        self.theme: Theme = Theme.default() if hasattr(Theme, "default") else Theme()
-        self.screen = app.screen
-        self.W, self.H = self.screen.get_size()
+        self.theme = Theme()
+        self._built = False
 
-        self._seed_counter = 0
-        self._build_league(self._derive_seed("init"))
+        # Data
+        self.preview_career: Optional[Career] = None
+        self.teams: List[Dict[str, Any]] = []
+        self.team_names: List[str] = []
+        self.sel_idx: int = 0
 
-        self.selected_team_index: int = 0
+        # UI
+        self.rect_left: pygame.Rect | None = None
+        self.rect_right: pygame.Rect | None = None
+
+        self.teams_lv: ListView | None = None
+        self.btn_generate: Button | None = None
+        self.btn_back: Button | None = None
+
+    # --- Lifecycle -----------------------------------------------------------
+    def enter(self) -> None:
+        self._rebuild_data()
         self._build_ui()
 
-    def _derive_seed(self, label: str) -> int:
-        if hasattr(self.app, "derive_seed") and callable(getattr(self.app, "derive_seed")):
-            return int(self.app.derive_seed(f"roster:{label}:{self._seed_counter}"))
-        return child_seed(DEFAULT_SEED, f"roster:{label}:{self._seed_counter}")
-
-    def _build_league(self, seed: int):
-        career = Career.new(seed=seed, n_teams=LEAGUE_TEAMS, team_size=TEAM_SIZE, user_team_id=None)
-        self.teams: List[Dict[str, Any]] = career.teams
+    # --- Data ----------------------------------------------------------------
+    def _rebuild_data(self) -> None:
+        # Build a preview league (safe for smoke tests and interactive browsing)
+        self.preview_career = Career.new(
+            seed=DEFAULT_SEED,
+            n_teams=LEAGUE_TEAMS,
+            team_size=TEAM_SIZE,
+            user_team_id=None,
+        )
+        self.teams = self.preview_career.teams
         self.team_names = [t.get("name", f"Team {t.get('tid', i)}") for i, t in enumerate(self.teams)]
+        self.sel_idx = 0 if self.team_names else -1
 
-    def _regenerate(self):
-        self._seed_counter += 1
-        self._build_league(self._derive_seed("regen"))
-        self._refresh_lists()
-
-    def _build_ui(self):
+    # --- UI ------------------------------------------------------------------
+    def _build_ui(self) -> None:
+        W, H = self.app.width, self.app.height
         pad = 16
-        col_w = (self.W - pad * 3) // 2
-        left_x = pad
-        right_x = left_x + col_w + pad
+        col_w = (W - pad * 3) // 2
 
-        self.rect_left = pygame.Rect(left_x, pad, col_w, self.H - pad * 2)
-        self.rect_right = pygame.Rect(right_x, pad, col_w, self.H - pad * 2)
+        self.rect_left = pygame.Rect(pad, pad, col_w, H - pad * 2)
+        self.rect_right = pygame.Rect(self.rect_left.right + pad, pad, col_w, H - pad * 2)
 
-        team_list_rect = pygame.Rect(self.rect_left.x + 12, self.rect_left.y + 36, self.rect_left.w - 24, self.rect_left.h - 48)
-        self.lv_teams = ListView(team_list_rect, self.team_names, on_select=self._on_pick_team)
+        # List of teams on the left
+        self.teams_lv = ListView(
+            pygame.Rect(self.rect_left.x + 10, self.rect_left.y + 34, self.rect_left.w - 20, self.rect_left.h - 44),
+            self.team_names,
+            row_h=28,
+            on_select=self._on_pick_team,
+        )
 
-        roster_rect = pygame.Rect(self.rect_right.x + 12, self.rect_right.y + 36, self.rect_right.w - 24, self.rect_right.h - 100)
-        self.lv_roster = ListView(roster_rect, self._format_roster_lines(self.teams[self.selected_team_index]))
+        # Buttons (bottom-right, inside right panel)
+        btn_w, btn_h, gap = 180, 42, 10
+        yb = self.rect_right.bottom - (btn_h + 12)
+        self.btn_generate = Button(pygame.Rect(self.rect_right.x + 12, yb, btn_w, btn_h), "Generate All", self._generate_all)
+        self.btn_back = Button(pygame.Rect(self.rect_right.right - (btn_w + 12), yb, btn_w, btn_h), "Back", self._back)
 
-        btn_w, btn_h = 160, 40
-        btn_y = self.rect_right.bottom - (btn_h + 16)
+        self._built = True
 
-        self.btn_generate = Button(pygame.Rect(self.rect_right.x + 12, btn_y, btn_w, btn_h), "Generate", self._regenerate)
-        self.btn_back = Button(pygame.Rect(self.rect_right.right - (btn_w + 12), btn_y, btn_w, btn_h), "Back", self._go_back)
+    # --- Actions -------------------------------------------------------------
+    def _on_pick_team(self, idx: int) -> None:
+        self.sel_idx = int(idx)
 
-    def _refresh_lists(self):
-        self.team_names = [t.get("name", f"Team {t.get('tid', i)}") for i, t in enumerate(self.teams)]
-        self.lv_teams.set_items(self.team_names)
-        self.selected_team_index = 0 if self.teams else -1
-        self.lv_roster.set_items(self._format_roster_lines(self.teams[self.selected_team_index]) if self.selected_team_index >= 0 else [])
+    def _generate_all(self) -> None:
+        """
+        Clear and regenerate every team roster. Keep team names/colors stable,
+        but roll a fresh seed for variety.
+        """
+        try:
+            if self.preview_career is None:
+                self._rebuild_data()
+                return
+            # Roll a new seed but keep current names/colors
+            new_seed = (getattr(self.preview_career, "seed", DEFAULT_SEED) * 1103515245 + 12345) & 0x7fffffff
+            # Some builds name field differently; we capture names/colors directly
+            names = [t.get("name") for t in self.preview_career.teams]
+            colors = [tuple(t.get("color", (180, 180, 220))) for t in self.preview_career.teams]
 
-    def _go_back(self):
-        if hasattr(self.app, "pop_state"):
-            self.app.pop_state()
+            # Create a fresh career with same count/size (new rosters)
+            fresh = Career.new(
+                seed=new_seed,
+                n_teams=len(self.preview_career.teams),
+                team_size=TEAM_SIZE,
+                user_team_id=None,
+                team_names=names if all(isinstance(n, str) for n in names) else None,
+                team_colors=colors if all(isinstance(c, tuple) and len(c) == 3 for c in colors) else None,
+            )
+            self.preview_career = fresh
+            self.teams = fresh.teams
+            self.team_names = [t.get("name", f"Team {t.get('tid', i)}") for i, t in enumerate(self.teams)]
+            if self.teams_lv:
+                self.teams_lv.set_items(self.team_names)
+            self.sel_idx = 0 if self.team_names else -1
+        except Exception as e:
+            print("[RosterBrowser] Generate failed:", e)
 
-    def _on_pick_team(self, idx: int):
-        self.selected_team_index = idx
-        self.lv_roster.set_items(self._format_roster_lines(self.teams[idx]))
+    def _back(self) -> None:
+        self.app.pop_state()
 
-    def _format_roster_lines(self, team: Dict[str, Any]) -> List[str]:
-        roster = team.get("roster") or team.get("fighters") or []
-        out: List[str] = []
-        for f in roster:
+    # --- State interface -----------------------------------------------------
+    def handle(self, event) -> None:
+        if not self._built:
+            return
+        if self.teams_lv:
+            self.teams_lv.handle(event)
+        if self.btn_generate:
+            self.btn_generate.handle(event)
+        if self.btn_back:
+            self.btn_back.handle(event)
+
+    def update(self, dt: float) -> None:
+        if not self._built:
+            self.enter(); return
+        mx, my = pygame.mouse.get_pos()
+        if self.btn_generate:
+            self.btn_generate.update((mx, my))
+        if self.btn_back:
+            self.btn_back.update((mx, my))
+
+    def _draw_team_preview(self, surf: pygame.Surface, rect: pygame.Rect) -> None:
+        if not self.teams or self.sel_idx < 0 or self.sel_idx >= len(self.teams):
+            draw_text(surf, "No team selected.", (rect.centerx, rect.centery), 20, self.theme.subt, align="center")
+            return
+        t = self.teams[self.sel_idx]
+        draw_text(surf, t.get("name", "Team"), (rect.x + 12, rect.y + 34), 22, self.theme.text)
+        roster = t.get("roster") or t.get("fighters") or []
+        y = rect.y + 64
+        for f in roster[:16]:
             nm = f.get("name", "Unknown"); cls = f.get("class", "Fighter")
             lvl = int(f.get("level", 1)); ovr = int(f.get("ovr", 40))
-            out.append(f"{nm}  —  {cls}  L{lvl}  OVR {ovr}")
-        return out or ["(empty roster)"]
+            draw_text(surf, f"{nm} — {cls}  L{lvl}  OVR {ovr}", (rect.x + 12, y), 18, self.theme.text)
+            y += 22
 
-    def _draw_safe(self, widget, surf):
-        # Try draw(surf, theme) then draw(surf)
-        try:
-            widget.draw(surf, self.theme)
-        except TypeError:
-            widget.draw(surf)
+    def draw(self, surf: pygame.Surface) -> None:
+        if not self._built:
+            self.enter()
+        th = self.theme
+        surf.fill(th.bg)
 
-    def handle_event(self, ev):
-        if ev.type == pygame.KEYUP and ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
-            self._go_back(); return
-        self.lv_teams.handle_event(ev)
-        self.lv_roster.handle_event(ev)
-        self.btn_generate.handle_event(ev)
-        self.btn_back.handle_event(ev)
+        # Header
+        draw_text(surf, "Roster Browser", (surf.get_width() // 2, 12), 30, th.text, align="center")
 
-    def update(self, dt: float):
-        pass
+        # Left panel: Teams
+        draw_panel(surf, self.rect_left, th)
+        draw_text(surf, "Teams", (self.rect_left.centerx, self.rect_left.y + 6), 20, th.subt, align="center")
+        if self.teams_lv:
+            self.teams_lv.draw(surf, th)
 
-    def draw(self, surf):
-        surf.fill(self.theme.bg if hasattr(self.theme, "bg") else (20, 24, 28))
-        draw_panel(surf, self.rect_left, "Teams")
-        self._draw_safe(self.lv_teams, surf)
-        draw_panel(surf, self.rect_right, "Roster")
-        self._draw_safe(self.lv_roster, surf)
-        self._draw_safe(self.btn_generate, surf)
-        self._draw_safe(self.btn_back, surf)
-        draw_text(surf, "Browse all teams and regenerate league rosters.", (16, 8), 20, (200, 210, 220))
+        # Right panel: Roster preview
+        draw_panel(surf, self.rect_right, th)
+        draw_text(surf, "Roster", (self.rect_right.centerx, self.rect_right.y + 6), 20, th.subt, align="center")
+        self._draw_team_preview(surf, self.rect_right)
+
+        # Buttons
+        if self.btn_generate:
+            self.btn_generate.draw(surf, th)
+        if self.btn_back:
+            self.btn_back.draw(surf, th)
