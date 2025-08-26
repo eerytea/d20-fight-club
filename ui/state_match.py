@@ -343,6 +343,10 @@ class MatchState(BaseState):
             if not isinstance(evs, list): continue
             start = self._last_seen.get(attr, 0)
             fresh = evs[start:]
+         
+            if start == 0 and fresh:
+            print("[Match] sample events:", fresh[:5])
+
             if fresh:
                 for e in fresh:
                     try:
