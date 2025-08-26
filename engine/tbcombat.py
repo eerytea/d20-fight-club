@@ -1,414 +1,343 @@
-"""
-TBCombat — turn-based D20-flavored grid combat engine (single-occupancy enforced)
-
-Public contract (as used elsewhere in the project):
-- Constructor: TBCombat(teamA, teamB, fighters, GRID_W, GRID_H, seed=None)
-  * teamA/teamB: strings or simple objects used only for display; winner is 0/1
-  * fighters: iterable of objects OR dicts with fields/keys:
-      pid, name, team_id (0 or 1), x, y, tx, ty, hp, max_hp, alive
-- Attributes emitted/used by UI & core:
-  * typed_events (alias: events_typed): list of dict events appended over time
-    Event shapes (all strings and ints):
-      {'type': 'round', 'round': int}
-      {'type': 'move', 'name': str, 'to': (x, y)}
-      {'type': 'blocked', 'name': str, 'to': (x, y), 'by': str}
-      {'type': 'hit', 'name': str, 'target': str, 'dmg': int}
-      {'type': 'miss', 'name': str, 'target': str}
-      {'type': 'down', 'name': str}  # (target name)
-      {'type': 'end'}                # winner available on self.winner
-  * winner: 0 or 1 when match ends; None while ongoing
-  * GRID_W, GRID_H: ints
-
-How stepping works:
-- Call step_action() to perform exactly one actor action (move/attack), appending new events.
-- If you prefer to pre-bake, call simulate_all() once, then read typed_events in your viewer.
-
-Determinism:
-- All stochastic choices use self.rng (seeded in __init__), NEVER the global random module.
-
-Single-occupancy enforcement:
-- Spawn collisions are deterministically nudged to the nearest free tile.
-- Moves into occupied tiles do not happen; a typed {'type':'blocked', ...} event is emitted instead.
-"""
-
+# engine/tbcombat.py
 from __future__ import annotations
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import List, Tuple, Dict, Optional, Iterable
 import random
+import math
+
+# Global grid defaults (UI also uses 11×11 as the common baseline)
+GRID_W = 11
+GRID_H = 11
 
 Coord = Tuple[int, int]
 
 
-def _get(obj: Any, key: str, default=None):
-    """Attribute/dict accessor (supports both dot-attrs and mapping keys)."""
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+# -------------------- data models --------------------
+
+@dataclass
+class Team:
+    tid: int
+    name: str
+    color: Tuple[int, int, int] = (220, 220, 220)
 
 
-def _set(obj: Any, key: str, value: Any) -> None:
-    """Attribute/dict setter (supports both dot-attrs and mapping keys)."""
-    if isinstance(obj, dict):
-        obj[key] = value
-    else:
-        setattr(obj, key, value)
+@dataclass
+class Fighter:
+    pid: int
+    name: str
+    team_id: int            # MUST be 0 or 1 for engine/UI
+    x: int
+    y: int
+    tx: int
+    ty: int
+    hp: int
+    max_hp: int
+    alive: bool = True
+    # optional, used by tests and progression
+    ac: int = 10
+    spd: int = 1
+    xp: int = 0
 
+    @property
+    def pos(self) -> Coord:
+        return (self.x, self.y)
+
+    def set_pos(self, xy: Coord) -> None:
+        self.x, self.y = xy
+        self.tx, self.ty = xy
+
+
+# -------------------- helpers used by tests --------------------
+
+def fighter_from_dict(d: Dict) -> Fighter:
+    """Create a Fighter from a flexible dict used by tests and content."""
+    return Fighter(
+        pid=int(d.get("pid", d.get("id", 0))),
+        name=str(d.get("name", "Unit")),
+        team_id=int(d.get("team_id", d.get("tid", 0))),
+        x=int(d.get("x", d.get("tx", 0))),
+        y=int(d.get("y", d.get("ty", 0))),
+        tx=int(d.get("tx", d.get("x", 0))),
+        ty:int(d.get("ty", d.get("y", 0))),
+        hp=int(d.get("hp", d.get("max_hp", 10))),
+        max_hp=int(d.get("max_hp", d.get("hp", 10))),
+        ac=int(d.get("ac", 10)),
+        spd=int(d.get("spd", 1)),
+        xp=int(d.get("xp", 0)),
+    )
+
+
+def layout_teams_tiles(fighters: List[Fighter], W: int, H: int) -> None:
+    """
+    Deterministic lineup: team 0 on the left column band, team 1 on the right.
+    We ensure no overlap at spawn (engine enforces single occupancy again in combat).
+    """
+    left_x = 1
+    right_x = max(0, W - 2)
+
+    t0 = [f for f in fighters if f.team_id == 0]
+    t1 = [f for f in fighters if f.team_id == 1]
+
+    # space vertically
+    def positions(xs: int, count: int) -> List[Coord]:
+        if count <= 0:
+            return []
+        gap = max(1, (H - 2) // max(1, count))
+        top = 1
+        ys = [min(H - 2, top + i * gap) for i in range(count)]
+        return [(xs, y) for y in ys]
+
+    for f, pos in zip(t0, positions(left_x, len(t0))):
+        f.set_pos(pos)
+    for f, pos in zip(t1, positions(right_x, len(t1))):
+        f.set_pos(pos)
+
+
+# -------------------- combat engine --------------------
 
 class TBCombat:
-    def __init__(
-        self,
-        teamA: Any,
-        teamB: Any,
-        fighters: Iterable[Any],
-        GRID_W: int,
-        GRID_H: int,
-        seed: Optional[int] = None,
-    ) -> None:
+    """
+    Minimal, deterministic TB combat engine with:
+      - single-occupancy grid enforcement
+      - typed events: round/move/hit/miss/down/end
+      - take_turn() that either moves or attacks
+      - XP awarded (+1) to attacker when a defender is downed
+
+    API expected by UI/tests:
+      TBCombat(teamA, teamB, fighters, GRID_W, GRID_H, seed=...)
+      .typed_events  (list of dict events)
+      .events_typed  (alias)
+      .events        (alias)
+      .winner        (0/1 or None)
+      .take_turn()
+      .step_action() (alias to take_turn)
+    """
+    def __init__(self,
+                 teamA: Team,
+                 teamB: Team,
+                 fighters: List[Fighter],
+                 grid_w: int,
+                 grid_h: int,
+                 seed: Optional[int] = None):
         self.teamA = teamA
         self.teamB = teamB
-        self.GRID_W = int(GRID_W)
-        self.GRID_H = int(GRID_H)
-        self.rng = random.Random(seed if seed is not None else 0)
+        self.GRID_W = int(grid_w)
+        self.GRID_H = int(grid_h)
+        self.rng = random.Random(seed if seed is not None else 12345)
 
-        # Normalize fighters list (keep references as given — UI may hold onto them)
-        self.fighters: List[Any] = list(fighters)
+        # normalize team ids to 0/1 defensively
+        for f in fighters:
+            if f.team_id not in (0, 1):
+                f.team_id = 0 if f.team_id in (teamA.tid, 0) else 1
 
-        # Guarantee team_id is 0/1 (normalize quietly; UI also normalizes in match state)
-        for f in self.fighters:
-            tid = _get(f, "team_id", 0)
-            _set(f, "team_id", 1 if tid in (1, "1", True) else 0)
+        self.fighters: List[Fighter] = fighters[:]
+        self.typed_events: List[Dict] = []
+        self.events_typed = self.typed_events
+        self.events = self.typed_events
 
-        # Typed event stream (alias maintained for older code)
-        self.typed_events: List[Dict[str, Any]] = []
-        self.events_typed = self.typed_events  # alias for compatibility
+        self._round = 1
+        self._order: List[int] = self._build_turn_order()  # indices into self.fighters
+        self._idx = 0
+        self.winner: Optional[int] = None
 
-        self.round: int = 1
-        self._turn_cursor: int = 0
-        self._build_turn_order()
-
-        # Ensure any None positions are assigned before we build occupancy
-        self._ensure_positions_assigned()
-
-        # Occupancy and spawn fixups
-        self._rebuild_occupied()
+        # occupancy fix for spawns
         self._fix_spawn_collisions()
 
-        # Match state
-        self.winner: Optional[int] = None
-        self._ended: bool = False
+        # announce first round
+        self._emit_round()
 
-        # Emit opening round marker
-        self._emit({"type": "round", "round": self.round})
+    # -------- occupancy & geometry --------
 
-    # ---------- Core loop utilities ----------
-
-    def step_action(self) -> List[Dict[str, Any]]:
-        """Perform exactly one actor action (move or attack). Return events appended by this call."""
-        if self._ended:
-            return []
-
-        start_len = len(self.typed_events)
-
-        # Pick next alive actor (advance turn cursor as needed)
-        actor = self._next_actor()
-        if actor is None:
-            # Round rollover (no alive actors found in this pass)
-            self._advance_round()
-            actor = self._next_actor()
-            if actor is None:
-                # Both sides dead? End by tiebreaker.
-                self._end_match(winner=self._winner_by_hp_sum())
-                return self.typed_events[start_len:]
-
-        # Decide action: if adjacent enemy => attack; else move toward closest enemy
-        enemy = self._closest_enemy(actor)
-        if enemy is None:
-            self._end_match(winner=_get(actor, "team_id"))
-            return self.typed_events[start_len:]
-
-        ax, ay = _get(actor, "x"), _get(actor, "y")
-        ex, ey = _get(enemy, "x"), _get(enemy, "y")
-        if self._manhattan(ax, ay, ex, ey) == 1:
-            self._attack(actor, enemy)
-        else:
-            self._step_toward(actor, (ex, ey))
-
-        # Check victory after the action
-        self._check_victory()
-
-        return self.typed_events[start_len:]
-
-    def simulate_all(self, max_rounds: int = 500) -> None:
-        """Run until end or until max_rounds exceeded (safety)."""
-        while not self._ended and self.round <= max_rounds:
-            self.step_action()
-             # --- Back-compat alias for tests ---
-        def take_turn(self):
-            """Advance one atomic action (alias of step_action)."""
-            return self.step_action()
-
-        if not self._ended:
-            self._end_match(winner=self._winner_by_hp_sum())
-
-    # ---------- Internals ----------
-
-    def _build_turn_order(self) -> None:
-        """Interleave teams deterministically by pid to roughly alternate sides."""
-        t0 = [f for f in self.fighters if _get(f, "team_id") == 0]
-        t1 = [f for f in self.fighters if _get(f, "team_id") == 1]
-        t0.sort(key=lambda f: _get(f, "pid", 0))
-        t1.sort(key=lambda f: _get(f, "pid", 0))
-        interleaved: List[Any] = []
-        i = 0
-        while i < len(t0) or i < len(t1):
-            if i < len(t0):
-                interleaved.append(t0[i])
-            if i < len(t1):
-                interleaved.append(t1[i])
-            i += 1
-        self._turn_order = interleaved
-        self._turn_cursor = 0
-
-    def _next_actor(self) -> Optional[Any]:
-        """Return next alive actor and leave cursor on it; returns None if none alive."""
-        n = len(self._turn_order)
-        if n == 0:
-            return None
-        for _ in range(n):
-            actor = self._turn_order[self._turn_cursor]
-            if _get(actor, "alive", True) and _get(actor, "hp", 1) > 0:
-                return actor
-            self._advance_turn_cursor()
-        return None
-
-    def _advance_turn_cursor(self) -> None:
-        n = len(self._turn_order)
-        if n:
-            self._turn_cursor = (self._turn_cursor + 1) % n
-            if self._turn_cursor == 0:
-                self._advance_round()
-
-    def _advance_round(self) -> None:
-        self.round += 1
-        self._emit({"type": "round", "round": self.round})
-
-    # ---------- Positioning & Occupancy ----------
-
-    def _ensure_positions_assigned(self) -> None:
-        """
-        Some pipelines pass fighters with x/y=None but valid tx/ty. Fill from tx/ty if possible,
-        otherwise drop on a side-based default (team 0: left-center; team 1: right-center).
-        Duplicates are resolved later by _fix_spawn_collisions().
-        """
-        left_x = 0
-        right_x = max(0, self.GRID_W - 1)
-        center_y = max(0, self.GRID_H // 2)
-
-        for f in self.fighters:
-            x = _get(f, "x")
-            y = _get(f, "y")
-            if x is None or y is None:
-                tx = _get(f, "tx")
-                ty = _get(f, "ty")
-                if isinstance(tx, int) and isinstance(ty, int) and self._in_bounds(tx, ty):
-                    _set(f, "x", tx)
-                    _set(f, "y", ty)
-                else:
-                    tid = _get(f, "team_id", 0)
-                    _set(f, "x", left_x if tid == 0 else right_x)
-                    _set(f, "y", center_y)
-
-    def _rebuild_occupied(self) -> None:
-        """Recreate occupied map from alive fighters."""
-        self.occupied: Dict[Coord, int] = {}
-        for f in self.fighters:
-            if not _get(f, "alive", True):
-                continue
-            key = (_get(f, "x"), _get(f, "y"))
-            # If any lingering None slipped through, hard-fix to (0,0) to avoid crashes
-            if key[0] is None or key[1] is None or not self._in_bounds(int(key[0]), int(key[1])):
-                _set(f, "x", 0)
-                _set(f, "y", 0)
-                key = (0, 0)
-            if key not in self.occupied:
-                self.occupied[key] = _get(f, "pid")
-
-    def _fix_spawn_collisions(self) -> None:
-        """Deterministically nudge spawn collisions to nearest free tiles, and note it with a 'note' event."""
-        colliding: Dict[Coord, List[str]] = {}
-        seen: Dict[Coord, int] = {}
-        for f in self.fighters:
-            if not _get(f, "alive", True):
-                continue
-            x, y = _get(f, "x"), _get(f, "y")
-            # Final guard in case callers left non-ints
-            if not isinstance(x, int) or not isinstance(y, int):
-                x = int(x or 0)
-                y = int(y or 0)
-                _set(f, "x", x)
-                _set(f, "y", y)
-            xy = (x, y)
-            pid = _get(f, "pid")
-            if xy in seen:
-                nx, ny = self._nearest_free(xy)
-                self.occupied.pop(xy, None)
-                self.occupied[(nx, ny)] = pid
-                _set(f, "x", nx)
-                _set(f, "y", ny)
-                colliding.setdefault(xy, []).append(_get(f, "name", f"PID{pid}"))
-            else:
-                seen[xy] = pid
-
-        if colliding:
-            self._emit({"type": "note", "msg": f"Spawn collisions resolved: {colliding}"})
-
-    def _nearest_free(self, start_xy: Coord) -> Coord:
-        sx, sy = start_xy
-        # Clamp start in case upstream handed us something off-grid
-        sx = min(max(0, int(sx)), self.GRID_W - 1)
-        sy = min(max(0, int(sy)), self.GRID_H - 1)
-        if (sx, sy) not in self.occupied and self._in_bounds(sx, sy):
-            return sx, sy
-
-        maxr = max(self.GRID_W, self.GRID_H) + 2
-        for r in range(1, maxr):
-            # top/bottom edges
-            for dx in range(-r, r + 1):
-                for dy in (-r, r):
-                    x, y = sx + dx, sy + dy
-                    if self._in_bounds(x, y) and (x, y) not in self.occupied:
-                        return x, y
-            # left/right edges (skip corners already checked)
-            for dy in range(-r + 1, r):
-                for dx in (-r, r):
-                    x, y = sx + dx, sy + dy
-                    if self._in_bounds(x, y) and (x, y) not in self.occupied:
-                        return x, y
-        return sx, sy  # worst case
+    @property
+    def occupied(self) -> Dict[Coord, int]:
+        occ: Dict[Coord, int] = {}
+        for i, f in enumerate(self.fighters):
+            if f.alive:
+                occ[(f.x, f.y)] = i
+        return occ
 
     def _in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.GRID_W and 0 <= y < self.GRID_H
 
-    def _can_enter(self, x: int, y: int) -> Tuple[bool, Optional[int]]:
-        if not self._in_bounds(x, y):
-            return False, None
-        occ = self.occupied.get((x, y))
-        return (occ is None), occ
+    def _distance(self, a: Coord, b: Coord) -> int:
+        return abs(a[0]-b[0]) + abs(a[1]-b[1])
 
-    def _move_actor_if_free(self, actor: Any, to_xy: Coord) -> bool:
-        tx, ty = to_xy
-        ok, occ_pid = self._can_enter(tx, ty)
-        if not ok:
-            by_name = self._name_from_pid(occ_pid)
-            self._emit({"type": "blocked", "name": _get(actor, "name", "?"), "to": (tx, ty), "by": by_name})
-            self._advance_turn_cursor()  # consume AP on bump
-            return False
+    def _adjacent(self, a: Coord, b: Coord) -> bool:
+        return self._distance(a, b) == 1
 
-        old = (_get(actor, "x"), _get(actor, "y"))
-        self.occupied.pop(old, None)
-        _set(actor, "x", tx)
-        _set(actor, "y", ty)
-        self.occupied[(tx, ty)] = _get(actor, "pid")
-        self._emit({"type": "move", "name": _get(actor, "name", "?"), "to": (tx, ty)})
-        self._advance_turn_cursor()
-        return True
+    def _nearest_free(self, start_xy: Coord) -> Coord:
+        sx, sy = start_xy
+        maxr = max(self.GRID_W, self.GRID_H) + 2
+        occ = set(self.occupied.keys())
+        if (sx, sy) not in occ and self._in_bounds(sx, sy):
+            return (sx, sy)
+        for r in range(1, maxr):
+            for dx in range(-r, r + 1):
+                for dy in (-r, r):
+                    x, y = sx + dx, sy + dy
+                    if self._in_bounds(x, y) and (x, y) not in occ:
+                        return (x, y)
+            for dy in range(-r + 1, r):
+                for dx in (-r, r):
+                    x, y = sx + dx, sy + dy
+                    if self._in_bounds(x, y) and (x, y) not in occ:
+                        return (x, y)
+        # as absolute fallback
+        for y in range(self.GRID_H):
+            for x in range(self.GRID_W):
+                if (x, y) not in occ:
+                    return (x, y)
+        return start_xy
 
-    def _step_toward(self, actor: Any, target_xy: Coord) -> None:
-        """Greedy Manhattan approach — choose axis with greater distance; tie by X then Y."""
-        ax, ay = _get(actor, "x"), _get(actor, "y")
-        tx, ty = target_xy
-        dx = tx - ax
-        dy = ty - ay
-        step_x = 0 if dx == 0 else (1 if dx > 0 else -1)
-        step_y = 0 if dy == 0 else (1 if dy > 0 else -1)
-        if abs(dx) > abs(dy):
-            cand = (ax + step_x, ay)
-        elif abs(dy) > abs(dx):
-            cand = (ax, ay + step_y)
-        else:
-            cand = (ax + step_x, ay) if step_x != 0 else (ax, ay + step_y)
-        self._move_actor_if_free(actor, cand)
-
-    # ---------- Combat ----------
-
-    def _attack(self, actor: Any, enemy: Any) -> None:
-        """Simple D20-ish: ~65% hit chance, 1–4 dmg; deterministic RNG."""
-        self._advance_turn_cursor()  # consume AP regardless
-
-        roll = self.rng.random()
-        hit = roll < 0.65
-
-        a_name = _get(actor, "name", "?")
-        e_name = _get(enemy, "name", "?")
-
-        if not hit:
-            self._emit({"type": "miss", "name": a_name, "target": e_name})
-            return
-
-        dmg = 1 + int(self.rng.random() * 4)  # 1..4
-        self._emit({"type": "hit", "name": a_name, "target": e_name, "dmg": dmg})
-
-        new_hp = max(0, _get(enemy, "hp", 0) - dmg)
-        _set(enemy, "hp", new_hp)
-        if new_hp <= 0 and _get(enemy, "alive", True):
-            _set(enemy, "alive", False)
-            self.occupied.pop((_get(enemy, "x"), _get(enemy, "y")), None)
-            self._emit({"type": "down", "name": e_name})
-
-    # ---------- Victory / Helpers ----------
-
-    def _check_victory(self) -> None:
-        a_alive = any(_get(f, "alive", True) and _get(f, "team_id") == 0 for f in self.fighters)
-        b_alive = any(_get(f, "alive", True) and _get(f, "team_id") == 1 for f in self.fighters)
-        if a_alive and b_alive:
-            return
-        if a_alive and not b_alive:
-            self._end_match(winner=0)
-        elif b_alive and not a_alive:
-            self._end_match(winner=1)
-        else:
-            self._end_match(winner=self._winner_by_hp_sum())
-
-    def _winner_by_hp_sum(self) -> int:
-        sum0 = sum(_get(f, "hp", 0) for f in self.fighters if _get(f, "team_id") == 0)
-        sum1 = sum(_get(f, "hp", 0) for f in self.fighters if _get(f, "team_id") == 1)
-        return 1 if sum1 > sum0 else 0
-
-    def _end_match(self, winner: int) -> None:
-        if self._ended:
-            return
-        self.winner = 1 if winner == 1 else 0
-        self._emit({"type": "end"})
-        self._ended = True
-
-    def _emit(self, ev: Dict[str, Any]) -> None:
-        self.typed_events.append(ev)
-
-    def _name_from_pid(self, pid: Optional[int]) -> str:
-        if pid is None:
-            return "Unknown"
-        for f in self.fighters:
-            if _get(f, "pid") == pid:
-                return _get(f, "name", f"PID{pid}")
-        return f"PID{pid}"
-
-    @staticmethod
-    def _manhattan(x1: int, y1: int, x2: int, y2: int) -> int:
-        return abs(x1 - x2) + abs(y1 - y2)
-
-    def _closest_enemy(self, actor: Any) -> Optional[Any]:
-        """Return closest enemy by Manhattan distance; tie-break by lowest pid to be deterministic."""
-        ax, ay = _get(actor, "x"), _get(actor, "y")
-        my_team = _get(actor, "team_id")
-        best = None
-        best_key = None
-        for f in self.fighters:
-            if not _get(f, "alive", True):
+    def _fix_spawn_collisions(self) -> None:
+        seen = {}
+        for i, f in enumerate(self.fighters):
+            if not f.alive:
                 continue
-            if _get(f, "team_id") == my_team:
-                continue
-            dist = self._manhattan(ax, ay, _get(f, "x"), _get(f, "y"))
-            key = (dist, _get(f, "pid", 0))
-            if best is None or key < best_key:
-                best = f
-                best_key = key
-        return best
+            xy = (f.x, f.y)
+            if not self._in_bounds(f.x, f.y):
+                f.set_pos((min(self.GRID_W-1, max(0, f.x)),
+                           min(self.GRID_H-1, max(0, f.y))))
+                xy = f.pos
+            if xy in seen:
+                # move this fighter to nearest free
+                nx, ny = self._nearest_free(xy)
+                f.set_pos((nx, ny))
+            else:
+                seen[xy] = i
+
+    # -------- turn logic --------
+
+    def _build_turn_order(self) -> List[int]:
+        # deterministic by (team_id, pid) so tests are stable
+        order = list(range(len(self.fighters)))
+        order.sort(key=lambda i: (self.fighters[i].team_id, self.fighters[i].pid))
+        return order
+
+    def _emit_round(self) -> None:
+        self.typed_events.append({"type": "round", "round": self._round})
+
+    def _emit_end_if_finished(self) -> None:
+        a_alive = any(f.alive and f.team_id == 0 for f in self.fighters)
+        b_alive = any(f.alive and f.team_id == 1 for f in self.fighters)
+        if not a_alive and not b_alive:
+            self.winner = None  # draw
+            self.typed_events.append({"type": "end"})
+        elif not a_alive:
+            self.winner = 1
+            self.typed_events.append({"type": "end"})
+        elif not b_alive:
+            self.winner = 0
+            self.typed_events.append({"type": "end"})
+
+    def _advance_index(self) -> None:
+        # move to next alive actor; if we looped, new round
+        n = len(self._order)
+        for _ in range(n):
+            self._idx = (self._idx + 1) % n
+            i = self._order[self._idx]
+            f = self.fighters[i]
+            if f.alive:
+                if self._idx == 0:
+                    self._round += 1
+                    self._emit_round()
+                return
+        # nobody alive on either side ends game
+        self._emit_end_if_finished()
+
+    def _award_xp(self, fighter: Fighter, amount: int = 1) -> None:
+        """Give XP to the fighter (defensive against missing attribute)."""
+        try:
+            fighter.xp = int(getattr(fighter, "xp", 0)) + int(amount)
+        except Exception:
+            pass
+
+    # movement try: one step toward target if free
+    def _try_step_toward(self, actor: Fighter, target: Fighter) -> bool:
+        ax, ay = actor.x, actor.y
+        tx, ty = target.x, target.y
+        cand: List[Coord] = []
+
+        dx = 1 if tx > ax else (-1 if tx < ax else 0)
+        dy = 1 if ty > ay else (-1 if ty < ay else 0)
+
+        # prefer axis that reduces distance most
+        if dx != 0:
+            cand.append((ax + dx, ay))
+        if dy != 0:
+            cand.append((ax, ay + dy))
+
+        # add simple alternatives
+        cand.extend([(ax+1, ay), (ax-1, ay), (ax, ay+1), (ax, ay-1)])
+
+        occ = set(self.occupied.keys())
+        for (nx, ny) in cand:
+            if self._in_bounds(nx, ny) and (nx, ny) not in occ:
+                actor.set_pos((nx, ny))
+                self.typed_events.append({"type": "move", "name": actor.name, "to": (nx, ny)})
+                return True
+        # blocked
+        return False
+
+    def _attack(self, attacker: Fighter, defender: Fighter) -> None:
+        # very simple d20 vs AC
+        roll = self.rng.randint(1, 20)
+        hit = roll >= max(5, int(defender.ac) // 2 + 5)  # keep hit rate reasonable
+        if hit:
+            dmg = max(1, self.rng.randint(1, 6))
+            defender.hp = max(0, defender.hp - dmg)
+            self.typed_events.append({"type": "hit", "name": attacker.name,
+                                      "target": defender.name, "dmg": dmg})
+            if defender.hp <= 0 and defender.alive:
+                defender.alive = False
+                self.typed_events.append({"type": "down", "name": defender.name})
+                # >>> Award XP to attacker on down (fixes unit test) <<<
+                self._award_xp(attacker, 1)
+                # ensure tile is now free (defender disappears)
+                self._emit_end_if_finished()
+        else:
+            self.typed_events.append({"type": "miss", "name": attacker.name,
+                                      "target": defender.name})
+
+    def _closest_enemy(self, actor: Fighter) -> Optional[Fighter]:
+        foes = [f for f in self.fighters if f.alive and f.team_id != actor.team_id]
+        if not foes:
+            return None
+        foes.sort(key=lambda f: (self._distance(actor.pos, f.pos), f.pid))
+        return foes[0]
+
+    def take_turn(self) -> None:
+        """Perform one atomic action for the current actor."""
+        if self.winner is not None:
+            return
+
+        # choose current alive actor; if dead, advance to next alive
+        for _ in range(len(self._order)):
+            idx = self._order[self._idx]
+            actor = self.fighters[idx]
+            if actor.alive:
+                break
+            self._advance_index()
+        else:
+            self._emit_end_if_finished()
+            return
+
+        target = self._closest_enemy(actor)
+        if target is None:
+            self._emit_end_if_finished()
+            return
+
+        if self._adjacent(actor.pos, target.pos):
+            self._attack(actor, target)
+        else:
+            moved = self._try_step_toward(actor, target)
+            if not moved:
+                # blocked: no-op turn to avoid deadlock but still advance
+                self.typed_events.append({"type": "move", "name": actor.name, "to": actor.pos})
+
+        # advance to next actor, maybe new round
+        self._advance_index()
+
+    # historical alias some UIs called
+    def step_action(self) -> None:
+        self.take_turn()
