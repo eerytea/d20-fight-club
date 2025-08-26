@@ -1,4 +1,4 @@
-# ui/state_match.py — larger grid, collision-free lineup, name fits HP bar
+# ui/state_match.py — global 11x11 grid via core.config, collision-free lineup, name fits HP bar
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -7,10 +7,8 @@ import pygame
 from .app import BaseState
 from .uiutil import Theme, Button, draw_panel, draw_text, get_font
 
-# Use larger grid in this viewer (we can move this to core.config later if you want it global)
-GRID_W, GRID_H = 19, 11
+from core.config import GRID_W, GRID_H  # global grid
 
-# Engine API (re-exported in engine/__init__.py)
 from engine import TBCombat, Team, fighter_from_dict
 
 
@@ -181,24 +179,15 @@ def _lineup_teams_tiles(fighters: List[Any], grid_w: int, grid_h: int) -> None:
 
 # -------- text fit helper --------
 def _fit_text_size(font, text: str, target_w: int, max_h: int, *, min_px=8, max_px=32) -> int:
-    """
-    Return a font size that fits within target_w and max_h.
-    We try a single-shot proportional guess, then tighten with a small loop.
-    """
-    max_px = max(min_px, max_px)
-    # start with optimistic size proportional to width
     rect_at_max = font.get_rect(text, size=max_px)
     base_w = max(1, rect_at_max.width)
     guess = int(max(min_px, min(max_px, max_px * (target_w / base_w))))
-    # now clamp by height, if needed
     def fits(sz: int) -> bool:
         r = font.get_rect(text, size=sz)
         return r.width <= target_w and font.get_sized_height(sz) <= max_h
     sz = guess
-    # tighten downwards until both width and height fit
     while sz > min_px and not fits(sz):
         sz -= 1
-    # if even min doesn't fit height, just return min
     return max(min_px, sz)
 
 
@@ -345,7 +334,7 @@ class MatchState(BaseState):
         self._cell_w = max(26, self._grid_rect.w // GRID_W)
         self._cell_h = max(26, self._grid_rect.h // GRID_H)
 
-        self._font_name = get_font(28)   # we compute per-name size at draw
+        self._font_name = get_font(28)   # per-name sizing at draw
         self._font_log = get_font(18)
         self._log_line_h = self._font_log.get_sized_height()
 
@@ -371,50 +360,40 @@ class MatchState(BaseState):
     def _draw_fighter(self, surf, gx: int, gy: int, name: str, tid: int, hp: int, max_hp: int):
         r = self._cell_rect(gx, gy)
 
-        # dynamic stack sizing that always fits:
-        # dot → name → bar; shrink bar/dot if needed to leave enough room for the name
-        # dot radius
+        # dynamic stack sizing:
         dot = max(4, int(min(r.w, r.h) * 0.22))
         name_top_gap = 6
         bar_gap = 4
         bar_h = max(6, int(r.h * 0.12))
 
-        # ensure at least 10px name height budget
         def name_budget(dot_r, bar_h_now):
             return r.h - (dot_r * 2 + name_top_gap + bar_gap + 6 + bar_h_now)
 
         budget = name_budget(dot, bar_h)
-        # if too tight, first shrink bar, then dot
         if budget < 10:
-            # try shrinking bar (down to 5)
             shrink = min(bar_h - 5, 10 - budget)
             if shrink > 0:
                 bar_h -= shrink
                 budget = name_budget(dot, bar_h)
         if budget < 10:
-            # shrink dot (down to 4)
             shrink = min(dot - 4, 10 - budget)
             if shrink > 0:
                 dot -= shrink
                 budget = name_budget(dot, bar_h)
         budget = max(10, budget)
 
-        # dot
         color = (220, 64, 64) if tid == 0 else (64, 110, 220)
         pygame.draw.circle(surf, color, (r.centerx, r.top + dot + 4), dot)
 
-        # HP bar prelim (we use bar_w to size the name)
         bar_w = int(r.w * 0.9)
         bar_x = r.centerx - bar_w // 2
 
-        # name, sized to HP bar width + height budget
         nm = _short_name(name)
         name_px = _fit_text_size(self._font_name, nm, bar_w, budget, min_px=8, max_px=int(r.h * 0.4))
         txt_rect = self._font_name.get_rect(nm, size=name_px)
         txt_rect.midtop = (r.centerx, r.top + dot * 2 + name_top_gap)
         self._font_name.render_to(surf, txt_rect.topleft, nm, self.theme.text, size=name_px)
 
-        # HP bar (after name)
         denom = max(1, int(max_hp))
         frac = max(0.0, min(1.0, float(hp) / float(denom)))
         bar_y = txt_rect.bottom + bar_gap
@@ -539,7 +518,6 @@ class MatchState(BaseState):
         return 1
 
 
-# Back-compat
 def create(app, *args, **kwargs) -> MatchState:
     return MatchState(app, *args, **kwargs)
 
