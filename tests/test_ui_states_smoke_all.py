@@ -14,9 +14,9 @@ STATE_NAMES = [
     "ui.state_menu.MenuState",
     "ui.state_team_select.TeamSelectState",
     "ui.state_exhibition_picker.ExhibitionPickerState",
-    "ui.state_season_hub.SeasonHubState",     # if present
-    "ui.state_match.MatchState",              # if present
-    "ui.state_roster_browser.RosterBrowserState",  # if present
+    "ui.state_season_hub.SeasonHubState",            # if present
+    "ui.state_match.MatchState",                     # if present
+    "ui.state_roster_browser.RosterBrowserState",    # if present
 ]
 
 def _import_opt(name):
@@ -42,17 +42,16 @@ def test_all_states_construct_and_draw():
         cls = _import_opt(fullname)
         if cls is None:
             continue  # missing in this branch — fine
+
         # Try minimal ctor signatures commonly used
         try:
             sig = inspect.signature(cls)
             if len(sig.parameters) == 0:
                 st = cls()
             else:
-                # most states accept (app) or (app, ...)
                 try:
                     st = cls(app)
                 except TypeError:
-                    # SeasonHub/Match may need data
                     if "SeasonHub" in fullname:
                         st = cls(app, career=_dummy_career())
                     elif "MatchState" in fullname:
@@ -60,17 +59,22 @@ def test_all_states_construct_and_draw():
                         th, ta = car.teams[0], car.teams[min(1, len(car.teams)-1)]
                         st = cls(app, th, ta)
                     else:
+                        # give up on this optional state
                         continue
         except Exception as e:
             raise AssertionError(f"Failed to construct {fullname}: {e}")
 
-        # enter/update/draw a few frames
+        # Ensure state has an app and enter() via the real push mechanism
         try:
-            if hasattr(st, "enter"): st.enter()
+            app.push_state(st)
+            # tick a few frames
             for _ in range(3):
-                if hasattr(st, "update"): st.update(1/60)
+                if hasattr(app.state, "update"): app.state.update(1/60)
                 screen.fill((0,0,0))
-                if hasattr(st, "draw"): st.draw(screen)
+                if hasattr(app.state, "draw"): app.state.draw(screen)
                 pygame.event.pump()
         except Exception as e:
             raise AssertionError(f"State {fullname} crashed on draw: {e}")
+        finally:
+            # clean up stack for the next state
+            app.pop_state()
