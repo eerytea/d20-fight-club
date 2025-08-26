@@ -65,10 +65,8 @@ def _fmt_event(e: Any) -> str:
             return _format_event(e)
         except Exception:
             pass
-    # dict-like typed event
     if isinstance(e, dict):
         t = e.get("type") or e.get("event") or "event"
-        # Common shapes
         if t == "round":
             return f"— Round {e.get('round', '?')} —"
         if t in ("start", "StartRound"):
@@ -91,9 +89,7 @@ def _fmt_event(e: Any) -> str:
             return f"{who} is down!"
         if t in ("end", "End", "finish"):
             return "End of match"
-        # Fallback pretty dict
         return ", ".join(f"{k}={v}" for k, v in e.items())
-    # simple strings / repr
     try:
         return str(e)
     except Exception:
@@ -116,6 +112,7 @@ class MatchState(BaseState):
 
         self.auto = False
         self._built = False
+        self._started = False  # only show "Winner" after first advance
 
         # UI
         self.btn_step: Button | None = None
@@ -129,7 +126,6 @@ class MatchState(BaseState):
 
         # Log handling
         self.events: List[str] = []
-        # Track how many items we've already harvested from each stream
         self._last_seen: Dict[str, int] = {
             "events_typed": 0,
             "typed_events": 0,
@@ -138,14 +134,13 @@ class MatchState(BaseState):
             "log": 0,
         }
 
-        # Auto pacing (kept gentle so you can watch the fight)
         self._auto_steps_per_update = 12
 
     # --- Lifecycle -----------------------------------------------------------
     def enter(self) -> None:
         self._build_match()
         self._build_ui()
-        self._harvest_new_events()  # show initial round banner if any
+        self._harvest_new_events()  # show initial "Round 1" banner if present
 
     # --- Build match from team dicts ----------------------------------------
     def _build_match(self):
@@ -168,7 +163,6 @@ class MatchState(BaseState):
         if _layout_teams_tiles:
             _layout_teams_tiles(self.fighters, _GRID_W, _GRID_H)
         else:
-            # Fallback layout
             y = 1
             for f in self.fighters:
                 if getattr(f, "team_id", self.teamA.tid) == self.teamA.tid:
@@ -181,6 +175,7 @@ class MatchState(BaseState):
         self.events.clear()
         for k in self._last_seen.keys():
             self._last_seen[k] = 0
+        self._started = False
 
     # --- UI layout -----------------------------------------------------------
     def _build_ui(self):
@@ -209,27 +204,27 @@ class MatchState(BaseState):
         if not self.combat:
             return
         c = self.combat
-        # Try a few common method names in order
-        for name in ("step", "take_turn", "advance", "tick", "update"):
+        # Prefer take_turn (the engine tests use this), then fall back
+        for name in ("take_turn", "step", "advance", "tick", "update"):
             fn = getattr(c, name, None)
             if not callable(fn):
                 continue
             try:
-                # some APIs take count parameter
-                fn(1)
+                fn(1)  # some APIs accept a count
                 return
             except TypeError:
                 try:
-                    fn()
+                    fn()  # most common shape
                     return
                 except Exception:
                     continue
             except Exception:
                 continue
-        # If we get here, we couldn't advance — fail silently to avoid crashes.
+        # If no known method, do nothing.
 
     def _step(self):
         if self.combat and getattr(self.combat, "winner", None) is None:
+            self._started = True
             self._advance_once()
             self._harvest_new_events()
 
@@ -237,16 +232,18 @@ class MatchState(BaseState):
         self.auto = not self.auto
         if self.btn_auto:
             self.btn_auto.label = f"Auto: {'ON' if self.auto else 'OFF'}"
+        if self.auto:
+            self._started = True
 
     def _finish(self):
         if not self.combat or getattr(self.combat, "winner", None) is not None:
             return
-        for _ in range(20000):
+        self._started = True
+        for i in range(20000):
             if getattr(self.combat, "winner", None) is not None:
                 break
             self._advance_once()
-            # harvest occasionally to keep UI responsive
-            if _ % 16 == 0:
+            if i % 16 == 0:
                 self._harvest_new_events()
         self._harvest_new_events()
 
@@ -259,13 +256,7 @@ class MatchState(BaseState):
         if not self.combat:
             return
 
-        streams = [
-            "events_typed",
-            "typed_events",
-            "event_log_typed",
-            "events",
-            "log",
-        ]
+        streams = ["events_typed", "typed_events", "event_log_typed", "events", "log"]
         for attr in streams:
             evs = getattr(self.combat, attr, None)
             if isinstance(evs, list):
@@ -276,11 +267,9 @@ class MatchState(BaseState):
                         try:
                             self.events.append(_fmt_event(e))
                         except Exception:
-                            # never crash the log
                             self.events.append(str(e))
                     self._last_seen[attr] = start + len(fresh)
 
-        # Trim log
         if len(self.events) > 500:
             self.events = self.events[-500:]
 
@@ -327,7 +316,7 @@ class MatchState(BaseState):
 
         status_y = self.rect_panel.y + 16
         winner = getattr(self.combat, "winner", None)
-        if winner is not None:
+        if self._started and winner is not None:
             wmap = {
                 "home": self.home_d.get("name", "Home"),
                 "away": self.away_d.get("name", "Away"),
