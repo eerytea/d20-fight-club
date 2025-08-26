@@ -10,11 +10,23 @@ import pygame
 
 _font_cache: dict[int, pygame.font.Font] = {}
 
+def _ensure_font_init():
+    if not pygame.get_init():
+        pygame.init()
+    if not pygame.font.get_init():
+        pygame.font.init()
+
 def get_font(size: int) -> pygame.font.Font:
+    """
+    Use the built-in default font (None) for maximum Windows stability.
+    Avoid SysFont registry scans which can trigger heap issues on Windows.
+    """
+    _ensure_font_init()
     size = int(size)
     f = _font_cache.get(size)
     if f is None:
-        _font_cache[size] = f = pygame.font.SysFont(None, size)
+        # Default font is safer than SysFont on some Windows setups
+        _font_cache[size] = f = pygame.font.Font(None, size)
     return f
 
 def draw_text(
