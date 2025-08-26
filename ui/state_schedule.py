@@ -1,87 +1,89 @@
 # ui/state_schedule.py
 from __future__ import annotations
 
-from typing import Optional, List
+import pygame
+
+from .app import BaseState
+from .uiutil import Theme, Button, draw_text, draw_panel
 
 try:
-    import pygame
-except Exception:  # pragma: no cover
-    pygame = None  # type: ignore
-
-from .uiutil import Theme, Button, ListView, draw_panel, draw_text
-from .app import App
+    from core.types import Fixture
+except Exception:
+    Fixture = object  # type: ignore
 
 
-class ScheduleState:
-    def __init__(self, app: Optional[App] = None, *, career=None) -> None:
-        self.app: App | None = app
+class ScheduleState(BaseState):
+    def __init__(self, app, career):
+        self.app = app
         self.career = career
-        self.week: int = 0
-        self.list_view: ListView | None = None
-        self.btn_prev: Button | None = None
-        self.btn_next: Button | None = None
-        self.btn_back: Button | None = None
-        self._panel: "pygame.Rect" | None = None
+        self.theme = Theme()
+        self._built = False
+
+        self.week_idx = max(1, getattr(career, "week", 1))
+        self.btn_prev = None
+        self.btn_next = None
+        self.btn_back = None
+
+        self.rect_panel = None
 
     def enter(self) -> None:
-        if pygame is None or self.app is None:
-            return
-        self.week = self.career.week
+        self._build_ui()
 
-        pad = 16
-        self._panel = pygame.Rect(pad, pad, self.app.width - pad * 2, self.app.height - 80)
-        self.list_view = ListView(pygame.Rect(self._panel.x + 8, self._panel.y + 32, self._panel.width - 16, self._panel.height - 40), [], row_h=28)
+    def _build_ui(self):
+        W, H = self.app.width, self.app.height
+        self.rect_panel = pygame.Rect(16, 60, W - 32, H - 76)
+        btn_w, btn_h, gap = 140, 42, 10
+        y = self.rect_panel.bottom - (btn_h + 10)
 
-        def prev_w():
-            self.week = max(0, self.week - 1)
-            self._refresh()
+        self.btn_prev = Button(pygame.Rect(self.rect_panel.x + 12, y, btn_w, btn_h), "Prev Week", self._prev)
+        self.btn_next = Button(pygame.Rect(self.rect_panel.x + 12 + btn_w + gap, y, btn_w, btn_h), "Next Week", self._next)
+        self.btn_back = Button(pygame.Rect(self.rect_panel.right - (btn_w + 12), y, btn_w, btn_h), "Back", self._back)
 
-        def next_w():
-            self.week = min(max(f.week for f in self.career.fixtures), self.week + 1)
-            self._refresh()
+        self._built = True
 
-        self.btn_prev = Button(pygame.Rect(pad, self.app.height - 56, 120, 40), "< Week", on_click=prev_w)
-        self.btn_next = Button(pygame.Rect(pad + 130, self.app.height - 56, 120, 40), "Week >", on_click=next_w)
-        self.btn_back = Button(pygame.Rect(self.app.width - pad - 160, self.app.height - 56, 160, 40), "Back", on_click=lambda: self.app.pop_state())
+    def _prev(self):
+        self.week_idx = max(1, self.week_idx - 1)
 
-        self._refresh()
+    def _next(self):
+        # Weeks are 1-based; rough cap (won't crash if over)
+        self.week_idx = min(self.week_idx + 1, 999)
 
-    def exit(self) -> None:
-        pass
+    def _back(self):
+        self.app.pop_state()
 
-    def handle_event(self, event: "pygame.event.Event") -> bool:
-        if self.list_view and self.list_view.handle_event(event):
-            return True
-        if self.btn_prev.handle_event(event):
-            return True
-        if self.btn_next.handle_event(event):
-            return True
-        if self.btn_back.handle_event(event):
-            return True
-        return False
+    def handle(self, event) -> None:
+        self.btn_prev.handle(event)
+        self.btn_next.handle(event)
+        self.btn_back.handle(event)
 
     def update(self, dt: float) -> None:
-        pass
+        mx, my = pygame.mouse.get_pos()
+        self.btn_prev.update((mx, my))
+        self.btn_next.update((mx, my))
+        self.btn_back.update((mx, my))
 
-    def draw(self, surface: "pygame.Surface") -> None:
-        th = Theme()
-        surface.fill(th.bg)
-        draw_text(surface, f"Schedule — Week {self.week}", (surface.get_width() // 2, 12), size=28, align="center")
-        draw_panel(surface, self._panel, title="Fixtures")
-        self.list_view.draw(surface)
-        self.btn_prev.draw(surface)
-        self.btn_next.draw(surface)
-        self.btn_back.draw(surface)
+    def draw(self, surf) -> None:
+        th = self.theme
+        surf.fill(th.bg)
 
-    # ---- helpers ----
-    def _refresh(self) -> None:
-        week_fx = [f for f in self.career.fixtures if f.week == self.week]
-        labels = []
-        for fx in week_fx:
-            hn = self.career.team_names[fx.home_id]
-            an = self.career.team_names[fx.away_id]
-            if fx.played:
-                labels.append(f"{hn} {fx.home_goals}-{fx.away_goals} {an}")
-            else:
-                labels.append(f"{hn} vs {an} (not played)")
-        self.list_view.set_items(labels)
+        draw_text(surf, f"Schedule — Week {self.week_idx}", (surf.get_width() // 2, 16), 30, th.text, align="center")
+        draw_panel(surf, self.rect_panel, th)
+
+        # List fixtures for week
+        y = self.rect_panel.y + 14
+        week_fx = [fx for fx in getattr(self.career, "fixtures", []) if getattr(fx, "week", 0) == self.week_idx]
+        if not week_fx:
+            draw_text(surf, "No fixtures this week.", (self.rect_panel.x + 12, y), 20, th.subt)
+        else:
+            for fx in week_fx:
+                hn = self.career.team_names[fx.home_id] if hasattr(self.career, "team_names") else str(fx.home_id)
+                an = self.career.team_names[fx.away_id] if hasattr(self.career, "team_names") else str(fx.away_id)
+                status = "vs"
+                if getattr(fx, "played", False):
+                    status = f"{fx.home_goals}-{fx.away_goals}"
+                draw_text(surf, f"{hn} {status} {an}", (self.rect_panel.x + 12, y), 20, th.text)
+                y += 24
+
+        self.btn_prev.draw(surf, th)
+        self.btn_next.draw(surf, th)
+        self.btn_back.draw(surf, th)
