@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 # -------- League / Season --------
-LEAGUE_TEAMS: int = 8                 # total teams in the league
-TEAM_SIZE: int = 5
-ROUNDS_DOUBLE_ROUND_ROBIN: int = 2    # each opponent twice (home/away)
+LEAGUE_TEAMS: int = 20               # <-- 20 teams in the league
+TEAM_SIZE: int = 5                   # 5 players per team
+ROUNDS_DOUBLE_ROUND_ROBIN: int = 2   # each opponent twice (home/away) → 38 rounds
 
 # Points (W-D-L = 3-1-0)
 POINTS_WIN: int = 3
@@ -18,7 +18,7 @@ TIEBREAKERS = ("KILL_DIFF", "HEAD_TO_HEAD")
 # -------- Match / Grid --------
 GRID_W: int = 11
 GRID_H: int = 11
-TURN_LIMIT: int = 100  # allow draws if we hit this
+TURN_LIMIT: int = 100
 
 # -------- RNG / Seeds --------
 DEFAULT_SEED: int = 1337
