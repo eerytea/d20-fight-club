@@ -141,6 +141,11 @@ class TBCombat:
         """Run until end or until max_rounds exceeded (safety)."""
         while not self._ended and self.round <= max_rounds:
             self.step_action()
+             # --- Back-compat alias for tests ---
+        def take_turn(self):
+            """Advance one atomic action (alias of step_action)."""
+            return self.step_action()
+
         if not self._ended:
             self._end_match(winner=self._winner_by_hp_sum())
 
