@@ -1,8 +1,8 @@
-# ui/state_table.py — Standings with crisp gridlines, compact sizing, and scrolling
+# ui/state_table.py — Standings that auto-fit inside the panel + full gridlines
 from __future__ import annotations
 
 from typing import List, Dict, Any, Tuple
-
+import math
 import pygame
 
 from .app import BaseState
@@ -10,7 +10,7 @@ from .uiutil import Theme, Button, draw_panel, get_font
 
 
 def _rows_from_career(career) -> List[Dict[str, Any]]:
-    """Primary: core.standings.table_rows_sorted.  Fallbacks keep UI resilient."""
+    """Preferred: core.standings.table_rows_sorted. Fallbacks keep UI resilient."""
     try:
         from core.standings import table_rows_sorted  # type: ignore
         return list(table_rows_sorted(career))
@@ -28,7 +28,7 @@ def _rows_from_career(career) -> List[Dict[str, Any]]:
 
 
 def _ellipsize(font, text: str, max_w: int) -> str:
-    """Trim with … so team names never spill outside the Team column."""
+    """Trim with … so names never spill out of their cell."""
     if font.get_rect(text).width <= max_w:
         return text
     s = text
@@ -47,16 +47,19 @@ class TableState(BaseState):
         self.rect_toolbar = pygame.Rect(0, 0, 0, 0)
         self.rect_panel   = pygame.Rect(0, 0, 0, 0)
 
+        # UI
         self.btn_back: Button | None = None
 
-        # Compact sizing so everything fits
-        self.header_h = 30
-        self.row_h    = 26
+        # Sizing (header height is fixed; rows/ fonts are computed to fit)
+        self.header_h = 32
+        self.row_h    = 26  # will be recomputed in draw()
         self.scroll_y = 0
+        self.scroll_enabled = False
 
-        # Fonts (a bit smaller than before)
-        self.f_hdr  = get_font(24)
-        self.f_cell = get_font(20)
+        # Fonts are also (re)computed in draw() based on row_h
+        self.f_title = get_font(24)
+        self.f_hdr   = get_font(22)
+        self.f_cell  = get_font(20)
 
         self._built = False
 
@@ -86,7 +89,8 @@ class TableState(BaseState):
     # ---------- events ----------
     def handle(self, event) -> None:
         self.btn_back.handle(event)
-        if event.type == pygame.MOUSEWHEEL:
+
+        if event.type == pygame.MOUSEWHEEL and self.scroll_enabled:
             mx, my = pygame.mouse.get_pos()
             if self.rect_panel.collidepoint(mx, my):
                 self.scroll_y = max(0, self.scroll_y - event.y * (self.row_h * 3))
@@ -104,13 +108,32 @@ class TableState(BaseState):
         # Toolbar
         draw_panel(surf, self.rect_toolbar, th)
         title = "Standings"
-        tr = self.f_hdr.get_rect(title); tr.center = self.rect_toolbar.center
-        self.f_hdr.render_to(surf, tr.topleft, title, th.text)
+        tr = self.f_title.get_rect(title); tr.center = self.rect_toolbar.center
+        self.f_title.render_to(surf, tr.topleft, title, th.text)
         self.btn_back.draw(surf, th)
 
-        # Table panel
+        # Table panel & inner area
         draw_panel(surf, self.rect_panel, th)
         inner = self.rect_panel.inflate(-12*2, -12*2)
+
+        # Header + body rects
+        header_rect = pygame.Rect(inner.x, inner.y, inner.w, self.header_h)
+        body_rect   = pygame.Rect(inner.x, header_rect.bottom, inner.w, inner.h - self.header_h)
+
+        # Get rows and compute row height so ALL rows fit in body_rect (if possible)
+        rows = _rows_from_career(self.career)
+        n = max(1, len(rows))
+        # keep row height between 20 and 30 so it remains readable
+        ideal_rh = math.floor(body_rect.h / n)
+        self.row_h = max(20, min(30, ideal_rh))
+        # Recompute fonts proportionally (caps to keep legible)
+        self.f_hdr  = get_font(max(18, min(26, int(self.row_h * 0.95))))
+        self.f_cell = get_font(max(16, min(24, int(self.row_h * 0.8))))
+        self.f_title = get_font(max(22, min(28, int(self.header_h * 0.8))))
+
+        # Enable scroll only if even with min row height it still doesn't fit
+        visible_rows = body_rect.h // self.row_h
+        self.scroll_enabled = n > visible_rows
 
         # Column layout: Pos | Team | P | W | D | L | K | KD | PTS
         fixed_cols: List[Tuple[str, int, str]] = [
@@ -127,23 +150,17 @@ class TableState(BaseState):
         team_w  = max(140, inner.w - fixed_w)
         columns = [("Pos", 50, "right"), ("Team", team_w, "left")] + fixed_cols[1:]
 
-        # Compute x positions & column right edges for vertical gridlines
+        # Compute x positions
         xs = [inner.x]
         for _, w, _ in columns:
             xs.append(xs[-1] + w)
-
-        # Sticky header area and scrollable body area
-        header_rect = pygame.Rect(inner.x, inner.y, inner.w, self.header_h)
-        body_rect   = pygame.Rect(inner.x, header_rect.bottom, inner.w, inner.h - self.header_h)
 
         grid = th.subt  # subtle gridline color
 
         # HEADER
         pygame.draw.rect(surf, (*th.panel,), header_rect, border_radius=4)
-        # header titles
         for i, (name, w, align) in enumerate(columns):
             cell = pygame.Rect(xs[i], header_rect.y, w, self.header_h)
-            # text
             txtr = self.f_hdr.get_rect(name)
             if name == "Team":
                 txtr.midleft = (cell.x + 10, cell.centery)
@@ -152,34 +169,30 @@ class TableState(BaseState):
             else:
                 txtr.center = cell.center
             self.f_hdr.render_to(surf, txtr.topleft, name, th.text)
-        # vertical gridlines across header
+        # header gridlines
         for x in xs:
             pygame.draw.line(surf, grid, (x, header_rect.top), (x, header_rect.bottom), 1)
-        # bottom header line
         pygame.draw.line(surf, grid, (header_rect.left, header_rect.bottom), (header_rect.right, header_rect.bottom), 1)
 
-        # BODY (scrollable)
-        rows = _rows_from_career(self.career)
+        # BODY — clipped to body_rect
         saved = surf.get_clip()
         surf.set_clip(body_rect)
 
-        y = body_rect.y - self.scroll_y
+        y = body_rect.y - (self.scroll_y if self.scroll_enabled else 0)
         for idx, row in enumerate(rows, start=1):
             row_rect = pygame.Rect(body_rect.x, int(y), body_rect.w, self.row_h)
 
-            # Alternating row fill (very subtle)
+            # Alternating fill (very subtle)
             if (idx % 2) == 0:
                 pygame.draw.rect(surf, (th.panel[0], th.panel[1], th.panel[2]), row_rect)
 
-            # cells: draw text per column
+            # cells
             for i, (name, w, align) in enumerate(columns):
                 cell = pygame.Rect(xs[i], row_rect.y, w, self.row_h)
-
-                # text value
+                # value
                 if name == "Pos":
                     txt = f"{idx}."
                 elif name == "Team":
-                    # fit to column width
                     txt = _ellipsize(self.f_cell, str(row.get("name", "—")), w - 14)
                 else:
                     key = name if name in ("PTS", "KD") else {"P": "PL", "W": "W", "D": "D", "L": "L", "K": "K"}.get(name, name)
@@ -194,24 +207,26 @@ class TableState(BaseState):
                     txtr.center = cell.center
                 self.f_cell.render_to(surf, txtr.topleft, txt, th.text)
 
-            # horizontal gridline between EVERY row
+            # horizontal line under EVERY row
             pygame.draw.line(surf, grid, (row_rect.left, row_rect.bottom), (row_rect.right, row_rect.bottom), 1)
 
             y += self.row_h
 
-        # vertical gridlines down the body (aligned with header)
+        # vertical lines down the body (aligned with header)
         for x in xs:
             pygame.draw.line(surf, grid, (x, body_rect.top), (x, body_rect.bottom), 1)
 
         surf.set_clip(saved)
 
-        # thin border around inner region
+        # Thin border around inner table area
         pygame.draw.rect(surf, grid, inner, 1, border_radius=6)
 
     # ---------- utils ----------
     def _clamp_scroll(self) -> None:
+        # Keep scroll within the content bounds
         rows = _rows_from_career(self.career)
+        inner = self.rect_panel.inflate(-12*2, -12*2)
+        body_h = inner.h - self.header_h
         content_h = len(rows) * self.row_h
-        visible_h = self.rect_panel.h - 12 * 2 - self.header_h
-        max_scroll = max(0, content_h - visible_h)
+        max_scroll = max(0, content_h - body_h)
         self.scroll_y = max(0, min(self.scroll_y, max_scroll))
