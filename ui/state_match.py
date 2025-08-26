@@ -2,15 +2,34 @@
 from __future__ import annotations
 
 import pygame
+from dataclasses import dataclass
 from typing import Dict, Any, List
 
 from .app import BaseState
 from .uiutil import Theme, Button, draw_text, draw_panel
 
-from engine.tbcombat import (
-    Team, TBCombat, fighter_from_dict, layout_teams_tiles,
-    GRID_W, GRID_H
-)
+# --- Import TBCombat & helpers, but be resilient if some symbols are missing ---
+from engine.tbcombat import TBCombat, fighter_from_dict  # these should exist
+
+# Optional imports with fallbacks (to tolerate API differences across branches)
+try:
+    from engine.tbcombat import Team as TBTeam  # preferred
+except Exception:
+    @dataclass
+    class TBTeam:  # minimal compatibility shim
+        tid: int
+        name: str
+        color: tuple[int, int, int]
+
+try:
+    from engine.tbcombat import layout_teams_tiles as _layout_teams_tiles
+except Exception:
+    _layout_teams_tiles = None
+
+try:
+    from engine.tbcombat import GRID_W as _GRID_W, GRID_H as _GRID_H
+except Exception:
+    _GRID_W, _GRID_H = 15, 9  # safe defaults
 
 
 class MatchState(BaseState):
@@ -18,7 +37,7 @@ class MatchState(BaseState):
     Minimal match viewer:
       - Builds TBCombat from team dicts
       - Step / Auto buttons
-      - Shows last ~12 events as text
+      - Shows a rolling text log
     """
     def __init__(self, app, home_team: Dict[str, Any], away_team: Dict[str, Any]):
         self.app = app
@@ -43,16 +62,30 @@ class MatchState(BaseState):
 
     # --- setup ---------------------------------------------------------------
     def _build_match(self):
-        # Build Team objects
-        th = Team(self.home_d["tid"], self.home_d["name"], tuple(self.home_d.get("color", (180,180,220))))
-        ta = Team(self.away_d["tid"], self.away_d["name"], tuple(self.away_d.get("color", (220,180,180))))
+        th = TBTeam(self.home_d["tid"], self.home_d.get("name", "Home"), tuple(self.home_d.get("color", (180,180,220))))
+        ta = TBTeam(self.away_d["tid"], self.away_d.get("name", "Away"), tuple(self.away_d.get("color", (220,180,180))))
 
-        # Build fighter list (mix both teams)
-        fighters = [fighter_from_dict({**fd, "team_id": th.tid}) for fd in self.home_d.get("fighters") or self.home_d.get("roster", [])]
-        fighters += [fighter_from_dict({**fd, "team_id": ta.tid}) for fd in self.away_d.get("fighters") or self.away_d.get("roster", [])]
+        # Build fighter list (ensure team_id is attached)
+        h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
+        a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
+        fighters = [fighter_from_dict({**fd, "team_id": th.tid}) for fd in h_roster]
+        fighters += [fighter_from_dict({**fd, "team_id": ta.tid}) for fd in a_roster]
 
-        layout_teams_tiles(fighters, GRID_W, GRID_H)
-        self.combat = TBCombat(th, ta, fighters, GRID_W, GRID_H, seed=42)
+        # Place fighters on grid
+        if _layout_teams_tiles:
+            _layout_teams_tiles(fighters, _GRID_W, _GRID_H)
+        else:
+            # crude fallback: left/right columns
+            y = 1
+            for f in fighters:
+                if f.team_id == th.tid:
+                    f.x, f.y = 1, y
+                else:
+                    f.x, f.y = _GRID_W - 2, y
+                y = 1 if y >= _GRID_H - 2 else y + 2
+
+        # start combat
+        self.combat = TBCombat(th, ta, fighters, _GRID_W, _GRID_H, seed=42)
         self.events = []
 
     def _build_ui(self):
@@ -68,9 +101,7 @@ class MatchState(BaseState):
 
     # --- actions -------------------------------------------------------------
     def _step(self):
-        if not self.combat:
-            return
-        if self.combat.winner is None:
+        if self.combat and self.combat.winner is None:
             self._tick_once()
 
     def _toggle_auto(self):
@@ -82,21 +113,19 @@ class MatchState(BaseState):
         self.app.pop_state()
 
     def _tick_once(self):
-        # advance one micro-turn; TBCombat appends to events (strings or typed)
         self.combat.take_turn()
-        # Prefer typed if present; else legacy strings
+
+        # Prefer typed events if available; else legacy strings
         evs = getattr(self.combat, "events_typed", None)
         if evs:
-            # best-effort use of formatter (works with our minimal engine/events)
             try:
                 from engine.events import format_event
-                new_lines = [format_event(e) for e in evs[-4:]]  # just tail
+                new_lines = [format_event(e) for e in evs[-4:]]
             except Exception:
                 new_lines = [str(e) for e in evs[-4:]]
         else:
             new_lines = [str(s) for s in self.combat.events[-4:]]
 
-        # keep last ~12 lines
         self.events.extend(new_lines)
         if len(self.events) > 40:
             self.events = self.events[-40:]
