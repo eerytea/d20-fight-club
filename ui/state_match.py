@@ -72,7 +72,7 @@ def _short_name(name: str) -> str:
 
 
 class MatchState(BaseState):
-    """Match viewer with single event stream and robust two-column layout."""
+    """Match viewer that normalizes engine team IDs to 0/1 to avoid instant end."""
 
     def __init__(self, app, home_team: Dict[str, Any], away_team: Dict[str, Any]):
         self.app = app
@@ -81,12 +81,16 @@ class MatchState(BaseState):
         self.home_d = home_team
         self.away_d = away_team
 
+        # original career team ids (for user-color decision)
+        self.home_tid_orig = int(home_team.get("tid", 0))
+        self.away_tid_orig = int(away_team.get("tid", 1))
+
         self.combat: Optional[TBCombat] = None
         self._built = False
         self._started = False
 
-        # color mapping (user team = red)
-        self._color_for_tid: Dict[int, Tuple[int, int, int]] = {}
+        # engine-visible color mapping (0 = home, 1 = away)
+        self._color_for_engine_tid: Dict[int, Tuple[int, int, int]] = {}
 
         # UI rects + buttons
         self.rect_panel = pygame.Rect(0, 0, 0, 0)
@@ -148,17 +152,16 @@ class MatchState(BaseState):
     # ---------- colors ----------
     def _decide_team_colors(self) -> None:
         user_tid = getattr(getattr(self.app, "career", None), "user_team_id", None)
-        ht = int(self.home_d.get("tid", 0))
-        at = int(self.away_d.get("tid", 1))
-        if user_tid is not None:
-            if ht == user_tid: self._color_for_tid = {ht: COLOR_RED, at: COLOR_BLUE}
-            elif at == user_tid: self._color_for_tid = {ht: COLOR_BLUE, at: COLOR_RED}
-            else: self._color_for_tid = {ht: COLOR_RED, at: COLOR_BLUE}
+        # engine ids are 0 (home) and 1 (away)
+        if user_tid == self.home_tid_orig:
+            self._color_for_engine_tid = {0: COLOR_RED, 1: COLOR_BLUE}
+        elif user_tid == self.away_tid_orig:
+            self._color_for_engine_tid = {0: COLOR_BLUE, 1: COLOR_RED}
         else:
-            self._color_for_tid = {ht: COLOR_RED, at: COLOR_BLUE}
+            self._color_for_engine_tid = {0: COLOR_RED, 1: COLOR_BLUE}
 
-    def _team_color_for_tid(self, tid: int) -> Tuple[int, int, int]:
-        return self._color_for_tid.get(int(tid), COLOR_BLUE)
+    def _team_color_for_engine_tid(self, tid01: int) -> Tuple[int, int, int]:
+        return self._color_for_engine_tid.get(int(tid01), COLOR_BLUE)
 
     # ---------- HP & identity ----------
     def _init_hp_cache(self) -> None:
@@ -241,7 +244,7 @@ class MatchState(BaseState):
             if t in ("end","End","finish"):
                 return "End of match"
 
-            # readable fallback (replace actor/target with names)
+            # readable fallback
             parts = []
             for k, v in e.items():
                 if k in actor_keys or k in targ_keys: v = self._name_from_val(v)
@@ -258,36 +261,37 @@ class MatchState(BaseState):
         self._rebuild_name_maps()
         self._init_hp_cache()
         self._choose_event_source()
-        self._harvest_new_events()  # prime
+        self._harvest_new_events()  # prime (may include Round 1)
         self._built = True
 
     def _build_match(self) -> None:
-        ht = int(self.home_d.get("tid", 0))
-        at = int(self.away_d.get("tid", 1))
-        tA = TBTeam(ht, self.home_d.get("name","Home"), COLOR_RED)
-        tB = TBTeam(at, self.away_d.get("name","Away"), COLOR_BLUE)
+        # IMPORTANT: normalize to 0/1 for the engine
+        tA_engine_id, tB_engine_id = 0, 1
+        tA = TBTeam(tA_engine_id, self.home_d.get("name","Home"), COLOR_RED)
+        tB = TBTeam(tB_engine_id, self.away_d.get("name","Away"), COLOR_BLUE)
 
-        # fighters from team dicts
+        # fighters from team dicts, mapped to engine ids 0/1
         h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
         a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
         fighters: List[Any] = []
         for idx, fd in enumerate(h_roster):
-            fighters.append(_mk_fighter({**fd, "team_id": ht, "pid": fd.get("pid") or f"H{idx}"}))
+            fighters.append(_mk_fighter({**fd, "team_id": tA_engine_id, "pid": fd.get("pid") or f"H{idx}"}))
         for idx, fd in enumerate(a_roster):
-            fighters.append(_mk_fighter({**fd, "team_id": at, "pid": fd.get("pid") or f"A{idx}"}))
+            fighters.append(_mk_fighter({**fd, "team_id": tB_engine_id, "pid": fd.get("pid") or f"A{idx}"}))
 
-        # **Always** do our own two-column layout keyed on actual tids
-        self._layout_two_columns(fighters, ht, at)
+        # two-column layout using engine ids 0/1
+        self._layout_two_columns(fighters, tA_engine_id, tB_engine_id)
 
+        # fresh combat
         self.combat = TBCombat(tA, tB, fighters, _GRID_W, _GRID_H, seed=42)
         self.events.clear()
         self._log_scroll = 0
         self._last_round_seen = 0
         self._started = False
 
-    def _layout_two_columns(self, fighters: List[Any], ht: int, at: int) -> None:
-        left  = [f for f in fighters if getattr(f, "team_id", 0) == ht]
-        right = [f for f in fighters if getattr(f, "team_id", 0) == at]
+    def _layout_two_columns(self, fighters: List[Any], home_id01: int, away_id01: int) -> None:
+        left  = [f for f in fighters if getattr(f, "team_id", 0) == home_id01]
+        right = [f for f in fighters if getattr(f, "team_id", 0) == away_id01]
         gapL = max(1, _GRID_H // (len(left)  + 1)) if left  else 2
         gapR = max(1, _GRID_H // (len(right) + 1)) if right else 2
         for i, f in enumerate(left,  start=1): f.x = f.tx = 1;               f.y = f.ty = min(_GRID_H-1, i*gapL)
@@ -355,7 +359,6 @@ class MatchState(BaseState):
             self._harvest_and_refresh()
             if getattr(self.combat, "winner", None) is not None: break
 
-            # Stop when actor changes OR round increments
             new_raw = self._raw_since(base_raw)
             for e in new_raw:
                 if isinstance(e, dict):
@@ -416,7 +419,7 @@ class MatchState(BaseState):
             except Exception:
                 pass
 
-        # then add readable log lines
+        # readable log lines
         for e in fresh:
             try:
                 s = self._fmt_event(e)
@@ -537,8 +540,9 @@ class MatchState(BaseState):
                 dot_cx = int(base_cx + dx * cell_w)
                 dot_cy = int(base_cy + dy * cell_h)
 
-                tid = int(getattr(f, "team_id", 0))
-                color = self._team_color_for_tid(tid)
+                # engine ids are 0/1
+                tid01 = int(getattr(f, "team_id", 0))
+                color = self._team_color_for_engine_tid(tid01)
 
                 hp, mh = self._fighter_hp(f)
                 name_full = str(getattr(f, "name", getattr(f, "pid", "F")))
