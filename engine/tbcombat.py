@@ -1,288 +1,406 @@
-# engine/tbcombat.py
+"""
+TBCombat — turn-based D20-flavored grid combat engine (single-occupancy enforced)
+
+Public contract (as used elsewhere in the project):
+- Constructor: TBCombat(teamA, teamB, fighters, GRID_W, GRID_H, seed=None)
+  * teamA/teamB: strings or simple objects used only for display; winner is 0/1
+  * fighters: iterable of objects OR dicts with fields/keys:
+      pid, name, team_id (0 or 1), x, y, tx, ty, hp, max_hp, alive
+- Attributes emitted/used by UI & core:
+  * typed_events (alias: events_typed): list of dict events appended over time
+    Event shapes (all strings and ints):
+      {'type': 'round', 'round': int}
+      {'type': 'move', 'name': str, 'to': (x, y)}
+      {'type': 'blocked', 'name': str, 'to': (x, y), 'by': str}
+      {'type': 'hit', 'name': str, 'target': str, 'dmg': int}
+      {'type': 'miss', 'name': str, 'target': str}
+      {'type': 'down', 'name': str}  # (target name)
+      {'type': 'end'}                # winner available on self.winner
+  * winner: 0 or 1 when match ends; None while ongoing
+  * GRID_W, GRID_H: ints
+
+How stepping works:
+- Call step_action() to perform exactly one actor action (move/attack), appending new events.
+- If you prefer to pre-bake, call simulate_all() once, then read typed_events in your viewer.
+
+Determinism:
+- All stochastic choices use self.rng (seeded in __init__), NEVER the global random module.
+
+Single-occupancy enforcement:
+- Spawn collisions are deterministically nudged to the nearest free tile.
+- Moves into occupied tiles do not happen; a typed {'type':'blocked', ...} event is emitted instead.
+"""
+
 from __future__ import annotations
-
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+import math
 import random
-from dataclasses import dataclass
-from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple, Optional
 
-GRID_W, GRID_H = 15, 9
 
-@dataclass
-class Team:
-    tid: int
-    name: str
-    color: Tuple[int, int, int]
+Coord = Tuple[int, int]
 
-def fighter_from_dict(d: Dict[str, Any]) -> Any:
-    dd = dict(d)
-    dd.setdefault("pid", str(dd.get("pid") or dd.get("id") or dd.get("name") or "F"))
-    dd.setdefault("name", str(dd.get("name") or dd["pid"]))
-    dd.setdefault("team_id", int(dd.get("team_id", 0)))
-    lv = int(dd.get("level", dd.get("lvl", 1)))
-    hp = int(dd.get("hp", 10 + lv * 2))
-    dd.setdefault("level", lv)
-    dd.setdefault("hp", hp)
-    dd.setdefault("max_hp", int(dd.get("max_hp", hp)))
-    dd.setdefault("ac", int(dd.get("ac", 10 + lv // 2)))
-    dd.setdefault("atk", int(dd.get("atk", 2 + lv // 2)))
-    dd.setdefault("alive", bool(dd.get("alive", True)))
-    dd.setdefault("x", int(dd.get("x", 0)))
-    dd.setdefault("y", int(dd.get("y", 0)))
-    dd.setdefault("tx", int(dd.get("tx", dd["x"])))
-    dd.setdefault("ty", int(dd.get("ty", dd["y"])))
-    dd.setdefault("xp", int(dd.get("xp", 0)))
-    return SimpleNamespace(**dd)
 
-def layout_teams_tiles(fighters: List[Any], W: int, H: int) -> None:
-    """Simple left/right columns — exclusive tiles by construction."""
-    home = [f for f in fighters if getattr(f, "team_id", 0) == 0]
-    away = [f for f in fighters if getattr(f, "team_id", 0) == 1]
-    gapL = max(1, H // (len(home) + 1)) if home else 2
-    gapR = max(1, H // (len(away) + 1)) if away else 2
-    for i, f in enumerate(home, start=1):
-        f.x = f.tx = 1; f.y = f.ty = min(H - 1, i * gapL)
-    for i, f in enumerate(away, start=1):
-        f.x = f.tx = max(0, W - 2); f.y = f.ty = min(H - 1, i * gapR)
+def _get(obj: Any, key: str, default=None):
+    """Attribute/dict accessor (supports both dot-attrs and mapping keys)."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _set(obj: Any, key: str, value: Any) -> None:
+    """Attribute/dict setter (supports both dot-attrs and mapping keys)."""
+    if isinstance(obj, dict):
+        obj[key] = value
+    else:
+        setattr(obj, key, value)
+
 
 class TBCombat:
-    """Minimal deterministic TB combat with typed events and no-tile-stacking rule."""
-
-    def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], W: int, H: int, seed: int = 0):
+    def __init__(
+        self,
+        teamA: Any,
+        teamB: Any,
+        fighters: Iterable[Any],
+        GRID_W: int,
+        GRID_H: int,
+        seed: Optional[int] = None,
+    ) -> None:
         self.teamA = teamA
         self.teamB = teamB
-        self.W, self.H = int(W), int(H)
-        self.fighters: List[Any] = [fighter_from_dict(f.__dict__ if hasattr(f, "__dict__") else f) for f in fighters]
-        self.rng = random.Random(int(seed))
+        self.GRID_W = int(GRID_W)
+        self.GRID_H = int(GRID_H)
+        self.rng = random.Random(seed if seed is not None else 0)
 
-        # public logs (string and typed)
-        self.events: List[str] = []
-        self.events_typed: List[Dict[str, Any]] = []
-        # alias some names other code may look for
-        self.typed_events = self.events_typed
-        self.event_log_typed = self.events_typed
-        self.log = self.events
+        # Normalize fighters list (keep references as given — UI may hold onto them)
+        self.fighters: List[Any] = list(fighters)
+
+        # Guarantee team_id is 0/1 (normalize quietly; UI also normalizes in match state)
+        for f in self.fighters:
+            tid = _get(f, "team_id", 0)
+            _set(f, "team_id", 1 if tid in (1, "1", True) else 0)
+
+        # Typed event stream (alias maintained for older code)
+        self.typed_events: List[Dict[str, Any]] = []
+        self.events_typed = self.typed_events  # alias for compatibility
 
         self.round: int = 1
-        self.turn_index: int = 0
-        self.winner: Optional[str] = None  # 'home' | 'away' | 'draw'
-        self._push_round_banner()
+        self._started_round: bool = False  # to emit round banner once per round
+        self._turn_cursor: int = 0         # index into self._turn_order
+        self._build_turn_order()
 
-        # ensure initial exclusivity
-        self._enforce_exclusive_tiles()
+        # Occupancy and spawn fixups
+        self._rebuild_occupied()
+        self._fix_spawn_collisions()
 
-    # ---------- occupancy helpers ----------
-    def _alive(self, f: Any) -> bool:
-        return bool(getattr(f, "alive", True)) and int(getattr(f, "hp", 0)) > 0
+        # Match state
+        self.winner: Optional[int] = None
+        self._ended: bool = False
 
-    def _occupied(self, x: int, y: int, ignore: Optional[Any] = None) -> bool:
-        for g in self.fighters:
-            if g is ignore: continue
-            if not self._alive(g): continue
-            if int(getattr(g, "x", -1)) == x and int(getattr(g, "y", -1)) == y:
-                return True
-        return False
+        # Emit opening round marker immediately for viewer sanity
+        self._emit({"type": "round", "round": self.round})
+        self._started_round = True
 
-    def _neighbors_8(self, x: int, y: int) -> List[Tuple[int, int]]:
-        out = []
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx == 0 and dy == 0: continue
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < self.W and 0 <= ny < self.H:
-                    out.append((nx, ny))
-        return out
+    # ---------- Core loop utilities ----------
 
-    def _find_alt_free(self, x: int, y: int, actor: Any) -> Optional[Tuple[int, int]]:
-        # Prefer neighbors closer to target tile if possible
-        neigh = self._neighbors_8(x, y)
-        self.rng.shuffle(neigh)
-        for nx, ny in neigh:
-            if not self._occupied(nx, ny, ignore=actor):
-                return (nx, ny)
+    def step_action(self) -> List[Dict[str, Any]]:
+        """
+        Perform exactly one actor's action (move or attack).
+        Returns the list of events appended by this call (convenience).
+        """
+        if self._ended:
+            return []
+
+        start_len = len(self.typed_events)
+
+        # Pick next alive actor (advance turn cursor as needed)
+        actor = self._next_actor()
+        if actor is None:
+            # Round rollover (no alive actors found in this pass)
+            self._advance_round()
+            actor = self._next_actor()
+            if actor is None:
+                # Both sides dead? End in a draw: choose winner by kills/hp — keep simple: team 0 wins tie-breaker.
+                self._end_match(winner=0)
+                return self.typed_events[start_len:]
+
+        # Decide action: if adjacent enemy => attack; else move toward closest enemy
+        enemy = self._closest_enemy(actor)
+        if enemy is None:
+            # No enemies alive: actor's team wins
+            self._end_match(winner=_get(actor, "team_id"))
+            return self.typed_events[start_len:]
+
+        ax, ay = _get(actor, "x"), _get(actor, "y")
+        ex, ey = _get(enemy, "x"), _get(enemy, "y")
+        if self._manhattan(ax, ay, ex, ey) == 1:
+            self._attack(actor, enemy)
+        else:
+            self._step_toward(actor, (ex, ey))
+
+        # Check victory after the action
+        self._check_victory()
+
+        return self.typed_events[start_len:]
+
+    def simulate_all(self, max_rounds: int = 500) -> None:
+        """Run until end or until max_rounds exceeded (safety)."""
+        while not self._ended and self.round <= max_rounds:
+            self.step_action()
+        if not self._ended:
+            # Failsafe: end by remaining HP sum
+            winner = self._winner_by_hp_sum()
+            self._end_match(winner=winner)
+
+    # ---------- Internals ----------
+
+    def _build_turn_order(self) -> None:
+        """Deterministic order: by (team_id, pid) so team 0, then 1, alternating by actor index naturally."""
+        # Split by team, sort by pid to stabilize
+        t0 = [f for f in self.fighters if _get(f, "team_id") == 0]
+        t1 = [f for f in self.fighters if _get(f, "team_id") == 1]
+        t0.sort(key=lambda f: _get(f, "pid", 0))
+        t1.sort(key=lambda f: _get(f, "pid", 0))
+        # Interleave to roughly alternate sides
+        interleaved: List[Any] = []
+        i = 0
+        while i < len(t0) or i < len(t1):
+            if i < len(t0):
+                interleaved.append(t0[i])
+            if i < len(t1):
+                interleaved.append(t1[i])
+            i += 1
+        self._turn_order = interleaved
+        self._turn_cursor = 0
+
+    def _next_actor(self) -> Optional[Any]:
+        """Return next alive actor and advance _turn_cursor to its position. If none alive in this scan, return None."""
+        n = len(self._turn_order)
+        if n == 0:
+            return None
+        # Scan at most n entries to find next alive
+        for _ in range(n):
+            actor = self._turn_order[self._turn_cursor]
+            if _get(actor, "alive", True) and _get(actor, "hp", 1) > 0:
+                return actor
+            # dead -> skip forward
+            self._turn_cursor = (self._turn_cursor + 1) % n
+        # Nobody alive in the entire order
         return None
 
-    def _enforce_exclusive_tiles(self) -> None:
-        """Resolve any accidental stacking by gently nudging later occupants to nearest free."""
-        seen = set()
+    def _advance_turn_cursor(self) -> None:
+        n = len(self._turn_order)
+        if n:
+            self._turn_cursor = (self._turn_cursor + 1) % n
+            if self._turn_cursor == 0:
+                self._advance_round()
+
+    def _advance_round(self) -> None:
+        self.round += 1
+        self._started_round = False
+        self._emit({"type": "round", "round": self.round})
+        self._started_round = True
+
+    # ---------- Movement & Occupancy ----------
+
+    def _rebuild_occupied(self) -> None:
+        """Recreate occupied map from alive fighters."""
+        self.occupied: Dict[Coord, int] = {}
         for f in self.fighters:
-            if not self._alive(f): continue
-            x, y = int(getattr(f, "x", 0)), int(getattr(f, "y", 0))
-            key = (x, y)
-            if key in seen:
-                alt = self._find_alt_free(x, y, f)
-                if alt:
-                    f.x, f.y = alt
-                else:
-                    # if totally surrounded, leave as-is; draw path will still offset visually
-                    pass
+            if not _get(f, "alive", True):
+                continue
+            key = (_get(f, "x"), _get(f, "y"))
+            if key in self.occupied:
+                # leave as-is; spawn fixup will resolve
+                pass
             else:
-                seen.add(key)
+                self.occupied[key] = _get(f, "pid")
 
-    # ---------- events ----------
-    def _push_round_banner(self) -> None:
-        self.events_typed.append({"type": "round", "round": self.round})
-        self.events.append(f"— Round {self.round} —")
+    def _fix_spawn_collisions(self) -> None:
+        """Deterministically nudge spawn collisions to nearest free tiles, and note it with a 'note' event."""
+        colliding: Dict[Coord, List[str]] = {}
+        seen: Dict[Coord, int] = {}
+        for f in self.fighters:
+            if not _get(f, "alive", True):
+                continue
+            xy = (_get(f, "x"), _get(f, "y"))
+            pid = _get(f, "pid")
+            if xy in seen:
+                # need to nudge this fighter
+                nx, ny = self._nearest_free(xy)
+                # reserve new spot
+                self.occupied.pop(xy, None)  # in case it was set
+                self.occupied[(nx, ny)] = pid
+                _set(f, "x", nx)
+                _set(f, "y", ny)
+                colliding.setdefault(xy, []).append(_get(f, "name", f"PID{pid}"))
+            else:
+                seen[xy] = pid
 
-    def _emit_move(self, f: Any, to_xy: Tuple[int, int]) -> None:
-        self.events_typed.append({"type": "move", "name": f.name, "to": tuple(to_xy)})
-        self.events.append(f"{f.name} moves to {tuple(to_xy)}")
+        if colliding:
+            # Emit a non-critical note for debugging (UI may ignore)
+            self._emit({"type": "note", "msg": f"Spawn collisions resolved: {colliding}"})
 
-    def _emit_hit(self, a: Any, d: Any, dmg: int) -> None:
-        self.events_typed.append({"type": "hit", "name": a.name, "target": d.name, "dmg": int(dmg)})
-        self.events.append(f"{a.name} hits {d.name} for {int(dmg)}")
+    def _nearest_free(self, start_xy: Coord) -> Coord:
+        sx, sy = start_xy
+        # Spiral/ring search in deterministic order
+        maxr = max(self.GRID_W, self.GRID_H) + 2
+        if (sx, sy) not in self.occupied and self._in_bounds(sx, sy):
+            return sx, sy
+        for r in range(1, maxr):
+            # top/bottom edges
+            for dx in range(-r, r + 1):
+                for dy in (-r, r):
+                    x, y = sx + dx, sy + dy
+                    if self._in_bounds(x, y) and (x, y) not in self.occupied:
+                        return x, y
+            # left/right edges (skip corners already checked)
+            for dy in range(-r + 1, r):
+                for dx in (-r, r):
+                    x, y = sx + dx, sy + dy
+                    if self._in_bounds(x, y) and (x, y) not in self.occupied:
+                        return x, y
+        # Fallback to start (shouldn't happen on sane grids)
+        return sx, sy
 
-    def _emit_miss(self, a: Any, d: Any) -> None:
-        self.events_typed.append({"type": "miss", "name": a.name, "target": d.name})
-        self.events.append(f"{a.name} misses {d.name}")
+    def _in_bounds(self, x: int, y: int) -> bool:
+        return 0 <= x < self.GRID_W and 0 <= y < self.GRID_H
 
-    def _emit_down(self, d: Any) -> None:
-        self.events_typed.append({"type": "down", "name": d.name})
-        self.events.append(f"{d.name} is down!")
+    def _can_enter(self, x: int, y: int) -> Tuple[bool, Optional[int]]:
+        if not self._in_bounds(x, y):
+            return False, None
+        occ = self.occupied.get((x, y))
+        return (occ is None), occ
 
-    def _emit_end(self) -> None:
-        self.events_typed.append({"type": "end"})
-        self.events.append("End of match")
-
-    # ---------- turn loop ----------
-    def _teams_alive(self) -> Tuple[bool, bool]:
-        a_alive = any(self._alive(f) and f.team_id == 0 for f in self.fighters)
-        b_alive = any(self._alive(f) and f.team_id == 1 for f in self.fighters)
-        return a_alive, b_alive
-
-    def _closest_enemy(self, f: Any) -> Optional[Any]:
-        best = None
-        best_d = 1e9
-        fx, fy = int(f.x), int(f.y)
-        for g in self.fighters:
-            if not self._alive(g): continue
-            if g.team_id == f.team_id: continue
-            d = abs(int(g.x) - fx) + abs(int(g.y) - fy)
-            if d < best_d:
-                best_d = d
-                best = g
-        return best
-
-    def _step_move_towards(self, f: Any, tgt: Any) -> None:
-        # Move by 1 step towards target; respect no-stacking rule
-        fx, fy = int(f.x), int(f.y)
-        tx, ty = int(tgt.x), int(tgt.y)
-        dx = 0 if tx == fx else (1 if tx > fx else -1)
-        dy = 0 if ty == fy else (1 if ty > fy else -1)
-
-        intended = (fx + dx, fy + dy)
-        nx, ny = intended
-        # clamp
-        nx = max(0, min(self.W - 1, nx))
-        ny = max(0, min(self.H - 1, ny))
-
-        if not self._occupied(nx, ny, ignore=f):
-            f.x, f.y = nx, ny
-            self._emit_move(f, (nx, ny))
-            return
-
-        # try an alternative neighbor that is free (prefer those closer to target)
-        choices = self._neighbors_8(fx, fy)
-        # sort by manhattan distance to target, then shuffle stable by rng
-        choices.sort(key=lambda p: abs(p[0] - tx) + abs(p[1] - ty))
-        for cx, cy in choices:
-            if not self._occupied(cx, cy, ignore=f):
-                f.x, f.y = cx, cy
-                self._emit_move(f, (cx, cy))
-                return
-
-        # stuck: don't move this turn
-        # (we still emit nothing; that’s fine)
-
-    def _adjacent(self, a: Any, b: Any) -> bool:
-        return max(abs(int(a.x) - int(b.x)), abs(int(a.y) - int(b.y))) <= 1
-
-    def _attack(self, a: Any, d: Any) -> None:
-        roll = self.rng.randint(1, 20)
-        atk  = int(getattr(a, "atk", 2))
-        ac   = int(getattr(d, "ac", 10))
-        total = roll + atk
-        if total >= ac:
-            dmg = max(1, self.rng.randint(1, 6) + (getattr(a, "level", 1)//2))
-            d.hp = max(0, int(d.hp) - dmg)
-            if d.hp <= 0:
-                d.alive = False
-            self._emit_hit(a, d, dmg)
-            if not self._alive(d):
-                # award XP on down
-                a.xp = int(getattr(a, "xp", 0)) + 10
-                self._emit_down(d)
-        else:
-            self._emit_miss(a, d)
-
-    def _maybe_end_match(self) -> bool:
-        a_alive, b_alive = self._teams_alive()
-        if a_alive and b_alive:
+    def _move_actor_if_free(self, actor: Any, to_xy: Coord) -> bool:
+        tx, ty = to_xy
+        ok, occ_pid = self._can_enter(tx, ty)
+        if not ok:
+            by_name = self._name_from_pid(occ_pid)
+            self._emit({"type": "blocked", "name": _get(actor, "name", "?"), "to": (tx, ty), "by": by_name})
+            # Consume the actor's action even if blocked (classic "bump loses AP")
+            self._advance_turn_cursor()
             return False
-        if a_alive and not b_alive:
-            self.winner = "home"
-        elif b_alive and not a_alive:
-            self.winner = "away"
-        else:
-            self.winner = "draw"
-        self._emit_end()
+
+        # Move: vacate old tile, occupy new
+        old = (_get(actor, "x"), _get(actor, "y"))
+        self.occupied.pop(old, None)
+        _set(actor, "x", tx)
+        _set(actor, "y", ty)
+        self.occupied[(tx, ty)] = _get(actor, "pid")
+        self._emit({"type": "move", "name": _get(actor, "name", "?"), "to": (tx, ty)})
+        self._advance_turn_cursor()
         return True
 
-    def take_turn(self, n: int = 1) -> None:
-        for _ in range(max(1, int(n))):
-            if self.winner is not None:
-                return
+    def _step_toward(self, actor: Any, target_xy: Coord) -> None:
+        """Greedy Manhattan approach — choose axis with greater distance; break ties deterministically by X then Y."""
+        ax, ay = _get(actor, "x"), _get(actor, "y")
+        tx, ty = target_xy
+        dx = tx - ax
+        dy = ty - ay
 
-            # find next alive actor
-            N = len(self.fighters)
-            idx = self.turn_index
-            for _spin in range(N):
-                f = self.fighters[idx]
-                idx = (idx + 1) % N
-                if self._alive(f):
-                    self.turn_index = idx
-                    break
-            actor = self.fighters[(idx - 1) % N]
-            if not self._alive(actor):
-                # everyone is dead? end match
-                if self._maybe_end_match():
-                    return
+        step_x = 0 if dx == 0 else (1 if dx > 0 else -1)
+        step_y = 0 if dy == 0 else (1 if dy > 0 else -1)
+
+        # Prefer axis with larger absolute distance; tie-break by X first
+        if abs(dx) > abs(dy):
+            cand = (ax + step_x, ay)
+        elif abs(dy) > abs(dx):
+            cand = (ax, ay + step_y)
+        else:
+            # equal — prefer X then Y deterministically
+            cand = (ax + step_x, ay) if step_x != 0 else (ax, ay + step_y)
+
+        self._move_actor_if_free(actor, cand)
+
+    # ---------- Combat ----------
+
+    def _attack(self, actor: Any, enemy: Any) -> None:
+        """Very simple D20-ish: roll to-hit; fixed-ish damage range; all via self.rng for determinism."""
+        # Consume actor's action regardless of outcome
+        self._advance_turn_cursor()
+
+        # To-hit: ~65% chance by default, seeded
+        roll = self.rng.random()
+        hit = roll < 0.65
+
+        a_name = _get(actor, "name", "?")
+        e_name = _get(enemy, "name", "?")
+
+        if not hit:
+            self._emit({"type": "miss", "name": a_name, "target": e_name})
+            return
+
+        dmg = 1 + int(self.rng.random() * 4)  # 1..4
+        self._emit({"type": "hit", "name": a_name, "target": e_name, "dmg": dmg})
+
+        # Apply damage
+        new_hp = max(0, _get(enemy, "hp", 0) - dmg)
+        _set(enemy, "hp", new_hp)
+        if new_hp <= 0 and _get(enemy, "alive", True):
+            _set(enemy, "alive", False)
+            # Free up the tile immediately
+            self.occupied.pop((_get(enemy, "x"), _get(enemy, "y")), None)
+            self._emit({"type": "down", "name": e_name})
+
+    # ---------- Victory / Helpers ----------
+
+    def _check_victory(self) -> None:
+        a_alive = any(_get(f, "alive", True) and _get(f, "team_id") == 0 for f in self.fighters)
+        b_alive = any(_get(f, "alive", True) and _get(f, "team_id") == 1 for f in self.fighters)
+        if a_alive and b_alive:
+            return
+        if a_alive and not b_alive:
+            self._end_match(winner=0)
+        elif b_alive and not a_alive:
+            self._end_match(winner=1)
+        else:
+            # nobody alive -> tie-break by HP (should be zero), then by team id
+            self._end_match(winner=self._winner_by_hp_sum())
+
+    def _winner_by_hp_sum(self) -> int:
+        sum0 = sum(_get(f, "hp", 0) for f in self.fighters if _get(f, "team_id") == 0)
+        sum1 = sum(_get(f, "hp", 0) for f in self.fighters if _get(f, "team_id") == 1)
+        if sum1 > sum0:
+            return 1
+        return 0
+
+    def _end_match(self, winner: int) -> None:
+        if self._ended:
+            return
+        self.winner = 1 if winner == 1 else 0
+        self._emit({"type": "end"})
+        self._ended = True
+
+    def _emit(self, ev: Dict[str, Any]) -> None:
+        # Keep event list small-ish if someone loops forever elsewhere
+        self.typed_events.append(ev)
+
+    def _name_from_pid(self, pid: Optional[int]) -> str:
+        if pid is None:
+            return "Unknown"
+        for f in self.fighters:
+            if _get(f, "pid") == pid:
+                return _get(f, "name", f"PID{pid}")
+        return f"PID{pid}"
+
+    @staticmethod
+    def _manhattan(x1: int, y1: int, x2: int, y2: int) -> int:
+        return abs(x1 - x2) + abs(y1 - y2)
+
+    def _closest_enemy(self, actor: Any) -> Optional[Any]:
+        """Return closest enemy by Manhattan distance; tie-break by lowest pid to be deterministic."""
+        ax, ay = _get(actor, "x"), _get(actor, "y")
+        my_team = _get(actor, "team_id")
+        best = None
+        best_key = None
+        for f in self.fighters:
+            if not _get(f, "alive", True):
                 continue
-
-            # pick closest enemy
-            tgt = self._closest_enemy(actor)
-            if tgt is None:
-                if self._maybe_end_match():
-                    return
+            if _get(f, "team_id") == my_team:
                 continue
-
-            # if adjacent -> attack, else move
-            if self._adjacent(actor, tgt):
-                self._attack(actor, tgt)
-            else:
-                self._step_move_towards(actor, tgt)
-
-            # after action, enforce exclusivity in case external effects stacked tiles
-            self._enforce_exclusive_tiles()
-
-            if self._maybe_end_match():
-                return
-
-            # start-of-next-round banner after everyone acted roughly once
-            # (simple round handling: every N actions, bump round)
-            if self.turn_index == 0:
-                self.round += 1
-                self._push_round_banner()
-
-    # aliases used by some callers
-    def step(self, n: int = 1) -> None:
-        self.take_turn(n)
-
-    def advance(self, n: int = 1) -> None:
-        self.take_turn(n)
-
-    def tick(self, n: int = 1) -> None:
-        self.take_turn(n)
-
-    def update(self, n: int = 1) -> None:
-        self.take_turn(n)
+            dist = self._manhattan(ax, ay, _get(f, "x"), _get(f, "y"))
+            key = (dist, _get(f, "pid", 0))
+            if best is None or key < best_key:
+                best = f
+                best_key = key
+        return best
