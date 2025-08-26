@@ -1,51 +1,126 @@
-# ui/state_schedule.py — left-aligned weekly schedule with clipping
+# ui/state_schedule.py — robust weekly schedule reader
 from __future__ import annotations
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 import pygame
 
 from .app import BaseState
-from .uiutil import Theme, Button, draw_panel, draw_text, get_font
+from .uiutil import Theme, Button, draw_panel, get_font
 
+
+def _get(obj: Any, key: str, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+def _safe_int(v, default: int = -1) -> int:
+    try:
+        if v is None: return default
+        return int(v)
+    except Exception:
+        return default
+
+def _team_id_from(obj: Any, default: int = -1) -> int:
+    for k in ("tid", "team_id", "id", "index"):
+        val = _get(obj, k, None)
+        if val is not None:
+            try:
+                return int(val)
+            except Exception:
+                pass
+    return default
+
+def _name_from(obj: Any, default: str = "Team") -> str:
+    for k in ("name", "full_name", "display_name", "abbr", "short"):
+        v = _get(obj, k, None)
+        if v:
+            return str(v)
+    return default
 
 def _team_name_map(career) -> Dict[int, str]:
     m: Dict[int, str] = {}
+    if hasattr(career, "team_name"):
+        for t in getattr(career, "teams", []) or []:
+            tid = _team_id_from(t, -1)
+            if tid >= 0:
+                try: m[tid] = str(career.team_name(tid))
+                except Exception: pass
+    if m:
+        return m
     for t in getattr(career, "teams", []) or []:
-        tid = int(getattr(t, "tid", t.get("tid", -1)) if not isinstance(t, dict) else t.get("tid", -1))
-        nm  = str(getattr(t, "name", t.get("name", f"Team {tid}")) if not isinstance(t, dict) else t.get("name", f"Team {tid}"))
-        if tid >= 0:
-            m[tid] = nm
+        tid = _team_id_from(t, -1)
+        nm = _name_from(t, f"Team {tid}")
+        if tid >= 0: m[tid] = nm
+    tn = getattr(career, "team_names", None)
+    if isinstance(tn, dict):
+        for k, v in tn.items():
+            try: m[int(k)] = str(v)
+            except Exception: pass
     return m
 
+def _pair_from_any(item) -> Tuple[int, int] | None:
+    if item is None: return None
+    if isinstance(item, (list, tuple)) and len(item) >= 2:
+        try: return (int(item[0]), int(item[1]))
+        except Exception: return None
+    if isinstance(item, dict):
+        for hk, ak in (("home_tid", "away_tid"), ("home_id", "away_id"),
+                       ("home", "away"), ("h", "v"), ("a", "b")):
+            ha = item.get(hk, None); aw = item.get(ak, None)
+            if ha is not None and aw is not None:
+                try: return (int(ha), int(aw))
+                except Exception: pass
+    ha = _get(item, "home_tid", _get(item, "home", _get(item, "h", None)))
+    aw = _get(item, "away_tid", _get(item, "away", _get(item, "v", None)))
+    if ha is not None and aw is not None:
+        try: return (int(ha), int(aw))
+        except Exception: return None
+    return None
+
 def _fixtures_for_week(career, week_idx: int) -> List[Tuple[int, int]]:
-    if hasattr(career, "fixtures_for_week"):
-        try:
-            out = career.fixtures_for_week(week_idx)
-            if out:
-                return [(int(a), int(b)) for (a, b) in out]
-        except Exception:
-            pass
-
-    sched = getattr(career, "schedule", None)
-    wk = []
-    if isinstance(sched, list):
-        wk = sched[week_idx] if 0 <= week_idx < len(sched) else []
-    elif isinstance(sched, dict):
-        wk = sched.get(week_idx, [])
-
-    pairs: List[Tuple[int, int]] = []
-    for f in wk or []:
-        if isinstance(f, dict):
-            a = f.get("home_tid", f.get("home", f.get("a")))
-            b = f.get("away_tid", f.get("away", f.get("b")))
-        else:
+    for meth in ("fixtures_for_week", "get_fixtures_for_week", "week_fixtures", "fixtures_in_week"):
+        fn = getattr(career, meth, None)
+        if callable(fn):
             try:
-                a, b = f
+                out = fn(week_idx)
+                pairs = []
+                for it in out or []:
+                    p = _pair_from_any(it)
+                    if p: pairs.append(p)
+                if pairs: return pairs
             except Exception:
-                a = b = None
-        if a is not None and b is not None:
-            pairs.append((int(a), int(b)))
-    return pairs
+                pass
 
+    candidates = ["schedule", "fixtures", "fixtures_by_week", "rounds", "weeks"]
+    for name in candidates:
+        obj = getattr(career, name, None)
+        if obj is None: continue
+
+        if isinstance(obj, list):
+            wk = obj[week_idx] if 0 <= week_idx < len(obj) else []
+            pairs = []
+            for it in wk or []:
+                p = _pair_from_any(it)
+                if p: pairs.append(p)
+            if pairs: return pairs
+
+        if isinstance(obj, dict):
+            wk = obj.get(week_idx, [])
+            pairs = []
+            for it in wk or []:
+                p = _pair_from_any(it)
+                if p: pairs.append(p)
+            if pairs: return pairs
+
+        if isinstance(obj, list):
+            pairs = []
+            for it in obj:
+                w = _get(it, "week", _get(it, "round", _get(it, "week_index", None)))
+                if w is not None and int(w) == int(week_idx):
+                    p = _pair_from_any(it)
+                    if p: pairs.append(p)
+            if pairs: return pairs
+
+    return []
 
 class ScheduleState(BaseState):
     def __init__(self, app, career, week_index: int):
@@ -104,7 +179,6 @@ class ScheduleState(BaseState):
         draw_panel(surf, self.rect_panel, th)
         inner = self.rect_panel.inflate(-20, -20)
 
-        # clipping region for rows
         clip = surf.get_clip(); surf.set_clip(inner)
 
         names = _team_name_map(self.career)
