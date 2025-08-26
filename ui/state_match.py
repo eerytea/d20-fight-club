@@ -275,6 +275,7 @@ class MatchState(BaseState):
             mx, my = pygame.mouse.get_pos()
             if self._side_rect.collidepoint(mx, my):
                 self.log_scroll = max(0, self.log_scroll - event.y * (self._log_line_h * 3))
+                self._clamp_log_scroll()
 
     def update(self, dt: float) -> None:
         if not self._layout_built:
@@ -302,17 +303,50 @@ class MatchState(BaseState):
         draw_panel(surf, self._side_rect, self.theme)
         draw_panel(surf, self._btn_rect, self.theme)
 
+        # --- compute tiny nudges for multi-occupancy visuals ---
+        alive_fs = []
         for f in self._fighters:
-            alive = getattr(f, "alive", True)
             hp = getattr(f, "hp", 0)
-            if not alive or hp <= 0:
+            if getattr(f, "alive", True) and hp > 0:
+                alive_fs.append(f)
+
+        occ: Dict[Tuple[int, int], List[Any]] = {}
+        for f in alive_fs:
+            x = int(getattr(f, "x", 0))
+            y = int(getattr(f, "y", 0))
+            occ.setdefault((x, y), []).append(f)
+
+        offsets: Dict[int, Tuple[int, int]] = {}
+        nudge = max(3, min(self._cell_w, self._cell_h) // 6)
+        for (x, y), lst in occ.items():
+            if len(lst) == 1:
+                offsets[id(lst[0])] = (0, 0)
                 continue
+            # deterministic order for stable rendering
+            lst_sorted = sorted(lst, key=lambda f: (getattr(f, "team_id", 0), getattr(f, "pid", 0), getattr(f, "name", "")))
+            n = len(lst_sorted)
+            if n == 2:
+                xs = (-nudge, +nudge)
+            elif n == 3:
+                xs = (-nudge, 0, +nudge)
+            elif n == 4:
+                xs = (-int(1.5 * nudge), -int(0.5 * nudge), int(0.5 * nudge), int(1.5 * nudge))
+            else:
+                # spread in [-1.5nudge, +1.5nudge]
+                xs = [int(((i - (n - 1) / 2.0) / max(1, n - 1)) * (3 * nudge)) for i in range(n)]
+            for f, dx in zip(lst_sorted, xs):
+                offsets[id(f)] = (dx, 0)
+
+        # --- draw fighters ---
+        for f in alive_fs:
             tid = _norm_tid(getattr(f, "team_id", 0))
             x = int(getattr(f, "x", 0))
             y = int(getattr(f, "y", 0))
             name = getattr(f, "name", "?")
+            hp = int(getattr(f, "hp", 0))
             max_hp = int(getattr(f, "max_hp", hp))
-            self._draw_fighter(surf, x, y, name, tid, hp, max_hp)
+            off = offsets.get(id(f), (0, 0))
+            self._draw_fighter(surf, x, y, name, tid, hp, max_hp, offset=off)
 
         self._draw_log(surf)
 
@@ -357,8 +391,9 @@ class MatchState(BaseState):
             self._cell_h,
         )
 
-    def _draw_fighter(self, surf, gx: int, gy: int, name: str, tid: int, hp: int, max_hp: int):
+    def _draw_fighter(self, surf, gx: int, gy: int, name: str, tid: int, hp: int, max_hp: int, *, offset: Tuple[int, int] = (0, 0)):
         r = self._cell_rect(gx, gy)
+        ox, oy = offset
 
         # dynamic stack sizing:
         dot = max(4, int(min(r.w, r.h) * 0.22))
@@ -383,15 +418,15 @@ class MatchState(BaseState):
         budget = max(10, budget)
 
         color = (220, 64, 64) if tid == 0 else (64, 110, 220)
-        pygame.draw.circle(surf, color, (r.centerx, r.top + dot + 4), dot)
+        pygame.draw.circle(surf, color, (r.centerx + ox, r.top + dot + 4 + oy), dot)
 
         bar_w = int(r.w * 0.9)
-        bar_x = r.centerx - bar_w // 2
+        bar_x = r.centerx - bar_w // 2 + ox
 
         nm = _short_name(name)
         name_px = _fit_text_size(self._font_name, nm, bar_w, budget, min_px=8, max_px=int(r.h * 0.4))
         txt_rect = self._font_name.get_rect(nm, size=name_px)
-        txt_rect.midtop = (r.centerx, r.top + dot * 2 + name_top_gap)
+        txt_rect.midtop = (r.centerx + ox, r.top + dot * 2 + name_top_gap + oy)
         self._font_name.render_to(surf, txt_rect.topleft, nm, self.theme.text, size=name_px)
 
         denom = max(1, int(max_hp))
@@ -404,8 +439,9 @@ class MatchState(BaseState):
 
     def _draw_log(self, surf):
         pad = 10
+        top_pad = 4  # keep some breathing room so text never hugs the top border
         inner = self._side_rect.inflate(-2 * pad, -2 * pad)
-        y = inner.y - self.log_scroll
+        y = inner.y + top_pad - self.log_scroll
         clip = surf.get_clip()
         surf.set_clip(inner)
         for line in self.log_lines:
@@ -414,13 +450,25 @@ class MatchState(BaseState):
         surf.set_clip(clip)
 
     def _append_log(self, s: str):
+        # wrap and push; also autoscroll to bottom with proper clamp so top never looks "past" the panel
         pad = 10
-        inner_w = self._side_rect.w - 2 * pad
-        for line in _wrap_lines(s, self._font_log, inner_w):
+        top_pad = 4
+        inner_h = self._side_rect.h - 2 * pad
+        for line in _wrap_lines(s, self._font_log, self._side_rect.w - 2 * pad):
             self.log_lines.append(line)
         total_px = len(self.log_lines) * self._log_line_h
-        visible_px = self._side_rect.h - 2 * pad
+        visible_px = max(0, inner_h - top_pad)
         self.log_scroll = max(0, total_px - visible_px)
+        self._clamp_log_scroll()
+
+    def _clamp_log_scroll(self):
+        pad = 10
+        top_pad = 4
+        inner_h = self._side_rect.h - 2 * pad
+        total_px = len(self.log_lines) * self._log_line_h
+        visible_px = max(0, inner_h - top_pad)
+        max_scroll = max(0, total_px - visible_px)
+        self.log_scroll = max(0, min(self.log_scroll, max_scroll))
 
     # --- events/stepping ---
     def _ingest_new_events(self, initial: bool = False):
@@ -492,16 +540,16 @@ class MatchState(BaseState):
             self.btn_auto.label = f"Auto: {'ON' if self.auto else 'OFF'}"
 
     def _finish(self):
+        # Always pop back; still call on_finish if provided
         if callable(self.on_finish):
             try:
                 self.on_finish(self)
-            except Exception:
-                pass
-        else:
-            try:
-                self.app.pop_state()
-            except Exception:
-                pass
+            except Exception as e:
+                print("[MatchState] on_finish error:", e)
+        try:
+            self.app.pop_state()
+        except Exception:
+            pass
 
     def _ended(self) -> bool:
         if hasattr(self.engine, "winner") and getattr(self.engine, "winner") is not None:
