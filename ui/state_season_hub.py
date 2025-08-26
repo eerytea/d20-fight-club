@@ -14,10 +14,18 @@ def _get(obj: Any, key: str, default=None):
         return obj.get(key, default)
     return getattr(obj, key, default)
 
+def _safe_int(v, default: int = -1) -> int:
+    try:
+        if v is None:
+            return default
+        return int(v)
+    except Exception:
+        return default
+
 def _team_name_map(career) -> Dict[int, str]:
     m: Dict[int, str] = {}
     for t in getattr(career, "teams", []) or []:
-        tid = int(_get(t, "tid", -1))
+        tid = _safe_int(_get(t, "tid", -1), -1)
         nm  = str(_get(t, "name", f"Team {tid}"))
         if tid >= 0:
             m[tid] = nm
@@ -30,11 +38,11 @@ def _fixtures_for_week(career, week_idx: int) -> List[Tuple[int, int]]:
         try:
             out = career.fixtures_for_week(week_idx)
             if out:
-                return [(int(a), int(b)) for (a, b) in out]
+                return [(_safe_int(a, -1), _safe_int(b, -1)) for (a, b) in out]
         except Exception:
             pass
 
-    # 2) schedule attribute (list/dict/tuples or dicts)
+    # 2) schedule attribute
     sched = getattr(career, "schedule", None)
     wk = []
     if isinstance(sched, list):
@@ -53,7 +61,7 @@ def _fixtures_for_week(career, week_idx: int) -> List[Tuple[int, int]]:
             except Exception:
                 a = b = None
         if a is not None and b is not None:
-            pairs.append((int(a), int(b)))
+            pairs.append((_safe_int(a, -1), _safe_int(b, -1)))
     return pairs
 
 def _find_user_fixture(pairs: List[Tuple[int, int]], user_tid: int) -> Optional[Tuple[int, int]]:
@@ -134,7 +142,7 @@ class SeasonHubState(BaseState):
         n = len(labels)
         gap = 12
         avail_w = self.rect_buttons.w - gap * (n - 1)
-        bw = max(120, min(180, avail_w // n))  # clamp width so they always fit
+        bw = max(120, min(180, avail_w // n))
         bh = 48
         x = self.rect_buttons.x
         y = self.rect_buttons.y
@@ -154,7 +162,7 @@ class SeasonHubState(BaseState):
     def _open_schedule(self) -> None:
         try:
             from .state_schedule import ScheduleState
-            wk = int(getattr(self.career, "week_index", 0))
+            wk = _safe_int(getattr(self.career, "week_index", 0), 0)
             self.app.push_state(ScheduleState(self.app, self.career, wk))
         except Exception as e:
             self._last_saved_msg = f"Open Schedule failed: {e}"
@@ -189,12 +197,10 @@ class SeasonHubState(BaseState):
             self._msg_timer = 3.0
 
     def _play(self) -> None:
-        # Find the user's fixture *now*, to avoid stale caches.
-        wk = int(getattr(self.career, "week_index", 0))
+        wk = _safe_int(getattr(self.career, "week_index", 0), 0)
         pairs = _fixtures_for_week(self.career, wk)
-        user_tid = int(getattr(self.career, "user_team_id", -1))
+        user_tid = _safe_int(getattr(self.career, "user_team_id", -1), -1)
         fx = _find_user_fixture(pairs, user_tid)
-
         if not fx:
             self._last_saved_msg = "No match for your team this week."
             self._msg_timer = 2.5
@@ -238,10 +244,9 @@ class SeasonHubState(BaseState):
         self.btn_back.handle(event)
 
     def update(self, dt: float) -> None:
-        # Enable/disable Play depending on having a fixture
-        wk = int(getattr(self.career, "week_index", 0))
+        wk = _safe_int(getattr(self.career, "week_index", 0), 0)
         pairs = _fixtures_for_week(self.career, wk)
-        user_tid = int(getattr(self.career, "user_team_id", -1))
+        user_tid = _safe_int(getattr(self.career, "user_team_id", -1), -1)
         self.btn_play.enabled = _find_user_fixture(pairs, user_tid) is not None
 
         if self._msg_timer > 0:
@@ -263,9 +268,9 @@ class SeasonHubState(BaseState):
         # Toolbar
         draw_panel(surf, self.rect_toolbar, th)
         names = _team_name_map(self.career)
-        user_tid = int(getattr(self.career, "user_team_id", -1))
+        user_tid = _safe_int(getattr(self.career, "user_team_id", -1), -1)
         user_name = names.get(user_tid, "—")
-        week_ix = int(getattr(self.career, "week_index", 0)) + 1
+        week_ix = _safe_int(getattr(self.career, "week_index", 0), 0) + 1
 
         draw_text(surf, f"Your Team: {user_name}",
                   (self.rect_toolbar.x + 12, self.rect_toolbar.centery), 28, th.text, align="midleft")
@@ -282,22 +287,23 @@ class SeasonHubState(BaseState):
         inner = self.rect_panel.inflate(-20, -20)
 
         hdr = "This Week's Matchups"
-        rr = self.f_h2.get_rect(hdr); rr.midtop = (inner.centerx, inner.y + 4)
-        self.f_h2.render_to(surf, rr.topleft, hdr, th.text)
+        f_h2 = self.f_h2
+        rr = f_h2.get_rect(hdr); rr.midtop = (inner.centerx, inner.y + 4)
+        f_h2.render_to(surf, rr.topleft, hdr, th.text)
 
         list_top = rr.bottom + 8
         list_rect = pygame.Rect(inner.x, list_top, inner.w, inner.bottom - list_top)
         clip = surf.get_clip(); surf.set_clip(list_rect)
 
-        # Compute fixtures *now* so first frame always shows them
-        wk = int(getattr(self.career, "week_index", 0))
+        wk = _safe_int(getattr(self.career, "week_index", 0), 0)
         pairs = _fixtures_for_week(self.career, wk)
-        lh = max(30, int(self.f_row.height * 1.25))
+        f_row = self.f_row
+        lh = max(30, int(f_row.height * 1.25))
         y = list_rect.y + 4
         for a, b in pairs:
             left  = names.get(int(a), f"Team {a}")
             right = names.get(int(b), f"Team {b}")
-            self.f_row.render_to(surf, (list_rect.x + 10, y), f"{left}  vs  {right}", th.text)
+            f_row.render_to(surf, (list_rect.x + 10, y), f"{left}  vs  {right}", th.text)
             y += lh
 
         surf.set_clip(clip)
