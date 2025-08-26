@@ -1,7 +1,7 @@
-# ui/state_team_select.py — scrollable team list + split roster/details with clickable players
+# ui/state_team_select.py — scrollable team list; split roster/details; full-row highlight; tidy details layout
 from __future__ import annotations
 
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Tuple
 
 import pygame
 
@@ -10,7 +10,7 @@ from .uiutil import Theme, Button, draw_text, draw_panel, get_font
 from core.career import Career
 
 
-# ---------- small helpers ----------
+# ---------- robust getters ----------
 
 def _get(r: Any, keys, default=None):
     """Safely fetch a value from dict/obj via any of several possible keys."""
@@ -28,11 +28,11 @@ def _get(r: Any, keys, default=None):
 
 
 def _team_name(team: dict | Any) -> str:
-    return _get(team, ("name",), "Team")
+    return _get(team, "name", "Team")
 
 
 def _fighter_line(f: dict | Any) -> str:
-    name = _get(f, ("name",), "?")
+    name = _get(f, "name", "?")
     role = _get(f, ("role", "cls", "class"), "")
     lvl  = _get(f, ("level", "lvl", "L"), None)
     ovr  = _get(f, ("ovr", "OVR"), None)
@@ -50,33 +50,19 @@ def _fighter_line(f: dict | Any) -> str:
     return " ".join(parts)
 
 
-def _fighter_detail_lines(f: dict | Any) -> List[str]:
-    lines = []
-    # Basic identity
-    lines.append(_fighter_line(f))
-    # Common stats if present
-    hp  = _get(f, ("hp", "HP"), None)
-    mhp = _get(f, ("max_hp", "MaxHP", "maxHP"), None)
-    ac  = _get(f, ("ac", "AC", "def", "DEF"), None)
-    atk = _get(f, ("atk", "ATK", "attack"), None)
-    spd = _get(f, ("spd", "SPD", "speed"), None)
-    xp  = _get(f, ("xp", "XP"), None)
+def _stat_val(f: Any, names: Tuple[str, ...], default=None):
+    return _get(f, names, default)
 
-    stat_pairs = [
-        ("HP", f"{hp}/{mhp}" if (hp is not None and mhp is not None) else (str(hp) if hp is not None else None)),
-        ("AC", ac),
-        ("ATK", atk),
-        ("SPD", spd),
-        ("XP", xp),
-    ]
-    for k, v in stat_pairs:
-        if v is not None:
-            lines.append(f"{k}: {v}")
-    # Any traits list?
-    traits = _get(f, ("traits", "perks"), None)
-    if isinstance(traits, (list, tuple)) and traits:
-        lines.append("Traits: " + ", ".join(map(str, traits)))
-    return lines
+
+def _equip_name(f: Any, candidates: Tuple[str, ...]) -> str:
+    item = _get(f, candidates, None)
+    if not item:
+        return "—"
+    if isinstance(item, str):
+        return item
+    # dict / object with a name field
+    nm = _get(item, ("name", "Name", "id", "kind"), None)
+    return str(nm) if nm is not None else "—"
 
 
 # ---------- state ----------
@@ -86,7 +72,7 @@ class TeamSelectState(BaseState):
     New Game -> Team Select:
       * Left: scrollable list of all teams (click to preview)
       * Right top: roster for selected team (click a player)
-      * Right bottom: details for the clicked player
+      * Right bottom: details for the clicked player (HP X/X, AC, Movement, six attrs, Armor/Weapon)
     """
 
     def __init__(self, app):
@@ -102,9 +88,9 @@ class TeamSelectState(BaseState):
 
         # Layout rects
         self.rect_title = pygame.Rect(0, 0, 0, 0)
-        self.rect_left  = pygame.Rect(0, 0, 0, 0)  # teams list (scrollable)
+        self.rect_left  = pygame.Rect(0, 0, 0, 0)  # teams list (scrollable + clipped)
         self.rect_rtop  = pygame.Rect(0, 0, 0, 0)  # roster list (clickable)
-        self.rect_rbot  = pygame.Rect(0, 0, 0, 0)  # player detail
+        self.rect_rbot  = pygame.Rect(0, 0, 0, 0)  # player details (clipped)
 
         # Buttons
         self.btn_start: Button | None = None
@@ -114,14 +100,16 @@ class TeamSelectState(BaseState):
         self.team_scroll: int = 0
         self.team_line_h: int = 28
         self.roster_scroll: int = 0
-        self.roster_line_h: int = 26
+        self.roster_line_h: int = 28
+        self.details_scroll: int = 0  # in case details overflow vertically
 
         self._built = False
 
         # Fonts
-        self.font_title = get_font(44)
-        self.font_list  = get_font(22)
+        self.font_title = get_font(48)
+        self.font_list  = get_font(24)
         self.font_small = get_font(18)
+        self.font_mid   = get_font(20)
 
     # ---- lifecycle ----
     def enter(self) -> None:
@@ -131,13 +119,16 @@ class TeamSelectState(BaseState):
     def _build(self) -> None:
         W, H = self.app.width, self.app.height
         pad = 16
-        title_h = 64
-        right_gap = 18
-        right_w = int(W * 0.52)
+        title_h = 72
+        right_gap = 14
+        right_w = int(W * 0.54)
 
         # Areas
         self.rect_title = pygame.Rect(0, 0, W, title_h)
-        self.rect_left  = pygame.Rect(pad, title_h + pad, W - right_w - pad * 3, H - (title_h + pad * 2) - 78)
+        # Left panel height leaves room for buttons row
+        bottom_h = 74
+        self.rect_left  = pygame.Rect(pad, title_h + pad, W - right_w - pad * 3, H - (title_h + pad * 2) - bottom_h)
+
         r_x = self.rect_left.right + pad
         r_h_total = self.rect_left.h
         r_top_h = int(r_h_total * 0.58)
@@ -184,6 +175,9 @@ class TeamSelectState(BaseState):
             elif self.rect_rtop.collidepoint(mx, my):
                 self.roster_scroll = max(0, self.roster_scroll - event.y * (self.roster_line_h * 3))
                 self._clamp_roster_scroll()
+            elif self.rect_rbot.collidepoint(mx, my):
+                self.details_scroll = max(0, self.details_scroll - event.y * 60)
+                self._clamp_details_scroll()
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
@@ -194,10 +188,11 @@ class TeamSelectState(BaseState):
                 teams = self._teams_sorted()
                 if 0 <= idx < len(teams):
                     self.selected_tid = int(teams[int(idx)].get("tid"))
-                    self.selected_player_idx = None  # reset
+                    self.selected_player_idx = None  # reset player selection
             # Click in roster list
             elif self.rect_rtop.collidepoint(mx, my):
                 inner = self.rect_rtop.inflate(-12*2, -12*2)
+                inner.y += 36  # below header
                 idx = (my - (inner.y - self.roster_scroll)) // self.roster_line_h
                 roster = self._selected_team().get("fighters", [])
                 if 0 <= idx < len(roster):
@@ -223,11 +218,12 @@ class TeamSelectState(BaseState):
         r.center = (self.app.width // 2, self.rect_title.centery + 6)
         self.font_title.render_to(surf, r.topleft, title, th.text)
 
-        # Left: Teams (scroll + clipped)
+        # Left: Teams (strictly clipped)
         draw_panel(surf, self.rect_left, th)
-        draw_text(surf, "Teams", (self.rect_left.x + 12, self.rect_left.y - 10), 20, th.subt, align="midleft")
+        draw_text(surf, "Teams", (self.rect_left.x + 12, self.rect_left.y + 10), 20, th.subt, align="topleft")
 
         inner = self.rect_left.inflate(-12*2, -12*2)
+        inner.y += 24  # give breathing room under header
         clip = surf.get_clip()
         surf.set_clip(inner)
 
@@ -239,46 +235,122 @@ class TeamSelectState(BaseState):
             y += self.team_line_h
 
         surf.set_clip(clip)
-        self._clamp_team_scroll()  # keep tidy after draws
+        self._clamp_team_scroll()
 
         # Right top: roster box (clickable)
         draw_panel(surf, self.rect_rtop, th)
         team = self._selected_team()
-        draw_text(surf, _team_name(team), (self.rect_rtop.x + 12, self.rect_rtop.y + 8), 28, th.text, align="topleft")
+        draw_text(surf, _team_name(team), (self.rect_rtop.x + 12, self.rect_rtop.y + 10), 30, th.text, align="topleft")
 
         inner_r = self.rect_rtop.inflate(-12*2, -12*2)
-        inner_r.y += 30
+        inner_r.y += 36  # below header
         clip = surf.get_clip()
         surf.set_clip(inner_r)
 
         roster = team.get("fighters", [])
         y = inner_r.y - self.roster_scroll
+        row_w = inner_r.w
         for i, f in enumerate(roster):
-            line = _fighter_line(f)
-            # highlight selected player
+            row_rect = pygame.Rect(inner_r.x, int(y), row_w, self.roster_line_h)
             if self.selected_player_idx == i:
-                # subtle underline bar
-                pygame.draw.rect(surf, (80, 120, 200), (inner_r.x, int(y) + self.roster_line_h - 4, inner_r.w, 3), border_radius=2)
-            self.font_list.render_to(surf, (inner_r.x, int(y)), line, th.text)
+                # Full row highlight behind text
+                pygame.draw.rect(surf, (70, 110, 190), row_rect, border_radius=6)
+            # text with a small left padding inside row
+            self.font_list.render_to(surf, (row_rect.x + 8, row_rect.y + 2), _fighter_line(f), th.text)
             y += self.roster_line_h
 
         surf.set_clip(clip)
         self._clamp_roster_scroll()
 
-        # Right bottom: player details
+        # Right bottom: player details (clipped, with requested layout)
         draw_panel(surf, self.rect_rbot, th)
-        draw_text(surf, "Player Details", (self.rect_rbot.x + 12, self.rect_rbot.y + 8), 22, th.subt, align="topleft")
+        draw_text(surf, "Player Details", (self.rect_rbot.x + 12, self.rect_rbot.y + 10), 22, th.subt, align="topleft")
+
+        inner_d = self.rect_rbot.inflate(-12*2, -12*2)
+        inner_d.y += 30
+        clip = surf.get_clip()
+        surf.set_clip(inner_d)
 
         if isinstance(self.selected_player_idx, int) and 0 <= self.selected_player_idx < len(roster):
             f = roster[self.selected_player_idx]
-            lines = _fighter_detail_lines(f)
-            y = self.rect_rbot.y + 34
-            for ln in lines:
-                self.font_small.render_to(surf, (self.rect_rbot.x + 12, y), ln, th.text)
-                y += 22
+
+            # 1) Header line: Name — Role  Lx  OVR y
+            header = _fighter_line(f)
+            self.font_mid.render_to(surf, (inner_d.x, inner_d.y - self.details_scroll), header, th.text)
+
+            y = inner_d.y + 24 - self.details_scroll
+
+            # 2) HP X/X, AC, Movement on the same line
+            hp  = _stat_val(f, ("hp", "HP"), None)
+            mhp = _stat_val(f, ("max_hp", "MaxHP", "maxHP", "mhp"), None)
+            ac  = _stat_val(f, ("ac", "AC", "def", "DEF"), None)
+            spd = _stat_val(f, ("spd", "SPD", "speed", "move", "movement"), None)
+
+            hp_txt = "HP: —"
+            if hp is not None and mhp is not None:
+                hp_txt = f"HP: {int(hp)}/{int(mhp)}"
+            elif hp is not None:
+                hp_txt = f"HP: {int(hp)}"
+
+            ac_txt  = f"AC: {int(ac)}" if ac is not None else "AC: —"
+            mv_txt  = f"Movement: {int(spd)}" if spd is not None else "Movement: —"
+
+            # layout across line with gaps
+            x = inner_d.x
+            self.font_mid.render_to(surf, (x, y), hp_txt, th.text)
+            x += self.font_mid.get_rect(hp_txt).width + 28
+            self.font_mid.render_to(surf, (x, y), ac_txt, th.text)
+            x += self.font_mid.get_rect(ac_txt).width + 28
+            self.font_mid.render_to(surf, (x, y), mv_txt, th.text)
+
+            y += 32
+
+            # 3) Six-attribute row: labels then values centered below
+            labels = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
+            name_map = {
+                "STR": ("str", "STR", "strength"),
+                "DEX": ("dex", "DEX", "dexterity"),
+                "CON": ("con", "CON", "constitution"),
+                "INT": ("int", "INT", "intelligence"),
+                "WIS": ("wis", "WIS", "wisdom"),
+                "CHA": ("cha", "CHA", "charisma"),
+            }
+
+            # compute 6 equal columns
+            col_w = inner_d.w // 6
+            row_x = inner_d.x
+            # labels
+            for i, lab in enumerate(labels):
+                cx = row_x + i * col_w + col_w // 2
+                rect = self.font_small.get_rect(lab)
+                rect.midtop = (cx, y)
+                self.font_small.render_to(surf, rect.topleft, lab, th.subt)
+            y += 18
+            # values
+            for i, lab in enumerate(labels):
+                val = _stat_val(f, name_map[lab], "—")
+                txt = str(val if val is not None else "—")
+                rect = self.font_list.get_rect(txt)
+                cx = row_x + i * col_w + col_w // 2
+                rect.midtop = (cx, y)
+                self.font_list.render_to(surf, rect.topleft, txt, th.text)
+            y += 36
+
+            # 4) Armor and Weapon line
+            armor = _equip_name(f, ("equipped_armor", "armor", "armour", "gear_armor"))
+            weapon = _equip_name(f, ("equipped_weapon", "weapon", "main_hand", "wpn"))
+            arm_txt = f"Armor: {armor}"
+            wep_txt = f"Weapon: {weapon}"
+
+            self.font_mid.render_to(surf, (inner_d.x, y), arm_txt, th.text)
+            x2 = inner_d.x + self.font_mid.get_rect(arm_txt).width + 28
+            self.font_mid.render_to(surf, (x2, y), wep_txt, th.text)
+
         else:
-            self.font_small.render_to(surf, (self.rect_rbot.x + 12, self.rect_rbot.y + 40),
-                                      "Click a player above to view stats.", th.subt)
+            self.font_small.render_to(surf, (inner_d.x, inner_d.y), "Click a player above to view stats.", th.subt)
+
+        surf.set_clip(clip)
+        self._clamp_details_scroll()
 
         # Buttons
         self.btn_start.draw(surf, th)
@@ -286,16 +358,22 @@ class TeamSelectState(BaseState):
 
     # ---- scroll clamp ----
     def _clamp_team_scroll(self):
-        inner_h = self.rect_left.h - 12*2
+        inner_h = self.rect_left.h - 12*2 - 24  # minus header space
         total_h = max(0, len(self._teams_sorted()) * self.team_line_h)
         max_scroll = max(0, total_h - inner_h)
         self.team_scroll = max(0, min(self.team_scroll, max_scroll))
 
     def _clamp_roster_scroll(self):
-        inner_h = self.rect_rtop.h - 12*2 - 30
+        inner_h = self.rect_rtop.h - 12*2 - 36  # minus header
         total_h = max(0, len(self._selected_team().get("fighters", [])) * self.roster_line_h)
         max_scroll = max(0, total_h - inner_h)
         self.roster_scroll = max(0, min(self.roster_scroll, max_scroll))
+
+    def _clamp_details_scroll(self):
+        # details area is modest; keep for completeness
+        inner_h = self.rect_rbot.h - 12*2 - 30
+        max_scroll = max(0, 240 - inner_h)  # approx content size
+        self.details_scroll = max(0, min(self.details_scroll, max_scroll))
 
 
 # convenience factory if anything imports it
