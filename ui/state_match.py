@@ -136,6 +136,7 @@ class MatchState(BaseState):
 
     # ---------- event formatting ----------
     def _fmt_event(self, e: Any) -> str:
+        # If engine ships a formatter, prefer it
         if _format_event:
             try:
                 s = _format_event(e)
@@ -147,18 +148,22 @@ class MatchState(BaseState):
         if isinstance(e, dict):
             t = e.get("type") or e.get("event") or e.get("kind") or "event"
 
+            # The engine you’re using emits {"type":"move","name":"Sam Kane", ...}
+            # so we treat "name" as a first-class actor key.
             who_keys = (
+                "name",  # <— NEW: actor name provided directly
                 "who","who_id","who_idx","actor","actor_id","actor_idx",
                 "src","src_id","src_idx","attacker","att","unit","unit_idx",
                 "i","a","idx"
             )
             tgt_keys = (
-                "target","target_id","target_idx","defender","def","dst","dst_idx",
+                "target","target_name","target_id","target_idx",
+                "defender","def","dst","dst_idx",
                 "j","b"
             )
 
             def who_from():
-                # direct name fields first
+                # explicit *_name fields still win
                 nm = e.get("who_name") or e.get("actor_name") or e.get("attacker_name") or e.get("unit_name")
                 if nm: return str(nm)
                 for k in who_keys:
@@ -308,7 +313,6 @@ class MatchState(BaseState):
             return
         self._started = True
         target = (self._current_round_from_engine() or self._last_round_seen) + 1
-        # advance until we detect round increased or winner
         for _ in range(20000):
             if getattr(self.combat, "winner", None) is not None:
                 break
@@ -343,15 +347,13 @@ class MatchState(BaseState):
             if not isinstance(evs, list): continue
             start = self._last_seen.get(attr, 0)
             fresh = evs[start:]
-         
-            if start == 0 and fresh:
-               print("[Match] sample events:", fresh[:5])
-
             if fresh:
+                # print a small sample the very first time (helps debugging)
+                if start == 0:
+                    print("[Match] sample events:", fresh[:5])
                 for e in fresh:
                     try:
                         s = self._fmt_event(e)
-                        # keep last seen round from strings too
                         if isinstance(s, str) and s.startswith("— Round "):
                             try:
                                 num = int(s.replace("— Round ","").replace(" —","").strip())
@@ -427,7 +429,6 @@ class MatchState(BaseState):
     def _draw_grid(self, surf: pygame.Surface) -> None:
         rg = self.rect_grid
         gw, gh = _GRID_W, _GRID_H
-        # generous cell size so dots are larger
         cell_w = max(16, (rg.w - 12) // gw)
         cell_h = max(16, (rg.h - 12) // gh)
         ox = rg.x + (rg.w - cell_w * gw) // 2
@@ -444,15 +445,13 @@ class MatchState(BaseState):
             alive = bool(getattr(f, "alive", True))
             color = base if alive else (110, 110, 110)
 
-            # larger radius, but keep some spacing
             r = max(8, int(min(cell_w, cell_h) * 0.38))
-            # HP bar and name above the dot
             hp = max(0, int(getattr(f, "hp", 0)))
             mh = max(1, int(getattr(f, "max_hp", max(hp, 1))))
             bar_w = max(28, int(min(cell_w, cell_h) * 0.9))
             bar_h = 7
             bx = cx - bar_w // 2
-            by = cy - r - 16  # higher above the dot
+            by = cy - r - 16
             pygame.draw.rect(surf, (50, 55, 60), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
             if mh > 0:
                 fill_w = int(bar_w * (hp / mh))
