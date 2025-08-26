@@ -69,7 +69,7 @@ class MatchState(BaseState):
         self.combat: TBCombat | None = None
         self._started = False
 
-        # UI
+        # UI rects/buttons
         self.btn_step: Button | None = None
         self.btn_auto: Button | None = None
         self.btn_finish: Button | None = None
@@ -78,7 +78,7 @@ class MatchState(BaseState):
         self.rect_grid: pygame.Rect | None = None
         self.rect_log: pygame.Rect | None = None
 
-        # Log
+        # Log state
         self.events: List[str] = []
         self._last_seen: Dict[str, int] = {
             "events_typed": 0,
@@ -89,7 +89,7 @@ class MatchState(BaseState):
         }
         self._log_scroll = 0  # 0 = stick to bottom; >0 scroll up by N wrapped lines
 
-        # Name resolution maps (rebuilt as needed)
+        # Name maps (rebuilt from live engine list)
         self._idx_to_name: Dict[int, str] = {}
         self._pid_to_name: Dict[str, str] = {}
 
@@ -105,7 +105,6 @@ class MatchState(BaseState):
             f = getattr(self.combat, "fighters", None)
             if isinstance(f, list) and f:
                 return f
-        # fallback (shouldn’t really happen after we start)
         return []
 
     def _rebuild_name_maps(self) -> None:
@@ -119,17 +118,12 @@ class MatchState(BaseState):
                 self._pid_to_name[pid] = name
 
     def _name_from_val(self, v: Any) -> str:
-        # Already a name?
         if isinstance(v, str):
-            # map pid->display name if possible
             return self._pid_to_name.get(v, v)
-        # Fighter index?
         if isinstance(v, int):
             return self._idx_to_name.get(v, f"#{v}")
-        # Fighter-like dict?
         if isinstance(v, dict):
             return str(v.get("name") or self._pid_to_name.get(v.get("pid", ""), v.get("pid", "?")))
-        # Fighter-like object?
         if hasattr(v, "name"):
             return str(getattr(v, "name"))
         if hasattr(v, "pid"):
@@ -139,7 +133,6 @@ class MatchState(BaseState):
 
     # ----- Event formatting --------------------------------------------------
     def _fmt_event(self, e: Any) -> str:
-        # Prefer engine formatter if available
         if _format_event:
             try:
                 return _format_event(e)
@@ -170,7 +163,7 @@ class MatchState(BaseState):
                 return f"{who} is down!"
             if t in ("end", "End", "finish"):
                 return "End of match"
-            # fallback pretty dict
+            # fallback pretty dict with name resolution
             try:
                 parts = []
                 for k, v in e.items():
@@ -190,22 +183,20 @@ class MatchState(BaseState):
         self._build_match()
         self._build_ui()
         self._rebuild_name_maps()
-        self._harvest_new_events()  # initial round banner if present
+        self._harvest_new_events()
 
     def _build_match(self):
-        # Teams
         teamA = TBTeam(self.home_d["tid"], self.home_d.get("name", "Home"),
                        tuple(self.home_d.get("color", (180, 180, 220))))
         teamB = TBTeam(self.away_d["tid"], self.away_d.get("name", "Away"),
                        tuple(self.away_d.get("color", (220, 180, 180))))
 
-        # Fighters from roster dictionaries
         h_roster = self.home_d.get("fighters") or self.home_d.get("roster") or []
         a_roster = self.away_d.get("fighters") or self.away_d.get("roster") or []
         fighters = [_fighter_from_dict({**fd, "team_id": teamA.tid}) for fd in h_roster]
         fighters += [_fighter_from_dict({**fd, "team_id": teamB.tid}) for fd in a_roster]
 
-        # Initial layout
+        # Pre-layout
         if _layout_teams_tiles:
             _layout_teams_tiles(fighters, _GRID_W, _GRID_H)
         else:
@@ -217,13 +208,41 @@ class MatchState(BaseState):
                     f.x, f.y = _GRID_W - 2, y
                 y = 1 if y >= _GRID_H - 2 else y + 2
 
-        # Start combat
         self.combat = TBCombat(teamA, teamB, fighters, _GRID_W, _GRID_H, seed=42)
+
+        # Some branches reset positions inside TBCombat; re-assert a sane layout if needed
+        self._ensure_layout()
+
         for k in self._last_seen.keys():
             self._last_seen[k] = 0
         self.events.clear()
         self._log_scroll = 0
         self._started = False
+
+    def _ensure_layout(self) -> None:
+        fs = self._fighters()
+        if not fs:
+            return
+        # Detect obviously broken layouts (all (0,0) or very few unique tiles)
+        coords = [(int(getattr(f, "x", 0)), int(getattr(f, "y", 0))) for f in fs]
+        uniq = set(coords)
+        if len(uniq) >= max(2, len(fs) // 2) and not all(x == 0 and y == 0 for x, y in coords):
+            return  # looks fine
+
+        # Re-layout the *live* fighters on the combat object
+        if _layout_teams_tiles:
+            _layout_teams_tiles(fs, _GRID_W, _GRID_H)
+        else:
+            # two columns layout
+            yL = yR = 1
+            for f in fs:
+                tid = getattr(f, "team_id", 0)
+                if tid == getattr(getattr(self.combat, "teamA", None), "tid", -1):
+                    f.x, f.y = 1, yL
+                    yL = 1 if yL >= _GRID_H - 2 else yL + 2
+                else:
+                    f.x, f.y = _GRID_W - 2, yR
+                    yR = 1 if yR >= _GRID_H - 2 else yR + 2
 
     def _build_ui(self):
         W, H = self.app.width, self.app.height
@@ -247,21 +266,19 @@ class MatchState(BaseState):
 
     # ----- Advance control ---------------------------------------------------
     def _advance_once(self) -> None:
-        """Advance the simulation by exactly one step/turn, regardless of engine API."""
         if not self.combat:
             return
         c = self.combat
-        # Prefer the unit-step style used by tests, then fall back.
         for name in ("take_turn", "step", "advance", "tick", "update"):
             fn = getattr(c, name, None)
             if not callable(fn):
                 continue
             try:
-                fn(1)   # some APIs accept a count
+                fn(1)
                 return
             except TypeError:
                 try:
-                    fn()  # common shape
+                    fn()
                     return
                 except Exception:
                     continue
@@ -272,6 +289,7 @@ class MatchState(BaseState):
         if self.combat and getattr(self.combat, "winner", None) is None:
             self._started = True
             self._advance_once()
+            self._ensure_layout()
             self._rebuild_name_maps()
             self._harvest_new_events()
 
@@ -291,8 +309,10 @@ class MatchState(BaseState):
                 break
             self._advance_once()
             if i % 16 == 0:
+                self._ensure_layout()
                 self._rebuild_name_maps()
                 self._harvest_new_events()
+        self._ensure_layout()
         self._rebuild_name_maps()
         self._harvest_new_events()
 
@@ -301,7 +321,6 @@ class MatchState(BaseState):
 
     # ----- Event harvesting --------------------------------------------------
     def _harvest_new_events(self):
-        """Append only new events from any known streams without duplicates."""
         if not self.combat:
             return
         streams = ["events_typed", "typed_events", "event_log_typed", "events", "log"]
@@ -317,7 +336,6 @@ class MatchState(BaseState):
                         except Exception:
                             self.events.append(str(e))
                     self._last_seen[attr] = start + len(fresh)
-        # Cap stored lines (wrapped later)
         if len(self.events) > 600:
             self.events = self.events[-600:]
 
@@ -330,11 +348,9 @@ class MatchState(BaseState):
         self.btn_finish.handle(event)
         self.btn_back.handle(event)
 
-        # Scroll the log when the wheel is over the log panel
         if event.type == pygame.MOUSEWHEEL and self.rect_log:
             mx, my = pygame.mouse.get_pos()
             if self.rect_log.collidepoint(mx, my):
-                # positive y means wheel up in pygame
                 self._log_scroll = max(0, self._log_scroll + event.y * 4)
 
     def update(self, dt: float) -> None:
@@ -353,6 +369,7 @@ class MatchState(BaseState):
                 if getattr(self.combat, "winner", None) is not None:
                     break
                 self._advance_once()
+            self._ensure_layout()
             self._rebuild_name_maps()
             self._harvest_new_events()
 
@@ -373,13 +390,10 @@ class MatchState(BaseState):
         status_y = self.rect_panel.y + 16
         winner = getattr(self.combat, "winner", None)
         if self._started and winner is not None:
-            wmap = {
-                "home": self.home_d.get("name", "Home"),
-                "away": self.away_d.get("name", "Away"),
-                "draw": "Draw",
-                0: self.home_d.get("name", "Home"),
-                1: self.away_d.get("name", "Away"),
-            }
+            wmap = {"home": self.home_d.get("name", "Home"),
+                    "away": self.away_d.get("name", "Away"),
+                    "draw": "Draw", 0: self.home_d.get("name", "Home"),
+                    1: self.away_d.get("name", "Away")}
             wtxt = wmap.get(winner, str(winner))
             draw_text(surf, f"Winner: {wtxt}", (self.rect_panel.x + 16, status_y), 22, th.text)
         else:
@@ -395,17 +409,15 @@ class MatchState(BaseState):
         self.btn_back.draw(surf, th)
 
     def _draw_grid(self, surf: pygame.Surface) -> None:
-        if not (self.rect_grid):
+        if not self.rect_grid:
             return
         rg = self.rect_grid
         gw, gh = _GRID_W, _GRID_H
-
         cell_w = max(12, (rg.w - 12) // gw)
         cell_h = max(12, (rg.h - 12) // gh)
         origin_x = rg.x + (rg.w - cell_w * gw) // 2
         origin_y = rg.y + (rg.h - cell_h * gh) // 2
 
-        # grid lines
         for x in range(gw + 1):
             X = origin_x + x * cell_w
             pygame.draw.line(surf, self.theme.panel_border, (X, origin_y), (X, origin_y + gh * cell_h), 1)
@@ -413,15 +425,13 @@ class MatchState(BaseState):
             Y = origin_y + y * cell_h
             pygame.draw.line(surf, self.theme.panel_border, (origin_x, Y), (origin_x + gw * cell_w, Y), 1)
 
-        fighters = self._fighters()  # <- draw from engine’s live list
+        fighters = self._fighters()
         for f in fighters:
             x, y = int(getattr(f, "x", 0)), int(getattr(f, "y", 0))
             cx = origin_x + x * cell_w + cell_w // 2
             cy = origin_y + y * cell_h + cell_h // 2
 
-            # color by team; dim if down
             team_id = getattr(f, "team_id", 0)
-            # Try to read colors from teams on the combat object if available
             base = (200, 200, 200)
             if self.combat:
                 tA = getattr(self.combat, "teamA", None) or getattr(self.combat, "team_home", None)
@@ -451,9 +461,26 @@ class MatchState(BaseState):
                 fill_w = int(bar_w * (hp / mh))
                 pygame.draw.rect(surf, (90, 200, 120), pygame.Rect(bx, by, fill_w, bar_h), border_radius=3)
 
+    # ---- Text wrapping & log drawing ---------------------------------------
+    def _measure_w(self, text: str, font_px: int) -> int:
+        """Robust text width measurement that works even if Font.size is shadowed."""
+        fobj = get_font(font_px)
+        # If 'size' is a callable method, use it. Otherwise, render as a fallback.
+        size_attr = getattr(fobj, "size", None)
+        try:
+            if callable(size_attr):
+                w, _ = size_attr(text)
+                return int(w)
+        except Exception:
+            pass
+        try:
+            surf = fobj.render(text, True, (0, 0, 0))
+            return int(surf.get_width())
+        except Exception:
+            # final fallback: rough estimate (monospace-ish)
+            return int(len(text) * (font_px * 0.55))
+
     def _wrap_lines(self, lines: List[str], width_px: int, font_size: int) -> List[str]:
-        """Word-wrap a list of lines to fit width_px, preserving order."""
-        font = get_font(font_size)
         wrapped: List[str] = []
         for line in lines:
             words = str(line).split()
@@ -463,7 +490,7 @@ class MatchState(BaseState):
             cur = words[0]
             for w in words[1:]:
                 test = f"{cur} {w}"
-                if font.size(test)[0] <= width_px:
+                if self._measure_w(test, font_size) <= width_px:
                     cur = test
                 else:
                     wrapped.append(cur)
@@ -482,12 +509,10 @@ class MatchState(BaseState):
         inner = pygame.Rect(rl.x + 8, rl.y + 28, rl.w - 16, rl.h - 36)
         surf.set_clip(inner)
 
-        # Wrap lines to fit the panel width
         wrapped = self._wrap_lines(self.events[-600:], inner.w - 8, 18)
         line_h = 20
         visible = max(1, inner.h // line_h)
 
-        # Start index so that by default we stick to bottom unless scrolled
         start = max(0, len(wrapped) - visible - self._log_scroll)
         end = min(len(wrapped), start + visible)
 
