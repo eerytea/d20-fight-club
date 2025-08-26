@@ -1,164 +1,162 @@
 # ui/state_season_hub.py
 from __future__ import annotations
 
-from typing import Optional, List, Tuple
+from typing import Optional
+
+import pygame
+
+from .app import BaseState
+from .uiutil import Theme, Button, draw_text, draw_panel
 
 try:
-    import pygame
-except Exception:  # pragma: no cover
-    pygame = None  # type: ignore
-
-from .uiutil import Theme, Button, draw_panel, draw_text
-from .app import App
-from core.sim import simulate_week_full_except, simulate_week_ai
-from core.save import save_career
-from core import config
+    from core.career import Career
+except Exception:
+    Career = object  # type: ignore
 
 
-class SeasonHubState:
-    """
-    Minimal but functional season hub:
-      - Play My Match: finds user's unplayed fixture this week and opens MatchState
-      - Sim Rest: simulates the rest of the week except the user's fixture
-      - Roster / Schedule / Table: open respective screens (mouse UI kit)
-      - Save
-    """
-    def __init__(self, app: Optional[App] = None, *, career=None) -> None:
-        self.app: App | None = app
-        self.career = career
-        self._buttons: List[Button] = []
-        self._panel_rect = None
+class SeasonHubState(BaseState):
+    def __init__(self, app, career: Optional[Career] = None):
+        self.app = app
+        self.career: Optional[Career] = career
+        self.theme = Theme()
+        self.buttons: list[Button] = []
+        self._layout_built = False
 
     def enter(self) -> None:
-        if pygame is None or self.app is None:
-            return
+        self._build_layout()
+
+    # --- Layout --------------------------------------------------------------
+    def _build_layout(self) -> None:
+        self.buttons.clear()
         W, H = self.app.width, self.app.height
-        pad = 16
 
-        btn_w, btn_h = 200, 44
-        y0 = H // 3
-        x = pad
+        panel = pygame.Rect(16, 80, W - 32, H - 96)
+        self.panel_rect = panel
 
-        def r(i: int) -> "pygame.Rect":
-            return pygame.Rect(x, y0 + i * (btn_h + 12), btn_w, btn_h)
+        # Buttons along bottom-right
+        btn_w, btn_h, gap = 180, 42, 10
+        x = panel.right - (btn_w + gap)
+        y = panel.bottom - (btn_h + gap)
 
-        def _msg(text: str) -> None:
-            try:
-                from .state_message import MessageState
-                self.app.safe_push(MessageState, message=text)
-            except Exception:
-                print(text)
+        def add(label, fn):
+            nonlocal x, y
+            self.buttons.append(Button(pygame.Rect(x, y, btn_w, btn_h), label, fn))
+            x -= btn_w + gap
+            if x < panel.x + 12:  # wrap to new row if needed
+                x = panel.right - (btn_w + gap)
+                y -= btn_h + gap
 
-        def play_my_match():
-            fx_list = [f for f in self.career.fixtures if f.week == self.career.week]
-            if not fx_list:
-                _msg("No fixtures this week")
+        add("Back", self._back)
+        add("Save (soon)", self._save)
+        add("Table (soon)", self._table)
+        add("Schedule (soon)", self._schedule)
+        add("Roster (soon)", self._roster)
+        add("Sim Rest of Week", self._sim_rest)
+        add("Play My Match", self._play_my_match)
+
+        self._layout_built = True
+
+    # --- Button actions ------------------------------------------------------
+    def _back(self):
+        self.app.pop_state()
+
+    def _save(self):
+        print("[SeasonHub] Save coming soon.")
+
+    def _table(self):
+        print("[SeasonHub] Table coming soon.")
+
+    def _schedule(self):
+        print("[SeasonHub] Schedule coming soon.")
+
+    def _roster(self):
+        print("[SeasonHub] Roster coming soon.")
+
+    def _sim_rest(self):
+        if self.career is None:
+            print("[SeasonHub] No career loaded.")
+            return
+        try:
+            from core.sim import simulate_week_ai
+            simulate_week_ai(self.career)
+        except Exception as e:
+            print("[SeasonHub] simulate_week_ai failed:", e)
+
+    def _play_my_match(self):
+        if self.career is None:
+            print("[SeasonHub] No career loaded.")
+            return
+        try:
+            # Try to open a match viewer if available
+            from .state_match import MatchState
+            # Find the first unplayed fixture for user team if available
+            uid = getattr(self.career, "user_team_id", None)
+            fixture = None
+            for fx in getattr(self.career, "fixtures", []):
+                if getattr(fx, "played", False):
+                    continue
+                if uid is None or fx.home_id == uid or fx.away_id == uid:
+                    fixture = fx
+                    break
+            if fixture is None:
+                print("[SeasonHub] No pending fixtures.")
                 return
-            # find the user fixture
-            my_tid = getattr(self.career, "user_team_id", None)
-            if my_tid is None:
-                _msg("No user team set")
-                return
-            try:
-                idx = next(i for i, fx in enumerate(fx_list) if (fx.home_id == my_tid or fx.away_id == my_tid))
-            except StopIteration:
-                _msg("No match for your team this week")
-                return
-            fx = fx_list[idx]
-            if fx.played:
-                _msg("Your fixture is already played")
-                return
+            # Build team dicts expected by MatchState
+            tH = next(t for t in self.career.teams if t["tid"] == fixture.home_id)
+            tA = next(t for t in self.career.teams if t["tid"] == fixture.away_id)
+            self.app.push_state(MatchState(self.app, tH, tA))
+        except Exception as e:
+            print("[SeasonHub] Play failed:", e)
 
-            home_tid, away_tid = fx.home_id, fx.away_id
-            # derive deterministic seed
-            try:
-                seed = self.app.derive_seed("season", fx.week, home_tid, away_tid)
-            except Exception:
-                seed = None
-            try:
-                from .state_match import MatchState
-                self.app.safe_push(MatchState, career=self.career, home_team_id=home_tid, away_team_id=away_tid, seed=seed, title=f"Week {fx.week}: {self.career.team_names[home_tid]} vs {self.career.team_names[away_tid]}")
-            except Exception:
-                _msg("Match viewer not available")
-
-        def sim_rest():
-            fx_list = [f for f in self.career.fixtures if f.week == self.career.week]
-            if not fx_list:
-                _msg("No fixtures this week")
-                return
-            my_tid = getattr(self.career, "user_team_id", None)
-            if my_tid is None:
-                _msg("No user team set")
-                return
-            try:
-                idx = next(i for i, fx in enumerate(fx_list) if (fx.home_id == my_tid or fx.away_id == my_tid))
-            except StopIteration:
-                idx = -1
-            simulate_week_full_except(self.career, idx if idx >= 0 else 10_000)
-            _msg("Simulated the rest of the week.")
-
-        def open_roster():
-            try:
-                from .state_roster import RosterState
-                self.app.safe_push(RosterState, career=self.career)
-            except Exception:
-                _msg("Roster screen not available")
-
-        def open_schedule():
-            try:
-                from .state_schedule import ScheduleState
-                self.app.safe_push(ScheduleState, career=self.career)
-            except Exception:
-                _msg("Schedule screen not available")
-
-        def open_table():
-            try:
-                from .state_table import TableState
-                self.app.safe_push(TableState, career=self.career)
-            except Exception:
-                _msg("Table screen not available")
-
-        def save_now():
-            save_career(self.career)
-            _msg("Game saved.")
-
-        self._buttons = [
-            Button(r(0), "Play My Match", on_click=play_my_match),
-            Button(r(1), "Sim Rest of Week", on_click=sim_rest),
-            Button(r(2), "Roster", on_click=open_roster),
-            Button(r(3), "Schedule", on_click=open_schedule),
-            Button(r(4), "Table", on_click=open_table),
-            Button(r(5), "Save", on_click=save_now),
-            Button(r(6), "Back", on_click=lambda: self.app.pop_state()),
-        ]
-
-        self._panel_rect = pygame.Rect(self._buttons[0].rect.right + 24, 24, self.app.width - self._buttons[0].rect.right - 24 - 16, self.app.height - 48)
-
-    def exit(self) -> None:
-        self._buttons.clear()
-
-    def handle_event(self, event: "pygame.event.Event") -> bool:
-        for b in self._buttons:
-            if b.handle_event(event):
-                return True
-        return False
+    # --- State interface -----------------------------------------------------
+    def handle(self, event) -> None:
+        if not self._layout_built:
+            return
+        for b in self.buttons:
+            b.handle(event)
 
     def update(self, dt: float) -> None:
-        pass
+        if not self._layout_built:
+            self._build_layout()
+        mx, my = pygame.mouse.get_pos()
+        for b in self.buttons:
+            b.update((mx, my))
 
     def draw(self, surface: "pygame.Surface") -> None:
         th = Theme()
         surface.fill(th.bg)
-        title = f"Season Hub — Week {self.career.week}"
-        draw_text(surface, title, (surface.get_width() // 2, 12), size=28, align="center")
-        for b in self._buttons:
-            b.draw(surface)
 
-        draw_panel(surface, self._panel_rect, title="Overview")
-        x = self._panel_rect.x + 12
-        y = self._panel_rect.y + 8
-        draw_text(surface, f"Teams: {len(self.career.team_names)}", (x, y), size=18, color=th.fg); y += 22
-        draw_text(surface, f"Fixtures this week: {sum(1 for f in self.career.fixtures if f.week == self.career.week)}", (x, y), size=18, color=th.fg); y += 22
-        my_tid = getattr(self.career, "user_team_id", None)
-        if my_tid is not None:
-            draw_text(surface, f"My Team: {self.career.team_names[my_tid]}", (x, y), size=18, color=th.fg); y += 22
+        # Title
+        if self.career is None:
+            title = "Season Hub — No season loaded"
+            subtitle = "Load a save or start a New Season to continue."
+        else:
+            try:
+                wk = getattr(self.career, "week", 1)
+            except Exception:
+                wk = 1
+            title = f"Season Hub — Week {wk}"
+            subtitle = getattr(self.career, "league_name", "Single League")
+
+        draw_text(surface, title, (surface.get_width() // 2, 16), 32, th.text, align="center")
+        draw_text(surface, subtitle, (surface.get_width() // 2, 52), 20, th.subt, align="center")
+
+        # Main panel
+        draw_panel(surface, self.panel_rect, th)
+
+        # If no career, show a placeholder message
+        if self.career is None:
+            msg = "No season is active. Use New Season from the main menu."
+            draw_text(surface, msg, (self.panel_rect.centerx, self.panel_rect.centery - 12), 22, th.text, align="center")
+        else:
+            # Minimal season snapshot (safe to access)
+            try:
+                team_count = len(getattr(self.career, "teams", []))
+                draw_text(surface, f"Teams: {team_count}", (self.panel_rect.x + 16, self.panel_rect.y + 16), 20, th.text)
+                draw_text(surface, f"Fixtures: {len(getattr(self.career, 'fixtures', []))}", (self.panel_rect.x + 16, self.panel_rect.y + 40), 20, th.text)
+            except Exception:
+                pass
+
+        # Buttons
+        for b in self.buttons:
+            b.draw(surface, th)
