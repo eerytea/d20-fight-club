@@ -1,170 +1,244 @@
-# ui/state_season_hub.py
+# ui/state_season_hub.py — Season hub focused on weekly matchups + clear "Your Team" header
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, List
 
 import pygame
 
 from .app import BaseState
 from .uiutil import Theme, Button, draw_text, draw_panel
 
-try:
-    from core.career import Career
-except Exception:
-    Career = object  # type: ignore
+from core.career import Career
+from core.sim import simulate_week_ai
+
+
+def _team_name(career: Career, tid: int) -> str:
+    """Resolve a friendly team name by team id."""
+    try:
+        return next(t.get("name", f"Team {tid}") for t in career.teams if int(t.get("tid")) == int(tid))
+    except StopIteration:
+        return f"Team {tid}"
 
 
 class SeasonHubState(BaseState):
-    def __init__(self, app, career: Optional[Career] = None):
+    """
+    Main season dashboard.
+    Shows:
+      - Top toolbar with "Your Team: <name>" and "Week N"
+      - Central panel with this week's matchups (and scores if played)
+      - Bottom action buttons (Play, Sim Week, Schedule, Table, Roster, Back)
+    """
+
+    def __init__(self, app, career: Career):
         self.app = app
-        self.career: Optional[Career] = career
         self.theme = Theme()
-        self.buttons: list[Button] = []
-        self._layout_built = False
+        self.career = career
 
+        # Layout rects
+        self.rect_toolbar = pygame.Rect(0, 0, 0, 0)
+        self.rect_panel = pygame.Rect(0, 0, 0, 0)
+        self.rect_buttons = pygame.Rect(0, 0, 0, 0)
+
+        # Buttons
+        self.btn_play: Button | None = None
+        self.btn_sim: Button | None = None
+        self.btn_sched: Button | None = None
+        self.btn_table: Button | None = None
+        self.btn_roster: Button | None = None
+        self.btn_back: Button | None = None
+
+        self._built = False
+        self._flash: Optional[str] = None  # small status line under toolbar
+
+    # --- State lifecycle ------------------------------------------------------
     def enter(self) -> None:
-        self._build_layout()
+        self._build()
 
-    # --- Layout --------------------------------------------------------------
-    def _build_layout(self) -> None:
-        self.buttons.clear()
+    # --- UI building ----------------------------------------------------------
+    def _build(self) -> None:
         W, H = self.app.width, self.app.height
+        pad = 16
+        toolbar_h = 60
+        btn_h = 60
 
-        panel = pygame.Rect(16, 80, W - 32, H - 96)
-        self.panel_rect = panel
+        self.rect_toolbar = pygame.Rect(pad, pad, W - pad * 2, toolbar_h)
+        self.rect_panel   = pygame.Rect(pad, self.rect_toolbar.bottom + pad, W - pad * 2, H - (toolbar_h + pad * 3 + btn_h))
+        self.rect_buttons = pygame.Rect(pad, self.rect_panel.bottom + pad, W - pad * 2, btn_h)
 
-        # Buttons along bottom-right
-        btn_w, btn_h, gap = 180, 42, 10
-        x = panel.right - (btn_w + gap)
-        y = panel.bottom - (btn_h + gap)
+        # Buttons: spread across the bottom bar
+        labels = ["Play", "Sim Week", "Schedule", "Table", "Roster", "Back"]
+        handlers = [self._play, self._sim_week, self._schedule, self._table, self._roster, self._back]
+        bw = max(130, self.rect_buttons.w // len(labels) - 10)
+        gap = max(8, (self.rect_buttons.w - bw * len(labels)) // (len(labels) - 1))
+        x = self.rect_buttons.x
+        y = self.rect_buttons.y
+        btns = []
+        for i, (lab, fn) in enumerate(zip(labels, handlers)):
+            btns.append(Button(pygame.Rect(x, y, bw, self.rect_buttons.h), lab, fn))
+            x += bw + gap
 
-        def add(label, fn):
-            nonlocal x, y
-            self.buttons.append(Button(pygame.Rect(x, y, btn_w, btn_h), label, fn))
-            x -= btn_w + gap
-            if x < panel.x + 12:
-                x = panel.right - (btn_w + gap)
-                y -= btn_h + gap
+        (self.btn_play,
+         self.btn_sim,
+         self.btn_sched,
+         self.btn_table,
+         self.btn_roster,
+         self.btn_back) = btns
 
-        add("Back", self._back)
-        add("Save (soon)", self._save)
-        add("Table", self._table)
-        add("Schedule", self._schedule)
-        add("Roster", self._roster)
-        add("Sim Rest of Week", self._sim_rest)
-        add("Play My Match", self._play_my_match)
+        self._built = True
 
-        self._layout_built = True
+    # --- Helpers --------------------------------------------------------------
+    def _user_team_name(self) -> str:
+        tid = getattr(self.career, "user_team_id", None)
+        if tid is None:
+            return "—"
+        return _team_name(self.career, tid)
 
-    # --- Button actions ------------------------------------------------------
-    def _back(self):
-        self.app.pop_state()
+    def _week_fixtures(self):
+        return self.career.fixtures_in_week(self.career.week)
 
-    def _save(self):
-        print("[SeasonHub] Save coming soon.")
+    def _user_fixture_this_week(self):
+        return self.career.user_fixture_this_week()
 
-    def _table(self):
-        if self.career is None:
-            print("[SeasonHub] No career loaded.")
+    # --- Actions --------------------------------------------------------------
+    def _play(self) -> None:
+        fx = self._user_fixture_this_week()
+        if not fx:
+            self._flash = "No user match available this week."
             return
+
         try:
-            from .state_table import TableState
-            self.app.push_state(TableState(self.app, self.career))
-        except Exception as e:
-            print("[SeasonHub] Table open failed:", e)
+            # Prepare home/away team dicts for MatchState
+            home = self.career.team_by_id(fx.home_id)
+            away = self.career.team_by_id(fx.away_id)
 
-    def _schedule(self):
-        if self.career is None:
-            print("[SeasonHub] No career loaded.")
-            return
+            from .state_match import MatchState
+
+            def _on_finish(ms: "MatchState"):
+                # Compute kills from engine state: how many from opposite team are downed
+                eng = getattr(ms, "engine", None)
+                kills_home = 0
+                kills_away = 0
+                if eng and hasattr(eng, "fighters"):
+                    # In our MatchState._build_engine_from_teams we set home team_id=0, away team_id=1
+                    fighters = list(getattr(eng, "fighters"))
+                    kills_home = sum(1 for f in fighters if getattr(f, "team_id", 0) == 1 and not getattr(f, "alive", True))
+                    kills_away = sum(1 for f in fighters if getattr(f, "team_id", 0) == 0 and not getattr(f, "alive", True))
+                else:
+                    # Fallback: draw
+                    kills_home = 0
+                    kills_away = 0
+
+                try:
+                    self.career.record_result(fx.id, kills_home, kills_away)
+                    self.career.advance_week_if_done()
+                    self._flash = f"Result saved: {_team_name(self.career, fx.home_id)} {kills_home}-{kills_away} {_team_name(self.career, fx.away_id)}"
+                except Exception as e:
+                    self._flash = f"Save failed: {e}"
+
+            # Push the live match viewer
+            self.app.push_state(MatchState(self.app, home, away, on_finish=_on_finish))
+        except Exception as e:
+            print("[SeasonHub] Play failed:", e)
+            self._flash = f"Play failed: {e}"
+
+    def _sim_week(self) -> None:
+        # Simulate all remaining unplayed fixtures in the current week with AI
+        try:
+            simulate_week_ai(self.career)
+            self._flash = "Simulated this week."
+        except Exception as e:
+            self._flash = f"Sim failed: {e}"
+
+    def _schedule(self) -> None:
         try:
             from .state_schedule import ScheduleState
             self.app.push_state(ScheduleState(self.app, self.career))
         except Exception as e:
-            print("[SeasonHub] Schedule open failed:", e)
+            self._flash = f"Schedule open failed: {e}"
 
-    def _roster(self):
+    def _table(self) -> None:
+        try:
+            from .state_table import TableState
+            self.app.push_state(TableState(self.app, self.career))
+        except Exception as e:
+            self._flash = f"Table open failed: {e}"
+
+    def _roster(self) -> None:
         try:
             from .state_roster_browser import RosterBrowserState
             self.app.push_state(RosterBrowserState(self.app))
         except Exception as e:
-            print("[SeasonHub] Roster open failed:", e)
+            self._flash = f"Roster open failed: {e}"
 
-    def _sim_rest(self):
-        if self.career is None:
-            print("[SeasonHub] No career loaded.")
-            return
-        try:
-            from core.sim import simulate_week_ai
-            simulate_week_ai(self.career)
-        except Exception as e:
-            print("[SeasonHub] simulate_week_ai failed:", e)
+    def _back(self) -> None:
+        self.app.pop_state()
 
-    def _play_my_match(self):
-        if self.career is None:
-            print("[SeasonHub] No career loaded.")
-            return
-        try:
-            from .state_match import MatchState
-            # pick first unplayed fixture; bias to user team if set
-            uid = getattr(self.career, "user_team_id", None)
-            fixture = None
-            for fx in getattr(self.career, "fixtures", []):
-                if getattr(fx, "played", False):
-                    continue
-                if uid is None or fx.home_id == uid or fx.away_id == uid:
-                    fixture = fx
-                    break
-            if fixture is None:
-                print("[SeasonHub] No pending fixtures.")
-                return
-            tH = next(t for t in self.career.teams if t["tid"] == fixture.home_id)
-            tA = next(t for t in self.career.teams if t["tid"] == fixture.away_id)
-            self.app.push_state(MatchState(self.app, tH, tA))
-        except Exception as e:
-            print("[SeasonHub] Play failed:", e)
-
-    # --- State interface -----------------------------------------------------
+    # --- Pygame hooks ---------------------------------------------------------
     def handle(self, event) -> None:
-        if not self._layout_built:
+        if not self._built:
             return
-        for b in self.buttons:
-            b.handle(event)
+        for b in (self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_back):
+            if b:
+                b.handle(event)
 
     def update(self, dt: float) -> None:
-        if not self._layout_built:
-            self._build_layout()
+        if not self._built:
+            return
         mx, my = pygame.mouse.get_pos()
-        for b in self.buttons:
-            b.update((mx, my))
+        for b in (self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_back):
+            if b:
+                b.update((mx, my))
 
-    def draw(self, surface: "pygame.Surface") -> None:
+    def draw(self, surf) -> None:
         th = self.theme
-        surface.fill(th.bg)
+        surf.fill(th.bg)
 
-        # Title
-        if self.career is None:
-            title = "Season Hub — No season loaded"
-            subtitle = "Load a save or start a New Season to continue."
+        # --- Toolbar (Your Team + Week) ---
+        draw_panel(surf, self.rect_toolbar, th)
+        user_name = self._user_team_name()
+        week = getattr(self.career, "week", 1)
+        # Left side: Back is in bottom buttons; toolbar shows title info
+        draw_text(surf, f"Your Team: {user_name}", (self.rect_toolbar.x + 12, self.rect_toolbar.centery), 26, th.text, align="left")
+        draw_text(surf, f"Week {week}", (self.rect_toolbar.right - 12, self.rect_toolbar.centery), 26, th.subt, align="right")
+
+        # Optional flash/status line right under toolbar
+        if self._flash:
+            draw_text(surf, self._flash, (self.rect_toolbar.centerx, self.rect_toolbar.bottom + 6), 18, th.subt, align="center")
+
+        # --- Weekly matchups panel ---
+        draw_panel(surf, self.rect_panel, th)
+
+        x = self.rect_panel.x + 12
+        y = self.rect_panel.y + 12
+        draw_text(surf, "This Week's Matchups", (self.rect_panel.centerx, y), 22, th.text, align="center")
+        y += 30
+
+        fixtures = self._week_fixtures()
+        if not fixtures:
+            draw_text(surf, "No fixtures scheduled.", (x, y), 20, th.subt)
         else:
-            wk = getattr(self.career, "week", 1)
-            title = f"Season Hub — Week {wk}"
-            subtitle = getattr(self.career, "league_name", "Single League")
+            user_tid = getattr(self.career, "user_team_id", None)
+            for fx in fixtures:
+                hn = _team_name(self.career, fx.home_id)
+                an = _team_name(self.career, fx.away_id)
+                is_user = (user_tid is not None) and (fx.home_id == user_tid or fx.away_id == user_tid)
 
-        draw_text(surface, title, (surface.get_width() // 2, 16), 32, th.text, align="center")
-        draw_text(surface, subtitle, (surface.get_width() // 2, 52), 20, th.subt, align="center")
+                if fx.played:
+                    line = f"{hn}  {fx.kills_home}-{fx.kills_away}  {an}"
+                    color = th.text
+                else:
+                    line = f"{hn}  vs  {an}"
+                    color = th.text
 
-        # Main panel
-        draw_panel(surface, self.panel_rect, th)
+                # Emphasize the user's matchup
+                if is_user:
+                    line = "▶  " + line
+                    color = th.accent if hasattr(th, "accent") else color
 
-        if self.career:
-            try:
-                team_count = len(getattr(self.career, "teams", []))
-                draw_text(surface, f"Teams: {team_count}", (self.panel_rect.x + 16, self.panel_rect.y + 16), 20, th.text)
-                draw_text(surface, f"Fixtures: {len(getattr(self.career, 'fixtures', []))}", (self.panel_rect.x + 16, self.panel_rect.y + 40), 20, th.text)
-            except Exception:
-                pass
+                draw_text(surf, line, (x, y), 20, color)
+                y += 24
 
-        # Buttons
-        for b in self.buttons:
-            b.draw(surface, th)
+        # --- Bottom buttons ---
+        for b in (self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_back):
+            if b:
+                b.draw(surf, th)
