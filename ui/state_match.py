@@ -345,7 +345,7 @@ class MatchState(BaseState):
             fresh = evs[start:]
          
             if start == 0 and fresh:
-            print("[Match] sample events:", fresh[:5])
+               print("[Match] sample events:", fresh[:5])
 
             if fresh:
                 for e in fresh:
