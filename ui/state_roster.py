@@ -116,4 +116,36 @@ class RosterState:
         per_page = (self.rc_left.h - 24) // line_h
         end = min(len(self.roster), start + per_page)
         for i in range(start, end):
-            p = self.roster[i
+            p = self.roster[i]
+            name = p.get("name", f"P{i}")
+            role = p.get("role", "")
+            hp = p.get("hp", 0); mx = p.get("max_hp", 0)
+            row = f"{name:<12}  HP {hp}/{mx}  {role}"
+            col_bg = (38,38,46) if i == self.sel_ix else (24,24,28)
+            pygame.draw.rect(screen, col_bg, Rect(self.rc_left.x+8, y-2, self.rc_left.w-16, line_h), border_radius=4)
+            draw_text(screen, row, self.rc_left.x+14, y, (220,220,230), 18)
+            y += line_h
+
+        # right details
+        panel(screen, self.rc_right, color=(24,24,28))
+        if 0 <= self.sel_ix < len(self.roster):
+            p = self.roster[self.sel_ix]
+            x = self.rc_right.x + 12
+            y = self.rc_right.y + 12
+            draw_text(screen, p.get("name","?"), x, y, (240,240,250), 20); y += 28
+            draw_text(screen, f"HP: {p.get('hp',0)}/{p.get('max_hp',0)}", x, y, (220,220,230), 18); y += 22
+            draw_text(screen, f"AC: {p.get('ac',10)}", x, y, (220,220,230), 18); y += 22
+            if p.get("role"):
+                draw_text(screen, f"Role: {p.get('role')}", x, y, (220,220,230), 18); y += 22
+            # stats grid
+            y += 8
+            stats = ["STR","DEX","CON","INT","WIS","CHA"]
+            for i, k in enumerate(stats):
+                v = p.get(k, "-")
+                draw_text(screen, f"{k}: {v}", x + (i%3)*120, y + (i//3)*24, (210,210,220), 18)
+
+        for b in self._buttons:
+            b.draw(screen)
+
+    def _back(self):
+        self.app.pop_state()
