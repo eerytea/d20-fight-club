@@ -4,26 +4,68 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
 
-# --- Our shared adapters (normalize shapes) ---
-from core.adapters import (
-    as_fixture_dict,
-    as_result_dict,
-    team_name_from,
-)
+# --- Shared adapters (normalize shapes) ---
+try:
+    from core.adapters import (
+        as_fixture_dict,
+        as_result_dict,
+        team_name_from,
+    )
+except Exception:
+    # Safe fallbacks if adapters module isn't present (should be replaced by real adapters)
+    def as_fixture_dict(fx: Dict[str, Any]) -> Dict[str, Any]:
+        d = dict(fx)
+        d.setdefault("week", int(d.get("week", 1)))
+        d.setdefault("home_id", int(d.get("home_id", d.get("home_tid", d.get("A", 0)))))
+        d.setdefault("away_id", int(d.get("away_id", d.get("away_tid", d.get("B", 1)))))
+        d.setdefault("played", bool(d.get("played", False)))
+        d.setdefault("k_home", int(d.get("k_home", 0)))
+        d.setdefault("k_away", int(d.get("k_away", 0)))
+        d.setdefault("winner", d.get("winner", None))
+        d.setdefault("comp_kind", d.get("comp_kind", "league"))
+        d["home_tid"] = d["home_id"]; d["away_tid"] = d["away_id"]
+        d["A"] = d["home_id"]; d["B"] = d["away_id"]
+        return d
+
+    def as_result_dict(r: Dict[str, Any]) -> Dict[str, Any]:
+        d = dict(r)
+        d["home_id"] = int(d.get("home_id", d.get("home_tid", d.get("A", 0))))
+        d["away_id"] = int(d.get("away_id", d.get("away_tid", d.get("B", 1))))
+        d["k_home"] = int(d.get("k_home", 0))
+        d["k_away"] = int(d.get("k_away", 0))
+        d["winner"] = d.get("winner", None)
+        return d
+
+    def team_name_from(career, tid: Any) -> str:
+        tid_i = int(tid)
+        for t in getattr(career, "teams", []):
+            if int(t.get("tid", t.get("id", -999))) == tid_i:
+                return t.get("name", f"Team {tid_i}")
+        # map fallback
+        tn = getattr(career, "team_names", None)
+        if isinstance(tn, dict) and tid_i in tn:
+            return str(tn[tid_i])
+        return f"Team {tid_i}"
 
 # --- Thin wrappers (single responsibility) ---
-# schedule: gives fixtures_by_week in the canonical fixture shape
-# standings: gives sorted table rows in the canonical standing shape
+# schedule: fixtures_by_week in canonical fixture shape
+# standings: sorted table rows in canonical standing shape
 from core import schedule as _sched
 from core import standings as _stand
 
-# --- Optional hooks (safe fallbacks if not wired yet) ---
+# --- Integration points (Elo, staff/training, bootstrap) ---
 try:
-    from core.usecases.integration_points import on_match_finalized, weekly_training_tick
+    from core.usecases.integration_points import (
+        bootstrap_career,
+        on_match_finalized,
+        weekly_training_tick,
+    )
 except Exception:
-    def on_match_finalized(*args, **kwargs):  # no-op if reputation glue not present
+    def bootstrap_career(*args, **kwargs):  # no-op if module not present
         pass
-    def weekly_training_tick(*args, **kwargs):  # no-op if staff/training glue not present
+    def on_match_finalized(*args, **kwargs):
+        pass
+    def weekly_training_tick(*args, **kwargs):
         pass
 
 
@@ -54,10 +96,9 @@ def _deterministic_kills(seed: int, week: int, home_id: int, away_id: int) -> Tu
 @dataclass
 class Career:
     """
-    Plain-English:
-      - Holds teams, fixtures (by week + flat), current week, and standings.
-      - Uses one consistent shape everywhere so screens/engine don’t guess keys.
-      - Can simulate AI vs AI weeks (your team’s match is left for you to play).
+    Holds teams, fixtures (by week + flat), current week, and standings.
+    Uses one consistent shape everywhere so the UI/engine don’t guess key names.
+    Can simulate AI vs AI weeks (your team’s match is left for you to play).
     """
     seed: int = 12345
     week: int = 1                      # Week is 1-based (Week 1, 2, 3, ...)
@@ -66,14 +107,16 @@ class Career:
     # Teams: list of dicts like {"tid": int, "name": str, "fighters": [ {fighter fields...}, ... ]}
     teams: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Fixtures: same canonical shape everywhere.
-    # Per-week:
+    # Fixtures: canonical shape.
     fixtures_by_week: List[List[Dict[str, Any]]] = field(default_factory=list)
-    # Flat list (all fixtures):
-    fixtures: List[Dict[str, Any]] = field(default_factory=list)
+    fixtures: List[Dict[str, Any]] = field(default_factory=list)  # flattened
 
     # Standings: map tid -> row with keys {"tid","name","P","W","D","L","K","KD","PTS"}
     standings: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+
+    # Optional: reputation/staff buckets added by bootstrap
+    reputation: Optional[Dict[str, Any]] = None
+    staff: Optional[Dict[str, Any]] = None
 
     # -----------------------------------------------------------------------
     # Construction
@@ -92,12 +135,13 @@ class Career:
         Make a new career with:
           - n_teams simple teams with team_size fighters,
           - a double round-robin schedule (home/away twice),
-          - standings initialized to zero.
+          - standings initialized to zero,
+          - bootstrap: reputation+staff seeded.
         """
         if not team_names:
             team_names = [f"Team {i}" for i in range(n_teams)]
 
-        # Minimal teams (you can swap in your generator later)
+        # Minimal teams (replace later with your generator)
         teams: List[Dict[str, Any]] = []
         for tid in range(n_teams):
             fighters = []
@@ -105,7 +149,7 @@ class Career:
                 fighters.append({
                     "pid": pid,
                     "name": f"P{pid}",
-                    "team_id": 0,   # engine will set 0 for home / 1 for away at runtime
+                    "team_id": 0,   # engine sets 0 for home / 1 for away at runtime
                     "hp": 10, "max_hp": 10, "ac": 10, "alive": True,
                     "STR": 10, "DEX": 10, "CON": 10, "INT": 8, "WIS": 8, "CHA": 8,
                 })
@@ -124,6 +168,13 @@ class Career:
             fixtures=fixtures_flat,
         )
         car._recompute_standings()
+
+        # --- NEW: bootstrap Elo/staff so they're always present
+        try:
+            bootstrap_career(car)
+        except Exception:
+            pass
+
         return car
 
     # -----------------------------------------------------------------------
@@ -142,12 +193,11 @@ class Career:
     def fixtures_for_week(self, w: int) -> List[Dict[str, Any]]:
         """Return canonical fixtures for 1-based week w."""
         if 1 <= w <= len(self.fixtures_by_week):
-            # ensure canonical shape (adapts if someone mutated a fixture)
             return [as_fixture_dict(fx) for fx in self.fixtures_by_week[w - 1]]
         return []
 
     # -----------------------------------------------------------------------
-    # Save / Load (simple)
+    # Save / Load
     # -----------------------------------------------------------------------
 
     def to_dict(self) -> Dict[str, Any]:
@@ -155,8 +205,25 @@ class Career:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Career":
-        # Forgiving load: assumes dict matches fields; migrate externally if structure changes.
-        return cls(**d)
+        """
+        Forgiving load: assumes dict matches fields; if structure drifted,
+        external migrator should adapt. We also:
+          - recompute standings (in case),
+          - bootstrap reputation/staff to guarantee availability.
+        """
+        obj = cls(**d)
+        try:
+            # Normalize fixtures list if empty but we have per-week
+            if not obj.fixtures and obj.fixtures_by_week:
+                obj.fixtures = [fx for wk in obj.fixtures_by_week for fx in wk]
+            obj._recompute_standings()
+        finally:
+            # Ensure Elo/staff tables exist on old saves
+            try:
+                bootstrap_career(obj)
+            except Exception:
+                pass
+        return obj
 
     # -----------------------------------------------------------------------
     # Standings
@@ -168,8 +235,7 @@ class Career:
 
     def table_rows_sorted(self) -> List[Dict[str, Any]]:
         """Sorted rows via the wrapper (PTS → KD → H2H → K)."""
-        rows = _stand.table_rows_sorted(self.teams, self.fixtures)
-        return rows
+        return _stand.table_rows_sorted(self.teams, self.fixtures)
 
     def _recompute_standings(self) -> None:
         """Rebuild standings from fixtures via the wrapper, store as a dict map by tid."""
