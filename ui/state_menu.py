@@ -43,6 +43,10 @@ try:
     from ui.state_settings import SettingsState
 except Exception:
     SettingsState = None
+try:
+    from core.usecases.states.state_reputation import ReputationState
+except Exception:
+    ReputationState = None
 
 # ---- Career (for default/new career) ----
 try:
@@ -54,16 +58,17 @@ except Exception:
 class MenuState:
     """
     Main Menu:
-      - Season (opens Season Hub)
-      - Exhibition (opens Exhibition Picker)
-      - Roster (opens user's roster)
+      - Season
+      - Exhibition
+      - Roster
+      - Reputation
       - Settings
       - Quit
     """
     def __init__(self, app):
         self.app = app
         self.rc_title = Rect(20, 20, 860, 80)
-        self.rc_menu  = Rect(20, 120, 860, 420)
+        self.rc_menu  = Rect(20, 120, 860, 460)
 
         # Build buttons
         x, y = self.rc_menu.x + 40, self.rc_menu.y + 20
@@ -72,10 +77,11 @@ class MenuState:
         self.btn_season = Button(Rect(x, y, w, h), "Season", self._open_season); y += h + gap
         self.btn_exhib  = Button(Rect(x, y, w, h), "Exhibition", self._open_exhibition); y += h + gap
         self.btn_roster = Button(Rect(x, y, w, h), "Roster", self._open_roster); y += h + gap
+        self.btn_rep    = Button(Rect(x, y, w, h), "Reputation", self._open_reputation); y += h + gap
         self.btn_setts  = Button(Rect(x, y, w, h), "Settings", self._open_settings); y += h + gap
         self.btn_quit   = Button(Rect(x, y, w, h), "Quit", self._quit)
 
-        self._buttons = [self.btn_season, self.btn_exhib, self.btn_roster, self.btn_setts, self.btn_quit]
+        self._buttons = [self.btn_season, self.btn_exhib, self.btn_roster, self.btn_rep, self.btn_setts, self.btn_quit]
 
     # ---------------- events ----------------
     def handle_event(self, ev):
@@ -99,12 +105,8 @@ class MenuState:
 
     # ---------------- actions ----------------
     def _ensure_career(self):
-        """
-        Ensure app.career exists. If not, create a default sandbox career.
-        """
         career = getattr(self.app, "career", None)
         if career is None and Career is not None:
-            # default: 20 teams, 5 fighters each
             self.app.career = Career.new(seed=12345, n_teams=20, team_size=5, user_team_id=0)
         return getattr(self.app, "career", None)
 
@@ -123,6 +125,11 @@ class MenuState:
         if RosterState is not None and car is not None:
             tid = getattr(car, "user_tid", 0)
             self.app.push_state(RosterState(self.app, car, tid=tid))
+
+    def _open_reputation(self):
+        car = self._ensure_career()
+        if ReputationState is not None and car is not None:
+            self.app.push_state(ReputationState(self.app, car))
 
     def _open_settings(self):
         if SettingsState is not None:
