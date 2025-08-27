@@ -1,76 +1,78 @@
 from __future__ import annotations
 import pygame
-from typing import List, Tuple
-from core.reputation import Reputation, RepTable
+from pygame import Rect
 
 try:
-    from ui.uiutil import Theme, Button, draw_text, panel
+    from ui.uiutil import Button, draw_text, panel
 except Exception:
-    Theme = None
-    Button = None
-    def draw_text(surface, text, x, y, color=(255,255,255), size=20):
+    class Button:
+        def __init__(self, rect, label, cb, enabled=True):
+            self.rect, self.label, self.cb, self.enabled = rect, label, cb, enabled
+        def draw(self, screen):
+            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=6)
+            font = pygame.font.SysFont("arial", 18)
+            screen.blit(font.render(self.label, True, (255,255,255)), (self.rect.x+8, self.rect.y+6))
+        def handle(self, ev):
+            if self.enabled and ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
+                self.cb()
+    def draw_text(surface, text, x, y, color=(230,230,235), size=20):
         font = pygame.font.SysFont("arial", size)
-        surf = font.render(text, True, color)
-        surface.blit(surf, (x, y))
-    def panel(surface, rect, color=(40,40,40)):
-        pygame.draw.rect(surface, color, rect, border_radius=6)
+        surface.blit(font.render(str(text), True, color), (x, y))
+    def panel(surface, rect, color=(30,30,38)):
+        pygame.draw.rect(surface, color, rect, border_radius=8)
+
+from core import reputation as _rep
 
 class ReputationState:
+    """
+    Simple viewer for Clubs / Nations / Races Elo tables.
+    """
     def __init__(self, app, career):
         self.app = app
         self.career = career
-        self.rep: Reputation = getattr(career, "reputation", Reputation())
-        self.tabs = [("Clubs", RepTable.CLUB), ("Nations", RepTable.NATIONAL), ("Races", RepTable.RACE)]
-        self.active_ix = 0
-        self.scroll = 0
+        self.tab = "clubs"  # 'clubs' | 'nations' | 'races'
+        self.rc_hdr = Rect(20, 20, 860, 40)
+        self.rc_grid = Rect(20, 70, 860, 480)
+        self.rc_btns = Rect(20, 560, 860, 40)
+        self._build_buttons()
+
+    def _build_buttons(self):
+        x, y, w, h, g = self.rc_btns.x, self.rc_btns.y, 120, 36, 10
+        self.btn_clubs = Button(Rect(x, y, w, h), "Clubs", lambda: self._set_tab("clubs"))
+        self.btn_nats  = Button(Rect(x + (w+g), y, w, h), "Nations", lambda: self._set_tab("nations"))
+        self.btn_race  = Button(Rect(x + 2*(w+g), y, w, h), "Races", lambda: self._set_tab("races"))
+        self.btn_back  = Button(Rect(x + 3*(w+g), y, w, h), "Back", self._back)
+        self._buttons = [self.btn_clubs, self.btn_nats, self.btn_race, self.btn_back]
+
+    def _set_tab(self, t): self.tab = t
 
     def handle_event(self, ev):
-        if ev.type == pygame.KEYDOWN:
-            if ev.key == pygame.K_LEFT:
-                self.active_ix = max(0, self.active_ix - 1)
-            elif ev.key == pygame.K_RIGHT:
-                self.active_ix = min(len(self.tabs)-1, self.active_ix + 1)
-            elif ev.key == pygame.K_UP:
-                self.scroll = max(0, self.scroll - 1)
-            elif ev.key == pygame.K_DOWN:
-                self.scroll += 1
-        elif ev.type == pygame.MOUSEWHEEL:
-            self.scroll = max(0, self.scroll - ev.y)
+        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+            self._back(); return
+        if ev.type == pygame.MOUSEBUTTONDOWN:
+            for b in self._buttons:
+                b.handle(ev)
 
-    def update(self, dt):
-        pass
+    def update(self, dt): pass
 
     def draw(self, screen):
-        w, h = screen.get_size()
-        screen.fill((10, 10, 14))
-        # Tabs
-        x = 20
-        for i, (label, _) in enumerate(self.tabs):
-            col = (255, 255, 0) if i == self.active_ix else (200, 200, 200)
-            draw_text(screen, f"[{label}]", x, 20, col, size=22)
-            x += 140
+        screen.fill((12,12,16))
+        panel(screen, self.rc_hdr)
+        draw_text(screen, f"Reputation — {self.tab.title()}", self.rc_hdr.x+10, self.rc_hdr.y+8, size=22)
 
-        # Table panel
-        panel(screen, pygame.Rect(20, 60, w-40, h-80), color=(30,30,35))
-        self._draw_table(screen, pygame.Rect(30, 70, w-60, h-100))
+        panel(screen, self.rc_grid, color=(24,24,28))
+        rows = _rep.table(self.tab, self.career)
+        x, y = self.rc_grid.x + 12, self.rc_grid.y + 12
+        draw_text(screen, "POS", x, y, size=18); draw_text(screen, "ID", x+60, y, size=18); draw_text(screen, "Rating", x+420, y, size=18)
+        y += 24
+        for i, (id_, rating) in enumerate(rows, start=1):
+            draw_text(screen, str(i), x, y, size=18)
+            draw_text(screen, str(id_), x+60, y, size=18)
+            draw_text(screen, f"{rating:.1f}", x+420, y, size=18)
+            y += 22
 
-    def _draw_table(self, screen, rect):
-        table = self.tabs[self.active_ix][1]
-        rows: List[Tuple[str, float]] = self.rep.table_sorted(table)
-        row_h = 26
-        header = ["#", "ID", "Rating"]
-        col_x = [rect.x + 10, rect.x + 50, rect.x + rect.width - 150]
-        # Header
-        draw_text(screen, header[0], col_x[0], rect.y, (160,160,160), size=20)
-        draw_text(screen, header[1], col_x[1], rect.y, (160,160,160), size=20)
-        draw_text(screen, header[2], col_x[2], rect.y, (160,160,160), size=20)
-        # Rows (scroll)
-        start = self.scroll
-        end = min(len(rows), start + max(1, rect.height // row_h) - 2)
-        y = rect.y + 30
-        for i in range(start, end):
-            k, r = rows[i]
-            draw_text(screen, f"{i+1}", col_x[0], y, (220,220,220), size=18)
-            draw_text(screen, k, col_x[1], y, (220,220,220), size=18)
-            draw_text(screen, f"{r:.1f}", col_x[2], y, (220,220,220), size=18)
-            y += row_h
+        for b in self._buttons:
+            b.draw(screen)
+
+    def _back(self):
+        self.app.pop_state()
