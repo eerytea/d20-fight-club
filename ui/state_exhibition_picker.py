@@ -1,154 +1,123 @@
-# ui/state_exhibition_picker.py
 from __future__ import annotations
 
 import pygame
-from typing import List, Dict, Any
+from pygame import Rect
+from typing import Any, Dict, List, Optional
 
-from .app import BaseState
-from .uiutil import Theme, Button, ListView, draw_text, draw_panel
+# Tiny UI kit fallback
+try:
+    from ui.uiutil import Theme, Button, draw_text, panel
+except Exception:
+    Theme = None
+    class Button:
+        def __init__(self, rect, label, cb, enabled=True):
+            self.rect, self.label, self.cb, self.enabled = rect, label, cb, enabled
+        def draw(self, screen):
+            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=6)
+            font = pygame.font.SysFont("arial", 18)
+            screen.blit(font.render(self.label, True, (255,255,255) if self.enabled else (180,180,180)),
+                        (self.rect.x+8, self.rect.y+6))
+        def handle(self, ev):
+            if self.enabled and ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
+                self.cb()
+    def draw_text(surface, text, x, y, color=(230,230,235), size=20):
+        font = pygame.font.SysFont("arial", size)
+        surface.blit(font.render(str(text), True, color), (x, y))
+    def panel(surface, rect, color=(30,30,38)):
+        pygame.draw.rect(surface, color, rect, border_radius=8)
 
-from core.config import LEAGUE_TEAMS, TEAM_SIZE, DEFAULT_SEED
-from core.career import Career
+# Exhibition screen we push
+try:
+    from ui.state_exhibition import ExhibitionState
+except Exception:
+    ExhibitionState = None
 
-
-class ExhibitionPickerState(BaseState):
-    def __init__(self, app):
+class ExhibitionPickerState:
+    """
+    Pick Home and Away teams, then start a friendly match.
+    """
+    def __init__(self, app, career):
         self.app = app
-        self.theme = Theme()
-        self._built = False
+        self.career = career
+        self.teams: List[Dict[str, Any]] = getattr(career, "teams", [])
+        self.sel_home_ix = 0
+        self.sel_away_ix = 1 if len(self.teams) > 1 else 0
 
-        self.preview_career: Career | None = None
-        self.teams: List[Dict[str, Any]] = []
-        self.team_names: List[str] = []
+        # layout
+        self.rc_hdr = Rect(20, 20, 860, 40)
+        self.rc_home = Rect(20, 70, 420, 440)
+        self.rc_away = Rect(460, 70, 420, 440)
+        self.rc_btns = Rect(20, 530, 860, 60)
+        self._build_buttons()
 
-        self.sel_home: int = 0
-        self.sel_away: int = 1
+    def _build_buttons(self):
+        bw, bh, gap = 140, 36, 10
+        x = self.rc_btns.x
+        self.btn_start = Button(Rect(x, self.rc_btns.y, bw, bh), "Start Match", self._start)
+        self.btn_swap = Button(Rect(x + bw + gap, self.rc_btns.y, bw, bh), "Swap Sides", self._swap)
+        self.btn_back = Button(Rect(x + 2*(bw+gap), self.rc_btns.y, bw, bh), "Back", self._back)
+        self._buttons = [self.btn_start, self.btn_swap, self.btn_back]
 
-        self.home_lv: ListView | None = None
-        self.away_lv: ListView | None = None
-        self.btn_start: Button | None = None
-        self.btn_back: Button | None = None
+    # events
+    def handle_event(self, ev):
+        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+            self._back(); return
+        if ev.type == pygame.MOUSEBUTTONDOWN:
+            if self.rc_home.collidepoint(ev.pos):
+                ix = self._row_at_y(self.rc_home, ev.pos[1])
+                if 0 <= ix < len(self.teams):
+                    self.sel_home_ix = ix
+            elif self.rc_away.collidepoint(ev.pos):
+                ix = self._row_at_y(self.rc_away, ev.pos[1])
+                if 0 <= ix < len(self.teams):
+                    self.sel_away_ix = ix
+            for b in self._buttons:
+                b.handle(ev)
 
-    def enter(self) -> None:
-        self._rebuild_data()
-        self._build_ui()
+    def update(self, dt): pass
 
-    def _rebuild_data(self) -> None:
-        self.preview_career = Career.new(
-            seed=DEFAULT_SEED,
-            n_teams=LEAGUE_TEAMS,
-            team_size=TEAM_SIZE,
-            user_team_id=None,
-        )
-        self.teams = self.preview_career.teams
-        self.team_names = [t.get("name", f"Team {t.get('tid', i)}") for i, t in enumerate(self.teams)]
-        if len(self.team_names) >= 2:
-            self.sel_home, self.sel_away = 0, 1
-        else:
-            self.sel_home = self.sel_away = 0
+    def draw(self, screen):
+        screen.fill((12,12,16))
+        panel(screen, self.rc_hdr)
+        draw_text(screen, "Exhibition — pick teams", self.rc_hdr.x+10, self.rc_hdr.y+8, size=22)
 
-    def _build_ui(self) -> None:
-        W, H = self.app.screen.get_size()
-        pad = 16
-        col_w = (W - pad * 3) // 2
-        left = pygame.Rect(pad, pad + 40, col_w, H - pad * 2 - 40)
-        right = pygame.Rect(left.right + pad, pad + 40, col_w, H - pad * 2 - 40)
+        # left/right lists
+        self._draw_list(screen, self.rc_home, "Home", self.sel_home_ix)
+        self._draw_list(screen, self.rc_away, "Away", self.sel_away_ix)
 
-        self.left_rect = left
-        self.right_rect = right
+        for b in self._buttons:
+            b.draw(screen)
 
-        self.home_lv = ListView(
-            pygame.Rect(left.x + 10, left.y + 34, left.w - 20, left.h - 44),
-            self.team_names,
-            row_h=28,
-            on_select=self._on_pick_home
-        )
-        self.away_lv = ListView(
-            pygame.Rect(right.x + 10, right.y + 34, right.w - 20, right.h - 100),
-            self.team_names,
-            row_h=28,
-            on_select=self._on_pick_away
-        )
+    def _draw_list(self, screen, rect, title, sel_ix):
+        panel(screen, rect, color=(24,24,28))
+        draw_text(screen, title, rect.x+10, rect.y+8, (220,220,230), 18)
+        y = rect.y + 32
+        line_h = 24
+        for i, t in enumerate(self.teams):
+            name = t.get("name", f"Team {t.get('tid','?')}")
+            col_bg = (38,38,46) if i == sel_ix else (24,24,28)
+            pygame.draw.rect(screen, col_bg, Rect(rect.x+8, y-2, rect.w-16, line_h), border_radius=4)
+            draw_text(screen, f"{i+1:>2}. {name}", rect.x+14, y, (220,220,230), 18)
+            y += line_h
 
-        btn_w, btn_h = 180, 42
-        yb = right.bottom - (btn_h + 12)
-        self.btn_start = Button(pygame.Rect(right.x + 12, yb, btn_w, btn_h), "Start Match", self._start)
-        self.btn_back = Button(pygame.Rect(right.right - (btn_w + 12), yb, btn_w, btn_h), "Back", self._back)
+    def _row_at_y(self, rect, y) -> int:
+        line_h = 24
+        start_y = rect.y + 32
+        ix = (y - start_y) // line_h
+        return int(ix)
 
-        self._built = True
+    # actions
+    def _swap(self):
+        self.sel_home_ix, self.sel_away_ix = self.sel_away_ix, self.sel_home_ix
 
-    # --- Events --------------------------------------------------------------
-    def _on_pick_home(self, idx: int) -> None:
-        self.sel_home = int(idx)
-        if self.sel_home == self.sel_away and len(self.team_names) > 1:
-            self.sel_away = (self.sel_home + 1) % len(self.team_names)
-
-    def _on_pick_away(self, idx: int) -> None:
-        self.sel_away = int(idx)
-        if self.sel_home == self.sel_away and len(self.team_names) > 1:
-            self.sel_home = (self.sel_away + 1) % len(self.team_names)
-
-    def _start(self) -> None:
-        try:
-            th = self.teams[self.sel_home]
-            ta = self.teams[self.sel_away]
-            # Try to open a match viewer if present; otherwise just log
-            try:
-                from .state_match import MatchState
-                self.app.push_state(MatchState(self.app, th, ta))
-            except Exception:
-                print(f"[Exhibition] Would start: {th.get('name')} vs {ta.get('name')} (viewer not wired)")
-        except Exception as e:
-            print("[Exhibition] Could not start match:", e)
-
-    def _back(self) -> None:
-        self.app.pop_state()
-
-    # --- State interface -----------------------------------------------------
-    def handle(self, event) -> None:
-        if not self._built:
+    def _start(self):
+        if not self.teams or ExhibitionState is None:
             return
-        self.home_lv.handle(event)
-        self.away_lv.handle(event)
-        self.btn_start.handle(event)
-        self.btn_back.handle(event)
+        if self.sel_home_ix == self.sel_away_ix:
+            return
+        home = self.teams[self.sel_home_ix]
+        away = self.teams[self.sel_away_ix]
+        self.app.push_state(ExhibitionState(self.app, self.career, home_tid=home.get("tid"), away_tid=away.get("tid")))
 
-    def update(self, dt: float) -> None:
-        if not self._built:
-            self.enter(); return
-        mx, my = pygame.mouse.get_pos()
-        self.btn_start.update((mx, my))
-        self.btn_back.update((mx, my))
-
-    def _draw_team_preview(self, surf, rect, label: str, idx: int):
-        draw_panel(surf, rect, self.theme)
-        draw_text(surf, label, (rect.centerx, rect.y + 6), 20, self.theme.subt, align="center")
-        # left list already occupies left; on right we put roster preview for away team
-        if 0 <= idx < len(self.teams):
-            t = self.teams[idx]
-            draw_text(surf, t.get("name", "Team"), (rect.x + 12, rect.y + 34), 22, self.theme.text)
-            roster = t.get("roster") or t.get("fighters") or []
-            y = rect.y + 64
-            for f in roster[:10]:
-                nm = f.get("name", "Unknown"); cls = f.get("class", "Fighter")
-                lvl = int(f.get("level", 1)); ovr = int(f.get("ovr", 40))
-                draw_text(surf, f"{nm} — {cls}  L{lvl}  OVR {ovr}", (rect.x + 12, y), 18, self.theme.text)
-                y += 22
-
-    def draw(self, surface) -> None:
-        if not self._built:
-            self.enter()
-        surface.fill(self.theme.bg)
-        draw_text(surface, "Exhibition — Pick Home & Away", (surface.get_width() // 2, 12), size=30, color=self.theme.text, align="center")
-
-        # Left: Home list
-        draw_panel(surface, self.left_rect, self.theme)
-        draw_text(surface, "Home — Teams", (self.left_rect.centerx, self.left_rect.y + 6), 20, self.theme.subt, align="center")
-        self.home_lv.draw(surface, self.theme)
-
-        # Right: Away list (top) + preview below
-        draw_panel(surface, self.right_rect, self.theme)
-        draw_text(surface, "Away — Teams", (self.right_rect.centerx, self.right_rect.y + 6), 20, self.theme.subt, align="center")
-        self.away_lv.draw(surface, self.theme)
-        self.btn_start.draw(surface, self.theme)
-        self.btn_back.draw(surface, self.theme)
+    def _back(self):
+        self.app.pop_state()
