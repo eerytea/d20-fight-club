@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pygame
 from pygame import Rect
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Dict, Any
 
-# UI kit
+# ---- Optional real UI kit ----
 try:
     from ui.uiutil import Theme, Button, draw_text, panel
 except Exception:
@@ -13,276 +13,199 @@ except Exception:
         def __init__(self, rect, label, cb, enabled=True):
             self.rect, self.label, self.cb, self.enabled = rect, label, cb, enabled
         def draw(self, screen):
-            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=6)
+            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=8)
             font = pygame.font.SysFont("arial", 18)
-            surf = font.render(self.label, True, (255,255,255) if self.enabled else (180,180,180))
-            screen.blit(surf, (self.rect.x+8, self.rect.y+6))
+            screen.blit(font.render(self.label, True, (255,255,255) if self.enabled else (170,170,170)),
+                        (self.rect.x+10, self.rect.y+6))
         def handle(self, ev):
             if self.enabled and ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
                 self.cb()
-    def draw_text(surface, text, x, y, color=(255,255,255), size=20):
+    def draw_text(surface, text, x, y, color=(230,230,235), size=20):
         font = pygame.font.SysFont("arial", size)
-        surf = font.render(text, True, color)
-        surface.blit(surf, (x, y))
-    def panel(surface, rect, color=(40,40,40)):
-        pygame.draw.rect(surface, color, rect, border_radius=6)
+        surface.blit(font.render(str(text), True, color), (x, y))
+    def panel(surface, rect, color=(30,30,38)):
+        pygame.draw.rect(surface, color, rect, border_radius=10)
 
-# Screens we link to
+# ---- Child states (optional) ----
 try:
-    from ui.states.state_match import MatchState
+    from ui.state_schedule import ScheduleState
 except Exception:
-    from ui.state_match import MatchState  # fallback
-
+    ScheduleState = None
 try:
-    from ui.states.state_reputation import ReputationState
+    from ui.state_table import TableState
 except Exception:
-    ReputationState = None
+    TableState = None
+try:
+    from ui.state_roster import RosterState
+except Exception:
+    RosterState = None
+try:
+    from ui.state_match import MatchState
+except Exception:
+    MatchState = None
+try:
+    from ui.state_message import MessageState
+except Exception:
+    MessageState = None
 
-# Sim week fallback
-def _try_sim_week(career) -> bool:
-    # Prefer bound methods on career if available
-    for name in ("simulate_week_ai", "simulate_week", "sim_week_ai", "sim_week"):
-        fn = getattr(career, name, None)
-        if callable(fn):
-            try:
-                fn()
-                return True
-            except Exception:
-                pass
-    # Fallback to module-level
-    try:
-        from core.sim import simulate_week_ai
-        simulate_week_ai(career)
-        return True
-    except Exception:
-        return False
-
-# Robust fixtures reader
-def _fixtures_for_week(career, week_index: int) -> List[Tuple[Any, Any]]:
-    """Return list of (home_tid, away_tid) for week_index (0-based)."""
-    # Common shapes
-    fx_by_week = getattr(career, "fixtures_by_week", None) or getattr(career, "rounds", None)
-    if isinstance(fx_by_week, list) and 0 <= week_index < len(fx_by_week):
-        week = fx_by_week[week_index]
-        out = []
-        for p in week:
-            if isinstance(p, dict):
-                a = p.get("home_id") or p.get("home_tid") or p.get("home") or p.get("A")
-                b = p.get("away_id") or p.get("away_tid") or p.get("away") or p.get("B")
-                out.append((a, b))
-            elif isinstance(p, (list, tuple)) and len(p) >= 2:
-                out.append((p[0], p[1]))
-        return out
-
-    # Flat fixtures + each has a week field
-    fx = getattr(career, "fixtures", None) or getattr(career, "schedule", None)
-    if isinstance(fx, list):
-        out = []
-        for m in fx:
-            w = m.get("week") if isinstance(m, dict) else getattr(m, "week", None)
-            if w is None:
-                continue
-            # weeks might be 1-based
-            if int(w) - 1 == week_index or int(w) == week_index:
-                if isinstance(m, dict):
-                    a = m.get("home_id") or m.get("home_tid") or m.get("home") or m.get("A")
-                    b = m.get("away_id") or m.get("away_tid") or m.get("away") or m.get("B")
-                else:
-                    a = getattr(m, "home_id", getattr(m, "home_tid", getattr(m, "home", getattr(m, "A", None))))
-                    b = getattr(m, "away_id", getattr(m, "away_tid", getattr(m, "away", getattr(m, "B", None))))
-                out.append((a, b))
-        if out:
-            return out
-    return []
-
-def _current_week_index(career) -> int:
-    # prefer explicit week_index if present; else derive from 1-based week
-    if hasattr(career, "week_index"):
-        try:
-            return max(0, int(getattr(career, "week_index")))
-        except Exception:
-            pass
-    try:
-        return max(0, int(getattr(career, "week", 1)) - 1)
-    except Exception:
-        return 0
-
-def _team_name(career, tid) -> str:
-    if hasattr(career, "team_name"):
-        try:
-            return str(career.team_name(tid))
-        except Exception:
-            pass
-    teams = getattr(career, "teams", None)
-    if isinstance(teams, list):
-        for t in teams:
-            if str(t.get("tid", t.get("id"))) == str(tid):
-                return t.get("name", f"Team {tid}")
-    if isinstance(teams, dict):
-        t = teams.get(str(tid)) or teams.get(int(tid)) if str(tid).isdigit() else None
-        if t:
-            return t.get("name", f"Team {tid}")
-    return f"Team {tid}"
 
 class SeasonHubState:
-    def __init__(self, app, career, user_tid: Optional[Any] = None):
+    """
+    Season Hub:
+      - Header: Your Team, Week
+      - This Week's Matchups (list)
+      - Buttons: Play, Sim Week, Schedule, Table, Roster, Back
+    """
+    def __init__(self, app, career):
         self.app = app
         self.career = career
-        self.user_tid = user_tid if user_tid is not None else getattr(career, "user_tid", 0)
-        self.toast = ""
-        self._toast_t = 0.0
+        self.toast_text = ""
+        self.toast_timer = 0.0
 
         # layout
-        self.rc_hdr = Rect(20, 20, 860, 40)
-        self.rc_mid = Rect(20, 70, 860, 420)
-        self.rc_btns = Rect(20, 500, 860, 60)
+        self.rc_hdr   = Rect(20, 20, 860, 60)
+        self.rc_match = Rect(20, 90, 860, 380)
+        self.rc_btns  = Rect(20, 480, 860, 120)
+
         self._build_buttons()
+        self._refresh_button_states()
 
-    # ---------------- buttons ----------------
-
+    # ---------------- UI plumbing ----------------
     def _build_buttons(self):
-        bx, by, bw, bh, gap = self.rc_btns.x, self.rc_btns.y, 130, 36, 10
-        self.btn_play = Button(Rect(bx, by, bw, bh), "Play", self._on_play)
-        self.btn_sim = Button(Rect(bx + (bw+gap), by, bw, bh), "Sim Week", self._on_sim_week)
-        self.btn_sched = Button(Rect(bx + 2*(bw+gap), by, bw, bh), "Schedule", self._on_schedule)
-        self.btn_table = Button(Rect(bx + 3*(bw+gap), by, bw, bh), "Table", self._on_table)
-        self.btn_roster = Button(Rect(bx + 4*(bw+gap), by, bw, bh), "Roster", self._on_roster)
-        if ReputationState:
-            self.btn_rep = Button(Rect(bx + 5*(bw+gap), by, bw, bh), "Reputation", self._on_reputation)
-            self._buttons = [self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_rep]
-        else:
-            self._buttons = [self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster]
+        x = self.rc_btns.x
+        y = self.rc_btns.y + 10
+        w, h, gap = 140, 36, 10
+        self.btn_play   = Button(Rect(x, y, w, h), "Play", self._play)
+        self.btn_sim    = Button(Rect(x + (w+gap), y, w, h), "Sim Week", self._sim_week)
+        self.btn_sched  = Button(Rect(x + 2*(w+gap), y, w, h), "Schedule", self._open_schedule)
+        self.btn_table  = Button(Rect(x + 3*(w+gap), y, w, h), "Table", self._open_table)
+        self.btn_roster = Button(Rect(x + 4*(w+gap), y, w, h), "Roster", self._open_roster)
+        self.btn_back   = Button(Rect(x + 5*(w+gap), y, w, h), "Back", self._back)
+        self._buttons = [self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_back]
 
-    # ---------------- events -----------------
+    def _refresh_button_states(self):
+        # Enable Play only if a user fixture exists this week and is unplayed
+        self.btn_play.enabled = self._find_user_fixture() is not None
 
+    # ---------------- events ----------------
     def handle_event(self, ev):
+        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+            self._back(); return
         if ev.type == pygame.MOUSEBUTTONDOWN:
             for b in self._buttons:
-                if hasattr(b, "handle"):
-                    b.handle(ev)
-        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-            self.app.pop_state()
+                b.handle(ev)
 
     def update(self, dt):
-        self._toast_t = max(0.0, self._toast_t - dt)
-        # enable/disable Play depending on fixture present
-        wk = _current_week_index(self.career)
-        pairs = _fixtures_for_week(self.career, wk)
-        has_user = any(str(a) == str(self.user_tid) or str(b) == str(self.user_tid) for a, b in pairs)
-        self.btn_play.enabled = has_user
+        if self.toast_timer > 0:
+            self.toast_timer -= dt
+            if self.toast_timer <= 0:
+                self.toast_text = ""
 
     def draw(self, screen):
-        screen.fill((12, 12, 16))
-        panel(screen, self.rc_hdr, color=(30,30,38))
+        screen.fill((12,12,16))
         # header
-        user_name = _team_name(self.career, self.user_tid)
-        wk = _current_week_index(self.career)
-        draw_text(screen, f"Your Team: {user_name}    Week {wk+1}", self.rc_hdr.x+8, self.rc_hdr.y+8, (235,235,240), 22)
+        panel(screen, self.rc_hdr)
+        user_tid = getattr(self.career, "user_tid", 0)
+        draw_text(screen, f"Your Team: {self.career.team_name(user_tid)}", self.rc_hdr.x + 10, self.rc_hdr.y + 10, size=22)
+        draw_text(screen, f"Week {self.career.week}", self.rc_hdr.x + 10, self.rc_hdr.y + 34, size=18)
 
-        # mid panel: this week's fixtures
-        panel(screen, self.rc_mid, color=(24,24,28))
-        draw_text(screen, "This Week's Matchups", self.rc_mid.x+8, self.rc_mid.y+8, (210,210,220), 18)
-        pairs = _fixtures_for_week(self.career, wk)
-        y = self.rc_mid.y + 36
-        for (a, b) in pairs[:18]:
-            an = _team_name(self.career, a)
-            bn = _team_name(self.career, b)
-            draw_text(screen, f"{an}  vs  {bn}", self.rc_mid.x+16, y, (220,220,230), 18)
-            y += 24
+        # matchups
+        panel(screen, self.rc_match, color=(24,24,28))
+        draw_text(screen, "This Week's Matchups", self.rc_match.x+10, self.rc_match.y+10, size=20)
+        y = self.rc_match.y + 40
+        line_h = 24
+        fixtures = self.career.fixtures_for_week(getattr(self.career, "week", 1))
+        if not fixtures:
+            draw_text(screen, "No fixtures this week.", self.rc_match.x+12, y, (210,210,220), 18)
+        else:
+            for fx in fixtures:
+                h = int(fx.get("home_id", fx.get("home_tid", fx.get("A", 0))))
+                a = int(fx.get("away_id", fx.get("away_tid", fx.get("B", 0))))
+                hn = self.career.team_name(h)
+                an = self.career.team_name(a)
+                played = bool(fx.get("played", False))
+                row = f"{hn} vs {an}"
+                color = (220,220,230)
+                if played:
+                    row = f"{hn}  {fx.get('k_home',0)}–{fx.get('k_away',0)}  {an}"
+                    color = (210,235,210)
+                # highlight user's fixture
+                if str(h) == str(user_tid) or str(a) == str(user_tid):
+                    color = (255,220,140) if not played else (230,250,180)
+                draw_text(screen, row, self.rc_match.x + 12, y, color, 18)
+                y += line_h
 
         # buttons
         for b in self._buttons:
-            if hasattr(b, "draw"):
-                b.draw(screen)
+            b.draw(screen)
 
         # toast
-        if self._toast_t > 0:
-            draw_text(screen, self.toast, self.rc_btns.x, self.rc_btns.y - 24, (255,230,120), 18)
+        if self.toast_text:
+            tx = self.toast_text
+            rect = Rect(self.rc_hdr.x + 540, self.rc_hdr.y + 12, 320, 32)
+            panel(screen, rect, color=(32,32,40))
+            draw_text(screen, tx, rect.x + 10, rect.y + 6, (240,240,240), 18)
 
-    # --------------- actions ---------------
+    # ---------------- helpers ----------------
+    def _find_user_fixture(self):
+        """Return (fixture dict) if user's team has an unplayed match this week."""
+        user_tid = getattr(self.career, "user_tid", None)
+        if user_tid is None:
+            return None
+        fixtures = self.career.fixtures_for_week(getattr(self.career, "week", 1))
+        for fx in fixtures:
+            if fx.get("played"):
+                continue
+            h = int(fx.get("home_id", fx.get("home_tid", fx.get("A", -1))))
+            a = int(fx.get("away_id", fx.get("away_tid", fx.get("B", -1))))
+            if str(h) == str(user_tid) or str(a) == str(user_tid):
+                return fx
+        return None
 
-    def _on_play(self):
-        # find user fixture
-        wk = _current_week_index(self.career)
-        pairs = _fixtures_for_week(self.career, wk)
-        f = None
-        for a, b in pairs:
-            if str(a) == str(self.user_tid) or str(b) == str(self.user_tid):
-                f = {"home_tid": a, "away_tid": b, "comp_kind": "league"}
-                break
-        if not f:
-            self._toast("No user match this week.")
+    def _toast(self, text: str, seconds: float = 2.0):
+        self.toast_text = text
+        self.toast_timer = seconds
+
+    # ---------------- actions ----------------
+    def _play(self):
+        fx = self._find_user_fixture()
+        if fx is None:
+            self._toast("No playable fixture this week.")
             return
+        if MatchState is None:
+            # fallback toast if match viewer not available
+            self._toast("Match screen not available.")
+            return
+        # Push MatchState; state_match.py should handle on_finish() and saving
+        try:
+            self.app.push_state(MatchState(self.app, self.career, fixture=fx))
+        except TypeError:
+            # if your MatchState signature differs, try the legacy form
+            try:
+                self.app.push_state(MatchState(self.app, self.career))
+            except Exception:
+                self._toast("Unable to start match (constructor mismatch).")
 
-        # build fighters list shape your engine expects
-        fighters = self._fighters_for(self.career, f["home_tid"], f["away_tid"])
+    def _sim_week(self):
+        try:
+            self.career.simulate_week_ai()
+            self._toast("Simulated AI fixtures.")
+            self._refresh_button_states()
+        except Exception:
+            self._toast("Sim failed.")
 
-        def on_finish(result: Dict[str, Any]):
-            # Persist the result if your career exposes a method; otherwise ignore gracefully
-            saved = False
-            for name in ("record_result", "save_match_result", "apply_result"):
-                fn = getattr(self.career, name, None)
-                if callable(fn):
-                    try:
-                        fn(result)
-                        saved = True
-                        break
-                    except Exception:
-                        pass
-            # Advance week if your career has it
-            for name in ("advance_week", "next_week"):
-                fn = getattr(self.career, name, None)
-                if callable(fn):
-                    try:
-                        fn()
-                    except Exception:
-                        pass
-            self._toast("Result saved and week advanced." if saved else "Match finished.")
+    def _open_schedule(self):
+        if ScheduleState is not None:
+            self.app.push_state(ScheduleState(self.app, self.career, start_week=getattr(self.career, "week", 1)))
 
-        ms = MatchState(self.app, self.career, f, fighters, grid_w=11, grid_h=11, seed=getattr(self.career, "seed", 12345), on_finish=on_finish)
-        self.app.push_state(ms)
+    def _open_table(self):
+        if TableState is not None:
+            self.app.push_state(TableState(self.app, self.career))
 
-    def _fighters_for(self, career, home_tid, away_tid) -> List[Dict]:
-        # Expect career.teams list with 'fighters' or 'players'
-        def roster_of(tid):
-            teams = getattr(career, "teams", [])
-            for t in teams:
-                if str(t.get("tid", t.get("id"))) == str(tid):
-                    roster = t.get("fighters") or t.get("players") or []
-                    # Normalize team_id
-                    out = []
-                    for i, p in enumerate(roster):
-                        d = dict(p) if isinstance(p, dict) else p.__dict__.copy()
-                        d.setdefault("pid", d.get("id", i))
-                        d["team_id"] = 0 if str(tid) == str(home_tid) else 1
-                        d.setdefault("name", d.get("n", f"F{i}"))
-                        d.setdefault("hp", d.get("hp", d.get("HP", 10)))
-                        d.setdefault("max_hp", d.get("max_hp", d.get("HP_max", d.get("hp", 10))))
-                        d.setdefault("ac", d.get("ac", d.get("AC", 10)))
-                        d.setdefault("alive", d.get("alive", True))
-                        out.append(d)
-                    return out
-            return []
-        return roster_of(home_tid) + roster_of(away_tid)
+    def _open_roster(self):
+        if RosterState is not None:
+            tid = getattr(self.career, "user_tid", 0)
+            self.app.push_state(RosterState(self.app, self.career, tid=tid))
 
-    def _on_sim_week(self):
-        ok = _try_sim_week(self.career)
-        self._toast("Week simulated." if ok else "Sim failed.")
-
-    def _on_schedule(self):
-        # if you have a schedule screen, push it; else toast
-        self._toast("Schedule coming soon (adapter hook).")
-
-    def _on_table(self):
-        self._toast("Table screen available in your build (open from menu).")
-
-    def _on_roster(self):
-        self._toast("Roster screen coming soon (adapter hook).")
-
-    def _on_reputation(self):
-        if ReputationState:
-            self.app.push_state(ReputationState(self.app, self.career))
-
-    def _toast(self, msg: str, secs: float = 2.0):
-        self.toast = msg
-        self._toast_t = secs
+    def _back(self):
+        self.app.pop_state()
