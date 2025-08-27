@@ -1,84 +1,119 @@
-# ui/state_roster.py
 from __future__ import annotations
 
-from typing import Optional
+import pygame
+from pygame import Rect
+from typing import Any, Dict, List, Optional
 
+# Shared fighter adapter
 try:
-    import pygame
-except Exception:  # pragma: no cover
-    pygame = None  # type: ignore
+    from core.adapters import as_fighter_dict
+except Exception:
+    def as_fighter_dict(p, default_team_id=0, default_pid=0):
+        d = dict(p) if isinstance(p, dict) else p.__dict__.copy()
+        d.setdefault("pid", d.get("id", default_pid))
+        d.setdefault("name", d.get("n", f"P{d['pid']}"))
+        d.setdefault("team_id", d.get("tid", default_team_id))
+        d.setdefault("hp", d.get("HP", 10))
+        d.setdefault("max_hp", d.get("max_hp", d.get("HP_max", d.get("hp", 10))))
+        d.setdefault("ac", d.get("AC", 10))
+        d.setdefault("alive", d.get("alive", True))
+        return d
 
-from .uiutil import Theme, Button, ListView, draw_panel, draw_text
-from .app import App
+# Tiny UI kit fallback
+try:
+    from ui.uiutil import Theme, Button, draw_text, panel
+except Exception:
+    Theme = None
+    class Button:
+        def __init__(self, rect, label, cb, enabled=True):
+            self.rect, self.label, self.cb, self.enabled = rect, label, cb, enabled
+        def draw(self, screen):
+            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=6)
+            font = pygame.font.SysFont("arial", 18)
+            screen.blit(font.render(self.label, True, (255,255,255) if self.enabled else (180,180,180)),
+                        (self.rect.x+8, self.rect.y+6))
+        def handle(self, ev):
+            if self.enabled and ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
+                self.cb()
+    def draw_text(surface, text, x, y, color=(230,230,235), size=20):
+        font = pygame.font.SysFont("arial", size)
+        surface.blit(font.render(str(text), True, color), (x, y))
+    def panel(surface, rect, color=(30,30,38)):
+        pygame.draw.rect(surface, color, rect, border_radius=8)
 
+def _find_team(career, tid) -> Optional[Dict[str, Any]]:
+    teams = getattr(career, "teams", [])
+    for t in teams:
+        if str(t.get("tid", t.get("id"))) == str(tid):
+            return t
+    return None
 
 class RosterState:
-    """Roster viewer for the user's team (or the first team if not set)."""
-    def __init__(self, app: Optional[App] = None, *, career=None) -> None:
-        self.app: App | None = app
+    """
+    Shows one team’s roster (defaults to user's team).
+    Left: player list. Right: selected player details.
+    """
+    def __init__(self, app, career, tid: Optional[int] = None):
+        self.app = app
         self.career = career
-        self.team_id: int = 0
+        self.tid = tid if tid is not None else getattr(career, "user_tid", 0)
 
-        self.roster_lv: ListView | None = None
-        self.btn_back: Button | None = None
-        self._detail_rect: "pygame.Rect" | None = None
+        self.team = _find_team(career, self.tid) or {"tid": self.tid, "name": career.team_name(self.tid), "fighters": []}
+        roster = self.team.get("fighters") or self.team.get("players") or []
+        # normalize
+        self.roster: List[Dict[str, Any]] = [as_fighter_dict(p, default_team_id=0, default_pid=i) for i, p in enumerate(roster)]
 
-    def enter(self) -> None:
-        if pygame is None or self.app is None:
-            return
-        self.team_id = getattr(self.career, "user_team_id", 0)
+        self.sel_ix = 0 if self.roster else -1
+        self.scroll = 0
 
-        W, H = self.app.width, self.app.height
-        pad = 16
-        list_rect = pygame.Rect(pad, pad, max(360, W // 3), H - 80)
-        detail_rect = pygame.Rect(list_rect.right + pad, pad, W - list_rect.width - pad * 3, H - 80)
-        self._detail_rect = detail_rect
+        # layout
+        self.rc_hdr = Rect(20, 20, 860, 40)
+        self.rc_left = Rect(20, 70, 420, 470)
+        self.rc_right = Rect(460, 70, 420, 470)
+        self.rc_btns = Rect(20, 550, 860, 46)
+        self._build_buttons()
 
-        self.roster_lv = ListView(list_rect, [], row_h=28)
-        labels = [f"{f['name']} — {f.get('cls','Ftr')} (OVR {f.get('ovr', 50)})" for f in self.career.rosters[self.team_id]]
-        self.roster_lv.set_items(labels)
+    def _build_buttons(self):
+        self.btn_back = Button(Rect(self.rc_btns.x, self.rc_btns.y, 120, 36), "Back", self._back)
+        self._buttons = [self.btn_back]
 
-        self.btn_back = Button(pygame.Rect(pad, H - 56, 160, 40), "Back", on_click=lambda: self.app.pop_state())
+    # events
+    def handle_event(self, ev):
+        if ev.type == pygame.KEYDOWN:
+            if ev.key == pygame.K_ESCAPE:
+                self._back()
+                return
+            if ev.key in (pygame.K_DOWN, pygame.K_s):
+                self.sel_ix = min(self.sel_ix + 1, len(self.roster) - 1)
+            if ev.key in (pygame.K_UP, pygame.K_w):
+                self.sel_ix = max(self.sel_ix - 1, 0)
+        if ev.type == pygame.MOUSEWHEEL:
+            self.scroll = max(0, self.scroll - ev.y)
+        if ev.type == pygame.MOUSEBUTTONDOWN:
+            if self.rc_left.collidepoint(ev.pos):
+                # click selects a row
+                line_h = 24
+                y0 = self.rc_left.y + 12
+                ix = (ev.pos[1] - y0) // line_h + self.scroll
+                if 0 <= ix < len(self.roster):
+                    self.sel_ix = ix
+            for b in self._buttons:
+                b.handle(ev)
 
-    def exit(self) -> None:
-        pass
+    def update(self, dt): pass
 
-    def handle_event(self, event: "pygame.event.Event") -> bool:
-        if self.roster_lv and self.roster_lv.handle_event(event):
-            return True
-        if self.btn_back.handle_event(event):
-            return True
-        return False
+    def draw(self, screen):
+        screen.fill((12,12,16))
+        # header
+        panel(screen, self.rc_hdr)
+        draw_text(screen, f"Roster — {self.career.team_name(self.tid)}", self.rc_hdr.x+10, self.rc_hdr.y+8, size=22)
 
-    def update(self, dt: float) -> None:
-        pass
-
-    def draw(self, surface: "pygame.Surface") -> None:
-        th = Theme()
-        surface.fill(th.bg)
-        draw_text(surface, f"Roster — {self.career.team_names[self.team_id]}", (surface.get_width() // 2, 12), size=28, align="center")
-
-        self.roster_lv.draw(surface, title="Players")
-        draw_panel(surface, self._detail_rect, title="Details")
-
-        x = self._detail_rect.x + 12
-        y = self._detail_rect.y + 8
-        idx = getattr(self.roster_lv, "selected", None)
-        if idx is None:
-            draw_text(surface, "Select a player to view stats", (x, y), size=18, color=th.muted)
-        else:
-            f = self.career.rosters[self.team_id][idx]
-            lines = [
-                f"{f.get('name','?')} — {f.get('cls','Fighter')} (OVR {f.get('ovr','?')})",
-                f"HP {f.get('hp','?')}/{f.get('max_hp', f.get('hp','?'))} | AC {f.get('ac','?')}",
-                f"STR {f.get('str','?')}  DEX {f.get('dex','?')}  CON {f.get('con','?')}",
-                f"INT {f.get('int','?')}  WIS {f.get('wis','?')}  CHA {f.get('cha','?')}",
-            ]
-            wpn = f.get("weapon") or {}
-            if isinstance(wpn, dict):
-                lines.append(f"Weapon: {wpn.get('name','?')}  dmg {wpn.get('damage','?')}  reach {wpn.get('reach',1)}")
-            for line in lines:
-                draw_text(surface, line, (x, y), size=18, color=th.fg)
-                y += 22
-
-        self.btn_back.draw(surface)
+        # left list
+        panel(screen, self.rc_left, color=(24,24,28))
+        y = self.rc_left.y + 12
+        line_h = 24
+        start = self.scroll
+        per_page = (self.rc_left.h - 24) // line_h
+        end = min(len(self.roster), start + per_page)
+        for i in range(start, end):
+            p = self.roster[i
