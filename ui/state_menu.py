@@ -1,95 +1,132 @@
-# ui/state_menu.py
 from __future__ import annotations
 
 import pygame
-from .app import BaseState
-from .uiutil import Theme, Button, draw_text
+from pygame import Rect
+from typing import Optional
+
+# ---- Optional real UI kit ----
+try:
+    from ui.uiutil import Theme, Button, draw_text, panel
+except Exception:
+    Theme = None
+    class Button:
+        def __init__(self, rect, label, cb, enabled=True):
+            self.rect, self.label, self.cb, self.enabled = rect, label, cb, enabled
+        def draw(self, screen):
+            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=8)
+            font = pygame.font.SysFont("arial", 20)
+            screen.blit(font.render(self.label, True, (255,255,255) if self.enabled else (170,170,170)),
+                        (self.rect.x+14, self.rect.y+8))
+        def handle(self, ev):
+            if self.enabled and ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
+                self.cb()
+    def draw_text(surface, text, x, y, color=(230,230,235), size=24):
+        font = pygame.font.SysFont("arial", size)
+        surface.blit(font.render(str(text), True, color), (x, y))
+    def panel(surface, rect, color=(30,30,38)):
+        pygame.draw.rect(surface, color, rect, border_radius=10)
+
+# ---- Child states (optional) ----
+try:
+    from ui.state_season_hub import SeasonHubState
+except Exception:
+    SeasonHubState = None
+try:
+    from ui.state_roster import RosterState
+except Exception:
+    RosterState = None
+try:
+    from ui.state_exhibition_picker import ExhibitionPickerState
+except Exception:
+    ExhibitionPickerState = None
+try:
+    from ui.state_settings import SettingsState
+except Exception:
+    SettingsState = None
+
+# ---- Career (for default/new career) ----
+try:
+    from core.career import Career
+except Exception:
+    Career = None
 
 
-class MenuState(BaseState):
-    def __init__(self):
-        self.theme = Theme()
-        self.buttons: list[Button] = []
-        self._layout_built = False
+class MenuState:
+    """
+    Main Menu:
+      - Season (opens Season Hub)
+      - Exhibition (opens Exhibition Picker)
+      - Roster (opens user's roster)
+      - Settings
+      - Quit
+    """
+    def __init__(self, app):
+        self.app = app
+        self.rc_title = Rect(20, 20, 860, 80)
+        self.rc_menu  = Rect(20, 120, 860, 420)
 
-    def enter(self) -> None:
-        self._build_layout()
+        # Build buttons
+        x, y = self.rc_menu.x + 40, self.rc_menu.y + 20
+        w, h, gap = 260, 44, 14
 
-    def _build_layout(self) -> None:
-        self.buttons.clear()
-        W, H = self.app.screen.get_size()
-        w, h = 260, 44
-        gap = 14
-        labels = [
-            ("New Season", self._new_season),
-            ("Exhibition", self._exhibition),
-            ("Roster Browser", self._open_roster_browser),  # has Generate
-            ("Load Game (coming soon)", self._load_game),
-            ("Settings (coming soon)", self._settings),
-            ("Quit", self._quit),
-        ]
-        total_h = len(labels) * h + (len(labels) - 1) * gap
-        x = (W - w) // 2
-        y = max(90, (H - total_h) // 2)
+        self.btn_season = Button(Rect(x, y, w, h), "Season", self._open_season); y += h + gap
+        self.btn_exhib  = Button(Rect(x, y, w, h), "Exhibition", self._open_exhibition); y += h + gap
+        self.btn_roster = Button(Rect(x, y, w, h), "Roster", self._open_roster); y += h + gap
+        self.btn_setts  = Button(Rect(x, y, w, h), "Settings", self._open_settings); y += h + gap
+        self.btn_quit   = Button(Rect(x, y, w, h), "Quit", self._quit)
 
-        for label, fn in labels:
-            self.buttons.append(Button(pygame.Rect(x, y, w, h), label, fn))
-            y += h + gap
+        self._buttons = [self.btn_season, self.btn_exhib, self.btn_roster, self.btn_setts, self.btn_quit]
 
-        self._layout_built = True
+    # ---------------- events ----------------
+    def handle_event(self, ev):
+        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+            self._quit(); return
+        if ev.type == pygame.MOUSEBUTTONDOWN:
+            for b in self._buttons:
+                b.handle(ev)
 
-    # --- Button actions ------------------------------------------------------
-    def _new_season(self):
-        try:
-            from .state_team_select import TeamSelectState
-            self.app.push_state(TeamSelectState(self.app))
-        except Exception:
-            # Silently ignore if not ready
-            pass
+    def update(self, dt):
+        pass
 
-    def _exhibition(self):
-        try:
-            from .state_exhibition_picker import ExhibitionPickerState
-            self.app.push_state(ExhibitionPickerState(self.app))
-        except Exception:
-            pass
+    def draw(self, screen):
+        screen.fill((12,12,16))
+        panel(screen, self.rc_title)
+        draw_text(screen, "D20 Fight Club", self.rc_title.x + 20, self.rc_title.y + 22, size=28)
 
-    def _open_roster_browser(self):
-        try:
-            from .state_roster_browser import RosterBrowserState
-            self.app.push_state(RosterBrowserState(self.app))
-        except Exception:
-            pass
+        panel(screen, self.rc_menu, color=(24,24,28))
+        for b in self._buttons:
+            b.draw(screen)
 
-    def _load_game(self):
-        # Placeholder — avoid pushing SeasonHub with None career (caused your crash)
-        print("[Load] Coming soon.")
+    # ---------------- actions ----------------
+    def _ensure_career(self):
+        """
+        Ensure app.career exists. If not, create a default sandbox career.
+        """
+        career = getattr(self.app, "career", None)
+        if career is None and Career is not None:
+            # default: 20 teams, 5 fighters each
+            self.app.career = Career.new(seed=12345, n_teams=20, team_size=5, user_team_id=0)
+        return getattr(self.app, "career", None)
 
-    def _settings(self):
-        print("[Settings] Coming soon.")
+    def _open_season(self):
+        car = self._ensure_career()
+        if SeasonHubState is not None and car is not None:
+            self.app.push_state(SeasonHubState(self.app, car))
+
+    def _open_exhibition(self):
+        car = self._ensure_career()
+        if ExhibitionPickerState is not None and car is not None:
+            self.app.push_state(ExhibitionPickerState(self.app, car))
+
+    def _open_roster(self):
+        car = self._ensure_career()
+        if RosterState is not None and car is not None:
+            tid = getattr(car, "user_tid", 0)
+            self.app.push_state(RosterState(self.app, car, tid=tid))
+
+    def _open_settings(self):
+        if SettingsState is not None:
+            self.app.push_state(SettingsState(self.app))
 
     def _quit(self):
-        self.app.quit()
-
-    # --- State interface -----------------------------------------------------
-    def handle(self, event) -> None:
-        if not self._layout_built:
-            return
-        for b in self.buttons:
-            b.handle(event)
-
-    def update(self, dt: float) -> None:
-        if not self._layout_built:
-            self._build_layout()
-        mx, my = pygame.mouse.get_pos()
-        for b in self.buttons:
-            b.update((mx, my))
-
-    def draw(self, surf) -> None:
-        if not self._layout_built:
-            self._build_layout()
-        W, _ = surf.get_size()
-        surf.fill(self.theme.bg)
-        draw_text(surf, "D20 Fight Club", (W // 2, 40), 48, self.theme.text, align="center")
-        for b in self.buttons:
-            b.draw(surf, self.theme)
+        pygame.event.post(pygame.event.Event(pygame.QUIT))
