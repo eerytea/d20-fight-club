@@ -44,17 +44,17 @@ try:
 except Exception:
     MatchState = None
 try:
-    from ui.state_message import MessageState
+    from core.usecases.states.state_reputation import ReputationState
 except Exception:
-    MessageState = None
+    ReputationState = None
 
 
 class SeasonHubState:
     """
     Season Hub:
       - Header: Your Team, Week
-      - This Week's Matchups (list)
-      - Buttons: Play, Sim Week, Schedule, Table, Roster, Back
+      - This Week's Matchups
+      - Buttons: Play, Sim Week, Schedule, Table, Roster, Reputation, Back
     """
     def __init__(self, app, career):
         self.app = app
@@ -70,7 +70,6 @@ class SeasonHubState:
         self._build_buttons()
         self._refresh_button_states()
 
-    # ---------------- UI plumbing ----------------
     def _build_buttons(self):
         x = self.rc_btns.x
         y = self.rc_btns.y + 10
@@ -80,14 +79,14 @@ class SeasonHubState:
         self.btn_sched  = Button(Rect(x + 2*(w+gap), y, w, h), "Schedule", self._open_schedule)
         self.btn_table  = Button(Rect(x + 3*(w+gap), y, w, h), "Table", self._open_table)
         self.btn_roster = Button(Rect(x + 4*(w+gap), y, w, h), "Roster", self._open_roster)
-        self.btn_back   = Button(Rect(x + 5*(w+gap), y, w, h), "Back", self._back)
-        self._buttons = [self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_back]
+        self.btn_rep    = Button(Rect(x + 5*(w+gap), y, w, h), "Reputation", self._open_reputation)
+        self.btn_back   = Button(Rect(x + 6*(w+gap), y, w, h), "Back", self._back)
+        self._buttons = [self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_rep, self.btn_back]
 
     def _refresh_button_states(self):
-        # Enable Play only if a user fixture exists this week and is unplayed
         self.btn_play.enabled = self._find_user_fixture() is not None
 
-    # ---------------- events ----------------
+    # events
     def handle_event(self, ev):
         if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
             self._back(); return
@@ -129,7 +128,6 @@ class SeasonHubState:
                 if played:
                     row = f"{hn}  {fx.get('k_home',0)}–{fx.get('k_away',0)}  {an}"
                     color = (210,235,210)
-                # highlight user's fixture
                 if str(h) == str(user_tid) or str(a) == str(user_tid):
                     color = (255,220,140) if not played else (230,250,180)
                 draw_text(screen, row, self.rc_match.x + 12, y, color, 18)
@@ -141,14 +139,12 @@ class SeasonHubState:
 
         # toast
         if self.toast_text:
-            tx = self.toast_text
             rect = Rect(self.rc_hdr.x + 540, self.rc_hdr.y + 12, 320, 32)
             panel(screen, rect, color=(32,32,40))
-            draw_text(screen, tx, rect.x + 10, rect.y + 6, (240,240,240), 18)
+            draw_text(screen, self.toast_text, rect.x + 10, rect.y + 6, (240,240,240), 18)
 
-    # ---------------- helpers ----------------
+    # helpers
     def _find_user_fixture(self):
-        """Return (fixture dict) if user's team has an unplayed match this week."""
         user_tid = getattr(self.career, "user_tid", None)
         if user_tid is None:
             return None
@@ -166,25 +162,22 @@ class SeasonHubState:
         self.toast_text = text
         self.toast_timer = seconds
 
-    # ---------------- actions ----------------
+    # actions
     def _play(self):
         fx = self._find_user_fixture()
         if fx is None:
             self._toast("No playable fixture this week.")
             return
         if MatchState is None:
-            # fallback toast if match viewer not available
             self._toast("Match screen not available.")
             return
-        # Push MatchState; state_match.py should handle on_finish() and saving
         try:
             self.app.push_state(MatchState(self.app, self.career, fixture=fx))
         except TypeError:
-            # if your MatchState signature differs, try the legacy form
             try:
                 self.app.push_state(MatchState(self.app, self.career))
             except Exception:
-                self._toast("Unable to start match (constructor mismatch).")
+                self._toast("Unable to start match.")
 
     def _sim_week(self):
         try:
@@ -206,6 +199,10 @@ class SeasonHubState:
         if RosterState is not None:
             tid = getattr(self.career, "user_tid", 0)
             self.app.push_state(RosterState(self.app, self.career, tid=tid))
+
+    def _open_reputation(self):
+        if ReputationState is not None:
+            self.app.push_state(ReputationState(self.app, self.career))
 
     def _back(self):
         self.app.pop_state()
