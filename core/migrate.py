@@ -1,28 +1,36 @@
-# core/migrate.py
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Any, Dict, List
 
-CURRENT_SCHEMA_VERSION = 1
+from core.adapters import as_fixture_dict, flatten_fixtures
 
-def migrate_save(blob: Dict[str, Any], version: int) -> Dict[str, Any]:
+SCHEMA_VERSION = 1
+
+def normalize_save_dict(d: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Returns a new blob upgraded to CURRENT_SCHEMA_VERSION.
-    For now, only ensures keys exist and converts any old shapes if needed.
+    Make an old save 'look like' our new schema without losing data.
+    - ensures schema_version
+    - ensures fixtures flat list exists
+    - normalizes fixtures_by_week shape (aliases → canonical)
     """
-    data = dict(blob)
-    if version == CURRENT_SCHEMA_VERSION:
-        return data
+    out = dict(d)
+    out.setdefault("schema_version", SCHEMA_VERSION)
 
-    # v0 -> v1: wrap raw "career" dict if missing; ensure h2h map shape is correct
-    if version < 1:
-        career = data.get("career", data)
-        # normalize missing keys
-        career.setdefault("week", 0)
-        career.setdefault("teams", career.get("teams", []))
-        career.setdefault("fixtures", career.get("fixtures", []))
-        career.setdefault("table", career.get("table", {}))
-        career.setdefault("h2h", career.get("h2h", {}))
-        data = {"schema_version": 1, "career": career}
-
-    data["schema_version"] = CURRENT_SCHEMA_VERSION
-    return data
+    fbw = out.get("fixtures_by_week", None)
+    if isinstance(fbw, list) and fbw and isinstance(fbw[0], list):
+        # normalize each fixture
+        out["fixtures_by_week"] = [[as_fixture_dict(fx) for fx in wk] for wk in fbw]
+        out["fixtures"] = flatten_fixtures(out["fixtures_by_week"])
+    else:
+        # if only flat fixtures exist, try to infer weeks
+        flat = out.get("fixtures", [])
+        if flat:
+            normalized = [as_fixture_dict(fx) for fx in flat]
+            out["fixtures"] = normalized
+            # group by week (ensure list length)
+            max_w = max((int(fx.get("week", 1)) for fx in normalized), default=1)
+            fbw2: List[List[Dict[str, Any]]] = [[] for _ in range(max_w)]
+            for fx in normalized:
+                w = max(1, int(fx.get("week", 1)))
+                fbw2[w-1].append(fx)
+            out["fixtures_by_week"] = fbw2
+    return out
