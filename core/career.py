@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict, fields as dataclass_fields
 from typing import Any, Dict, List, Optional, Tuple
 
-# --- Shared adapters (normalize shapes) ---
+# ---- Adapters (canonicalize shapes) ----
 try:
     from core.adapters import (
         as_fixture_dict,
@@ -12,7 +12,7 @@ try:
         team_name_from,
     )
 except Exception:
-    # Safe fallbacks if adapters module isn't present (should be replaced by real adapters)
+    # Safe fallbacks if adapters module isn't present (replace with real ones if available)
     def as_fixture_dict(fx: Dict[str, Any]) -> Dict[str, Any]:
         d = dict(fx)
         d.setdefault("week", int(d.get("week", 1)))
@@ -46,18 +46,18 @@ except Exception:
             return str(tn[tid_i])
         return f"Team {tid_i}"
 
-# --- Thin wrappers (single responsibility) ---
+# ---- Thin wrappers (schedule/standings) ----
 from core import schedule as _sched
 from core import standings as _stand
 
-# --- Migrator (normalize old saves) ---
+# ---- Migrator (normalize old saves) ----
 try:
     from core.migrate import normalize_save_dict
 except Exception:
     def normalize_save_dict(d: Dict[str, Any]) -> Dict[str, Any]:
-        return d  # no-op if migrate module missing
+        return d
 
-# --- Integration points (Elo, staff/training, bootstrap) ---
+# ---- Integration points (Elo, staff/training, bootstrap) ----
 try:
     from core.usecases.integration_points import (
         bootstrap_career,
@@ -65,7 +65,7 @@ try:
         weekly_training_tick,
     )
 except Exception:
-    def bootstrap_career(*args, **kwargs):  # no-op if module not present
+    def bootstrap_career(*args, **kwargs):  # no-op
         pass
     def on_match_finalized(*args, **kwargs):
         pass
@@ -74,7 +74,7 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
-# Small deterministic helpers (used for AI week sim scores)
+# Deterministic helpers (used for AI vs AI scores)
 # ---------------------------------------------------------------------------
 
 def _mix_seed(seed: int, text: str) -> int:
@@ -86,20 +86,20 @@ def _mix_seed(seed: int, text: str) -> int:
 
 def _deterministic_kills(seed: int, week: int, home_id: int, away_id: int) -> Tuple[int, int]:
     r = _mix_seed(seed, f"W{week}:{home_id}-{away_id}")
-    k_home = (r >> 5) % 5 + ((r >> 17) & 1)
-    k_away = (r >> 9) % 5 + ((r >> 19) & 1)
+    k_home = (r >> 5) % 5 + ((r >> 17) & 1)   # 0..5
+    k_away = (r >> 9) % 5 + ((r >> 19) & 1)   # 0..5
     return int(k_home), int(k_away)
 
 
 # ---------------------------------------------------------------------------
-# Career data model
+# Career model
 # ---------------------------------------------------------------------------
 
 @dataclass
 class Career:
     """
     Holds teams, fixtures, current week, standings, and (via bootstrap) reputation/staff.
-    Uses one consistent shape so UI/engine don’t guess key names.
+    Uses one consistent shape so UI/engine don't guess key names.
     """
     seed: int = 12345
     week: int = 1
@@ -115,9 +115,7 @@ class Career:
     reputation: Optional[Dict[str, Any]] = None
     staff: Optional[Dict[str, Any]] = None
 
-    # -----------------------------------------------------------------------
-    # Construction
-    # -----------------------------------------------------------------------
+    # ---------------------- Construction ----------------------
 
     @classmethod
     def new(
@@ -157,7 +155,7 @@ class Career:
         )
         car._recompute_standings()
 
-        # Ensure Elo/staff exist
+        # Ensure Elo/staff tables exist
         try:
             bootstrap_career(car)
         except Exception:
@@ -165,9 +163,7 @@ class Career:
 
         return car
 
-    # -----------------------------------------------------------------------
-    # Basic helpers for UI
-    # -----------------------------------------------------------------------
+    # ---------------------- Helpers for UI ----------------------
 
     @property
     def week_index(self) -> int:
@@ -181,9 +177,7 @@ class Career:
             return [as_fixture_dict(fx) for fx in self.fixtures_by_week[w - 1]]
         return []
 
-    # -----------------------------------------------------------------------
-    # Save / Load
-    # -----------------------------------------------------------------------
+    # ---------------------- Save / Load ----------------------
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -191,18 +185,14 @@ class Career:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Career":
         """
-        Load a Career from dict, normalizing old saves first and ignoring unknown keys.
-        Also recomputes standings and bootstraps Elo/staff.
+        Load a Career from dict, normalizing old saves and ignoring unknown keys.
+        Recomputes standings and bootstraps Elo/staff.
         """
-        # 1) Normalize old/varied shapes
         nd = normalize_save_dict(dict(d))
-
-        # 2) Only pass dataclass fields to constructor (ignore extras like schema_version)
         allowed = {f.name for f in dataclass_fields(cls)}
         init_kwargs = {k: v for k, v in nd.items() if k in allowed}
         obj = cls(**init_kwargs)
 
-        # 3) Post-load fixups
         try:
             if not obj.fixtures and obj.fixtures_by_week:
                 obj.fixtures = [fx for wk in obj.fixtures_by_week for fx in wk]
@@ -214,9 +204,7 @@ class Career:
                 pass
         return obj
 
-    # -----------------------------------------------------------------------
-    # Standings
-    # -----------------------------------------------------------------------
+    # ---------------------- Standings ----------------------
 
     def table_rows(self) -> List[Dict[str, Any]]:
         return [dict(v) for _, v in sorted(self.standings.items(), key=lambda kv: int(kv[0]))]
@@ -228,11 +216,13 @@ class Career:
         rows = _stand.table_rows_sorted(self.teams, self.fixtures)
         self.standings = {row["tid"]: row for row in rows}
 
-    # -----------------------------------------------------------------------
-    # Recording results
-    # -----------------------------------------------------------------------
+    # ---------------------- Recording results ----------------------
 
     def record_result(self, result: Dict[str, Any]) -> None:
+        """
+        Persist a finished match into fixtures and update standings.
+        Expected keys: home_id, away_id, k_home, k_away, winner.
+        """
         r = as_result_dict(result)
         h = int(r["home_id"]); a = int(r["away_id"])
         kh = int(r["k_home"]);  ka = int(r["k_away"])
@@ -257,6 +247,7 @@ class Career:
 
         self._recompute_standings()
 
+        # Reputation/Elo update (if wired)
         try:
             on_match_finalized(self, str(h), str(a), kh, ka, comp_kind=fx.get("comp_kind", "league"), home_advantage="a")
         except Exception:
@@ -277,11 +268,14 @@ class Career:
                 return fx
         return None
 
-    # -----------------------------------------------------------------------
-    # Simulate a week (AI vs AI only)
-    # -----------------------------------------------------------------------
+    # ---------------------- Simulate a week (AI vs AI) ----------------------
 
     def simulate_week_ai(self) -> None:
+        """
+        Sim all AI-vs-AI fixtures in the current week.
+        Leaves the user's match unplayed. Runs training tick using stored focus.
+        Advances week if all fixtures for this week end up played.
+        """
         if not (1 <= self.week <= len(self.fixtures_by_week)):
             return
 
@@ -290,6 +284,7 @@ class Career:
             if fx.get("played"):
                 continue
             h = int(fx["home_id"]); a = int(fx["away_id"])
+            # Skip user's fixture
             if self.user_tid is not None and (str(h) == str(self.user_tid) or str(a) == str(self.user_tid)):
                 continue
 
@@ -297,29 +292,42 @@ class Career:
             w = 0 if kh > ka else (1 if ka > kh else None)
             self.record_result({"home_id": h, "away_id": a, "k_home": kh, "k_away": ka, "winner": w})
 
+        # ---- Training tick (uses per-player focus from staff['training_focus']) ----
         try:
             players_by_club: Dict[str, List[Dict[str, Any]]] = {}
             for t in self.teams:
                 tid = str(t.get("tid"))
                 roster = t.get("fighters") or t.get("players") or []
                 players_by_club[tid] = roster
-            focus_per_player: Dict[str, Dict[str, float]] = {}
+
+            # Global store keyed by "tid:pid"
+            focus_store: Dict[str, Dict[str, float]] = {}
+            if isinstance(self.staff, dict):
+                focus_store = dict(self.staff.get("training_focus", {}))
+
+            # Call weekly tick per club with normalized pid→focus map
             for tid, plist in players_by_club.items():
+                focus_per_player: Dict[str, Dict[str, float]] = {}
                 for p in plist:
                     pid = str(p.get("pid", p.get("id", 0)))
-                    if pid not in focus_per_player:
-                        focus_per_player[pid] = {"DEX": 0.5, "STR": 0.5}
-            for tid, plist in players_by_club.items():
+                    key = f"{tid}:{pid}"
+                    f = focus_store.get(key, None)
+                    if not isinstance(f, dict):
+                        f = {"DEX": 0.5, "STR": 0.5}
+                    dex = float(f.get("DEX", 0.5)); strv = float(f.get("STR", 0.5))
+                    s = dex + strv
+                    if s <= 0: dex, strv = 0.5, 0.5
+                    else: dex, strv = dex/s, strv/s
+                    focus_per_player[pid] = {"DEX": dex, "STR": strv}
                 weekly_training_tick(self, tid, plist, focus_per_player)
         except Exception:
             pass
 
+        # Advance week if everything is played
         if all(fx.get("played") for fx in week_fixtures) and week_fixtures:
             self.advance_week()
 
-    # -----------------------------------------------------------------------
-    # Week advance
-    # -----------------------------------------------------------------------
+    # ---------------------- Week advance ----------------------
 
     def advance_week(self) -> None:
         self.week = int(self.week) + 1
