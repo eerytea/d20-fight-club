@@ -1,221 +1,152 @@
-# ui/state_team_select.py — robust team/roster lists with ListView (no bleed), tidy details
 from __future__ import annotations
 
-from typing import Any, List, Optional
 import pygame
+from pygame import Rect
+from typing import Any, Dict, List, Optional
 
-from .app import BaseState
-from .uiutil import Theme, Button, draw_text, draw_panel, get_font, ListView
-from core.career import Career
+# UI kit fallbacks
+try:
+    from ui.uiutil import Theme, Button, draw_text, panel
+except Exception:
+    Theme = None
+    class Button:
+        def __init__(self, rect, label, cb, enabled=True):
+            self.rect, self.label, self.cb, self.enabled = rect, label, cb, enabled
+        def draw(self, screen):
+            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=8)
+            font = pygame.font.SysFont("arial", 18)
+            txt = font.render(self.label, True, (255,255,255) if self.enabled else (170,170,170))
+            screen.blit(txt, (self.rect.x+10, self.rect.y+6))
+        def handle(self, ev):
+            if self.enabled and ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
+                self.cb()
+    def draw_text(surface, text, x, y, color=(230,230,235), size=20):
+        font = pygame.font.SysFont("arial", size)
+        surface.blit(font.render(str(text), True, color), (x, y))
+    def panel(surface, rect, color=(30,30,38)):
+        pygame.draw.rect(surface, color, rect, border_radius=10)
 
+def _team_by_tid(teams: List[Dict[str, Any]], tid: int) -> Dict[str, Any] | None:
+    for t in teams:
+        if int(t.get("tid", t.get("id", -1))) == int(tid):
+            return t
+    return None
 
-def _get(obj: Any, key: str, default=None):
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
-
-
-def _team_name(t: Any) -> str:
-    return _get(t, "name", "Team")
-
-
-def _fighter_line(f: Any) -> str:
-    name = _get(f, "name", "?")
-    role = _get(f, "class", _get(f, "role", ""))
-    lvl  = _get(f, "level", 1)
-    ovr  = _get(f, "ovr", _get(f, "OVR", None))
-    parts: List[str] = [str(name)]
-    if role:
-        parts += ["—", str(role)]
-    if lvl is not None:
-        parts += ["  L", str(lvl)]
-    if ovr is not None:
-        parts += ["  OVR", str(ovr)]
-    return " ".join(parts)
-
-
-class TeamSelectState(BaseState):
+class TeamSelectState:
     """
-    New Game -> Team Select:
-      * Left panel: scrollable list of all teams (clip-safe), click to select.
-      * Right top: roster list of the selected team, click a player.
-      * Right bottom: player details (HP/AC/Move, 6 attrs, Armor/Weapon).
-      * Start Season / Back buttons along the bottom.
+    Choose your team. Left: teams list (scrollable, clipped).
+    Right: roster details of the selected team.
     """
-
-    def __init__(self, app, career: Optional[Career] = None):
+    def __init__(self, app, career):
         self.app = app
-        self.theme = Theme()
-        self.career: Career = career or Career.new()
+        self.career = career
 
-        # Selection
-        self.selected_tid: int = int(_get(self.career.teams[0], "tid", 0)) if self.career.teams else 0
-        self.selected_player_idx: int = -1
+        self.rc_hdr  = Rect(20, 20, 860, 50)
+        self.rc_left = Rect(20, 80, 380, 460)
+        self.rc_right= Rect(420, 80, 460, 460)
+        self.rc_btns = Rect(20, 550, 860, 50)
 
-        # Layout rects
-        self.rect_title = pygame.Rect(0, 0, 0, 0)
-        self.rect_left  = pygame.Rect(0, 0, 0, 0)
-        self.rect_rtop  = pygame.Rect(0, 0, 0, 0)
-        self.rect_rbot  = pygame.Rect(0, 0, 0, 0)
-        self.rect_buttons = pygame.Rect(0, 0, 0, 0)
+        self.teams: List[Dict[str, Any]] = list(getattr(career, "teams", []))
+        self.sel_tid: int = int(getattr(career, "user_tid", 0)) if self.teams else 0
 
-        # Widgets
-        self.btn_start: Button | None = None
-        self.btn_back: Button | None  = None
-        self.lv_teams: ListView | None = None
-        self.lv_roster: ListView | None = None
+        # left list state
+        self.row_h = 26
+        self.scroll = 0
 
-        # Fonts
-        self.font_title = get_font(48)
-        self.font_head  = get_font(28)
-        self.font_det_h = get_font(20)
-        self.font_det   = get_font(16)
+        # buttons
+        x = self.rc_btns.x
+        self.btn_confirm = Button(Rect(x, self.rc_btns.y + 8, 160, 34), "Confirm", self._confirm)
+        self.btn_back    = Button(Rect(x + 180, self.rc_btns.y + 8, 140, 34), "Back", self._back)
+        self._buttons = [self.btn_confirm, self.btn_back]
 
-    # ---------- lifecycle ----------
-    def enter(self) -> None:
-        self._build()
+    # -------- events --------
+    def handle_event(self, ev):
+        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+            self._back(); return
+        if ev.type == pygame.MOUSEWHEEL and self.rc_left.collidepoint(pygame.mouse.get_pos()):
+            self.scroll = max(0, self.scroll - ev.y)
+        if ev.type == pygame.MOUSEBUTTONDOWN:
+            mx, my = ev.pos
+            # hit test inside the clipped list
+            list_area = Rect(self.rc_left.x + 8, self.rc_left.y + 34, self.rc_left.w - 16, self.rc_left.h - 42)
+            if list_area.collidepoint(mx, my):
+                idx = (my - list_area.y) // self.row_h + self.scroll
+                if 0 <= idx < len(self.teams):
+                    self.sel_tid = int(self.teams[idx].get("tid", self.teams[idx].get("id", 0)))
+            for b in self._buttons:
+                b.handle(ev)
 
-    def _build(self) -> None:
-        W, H = self.app.width, self.app.height
-        pad = 16
-        title_h = 72
-        self.rect_title = pygame.Rect(0, 0, W, title_h)
+    def update(self, dt): pass
 
-        # Left list panel
-        right_w = int(W * 0.54)
-        self.rect_left = pygame.Rect(pad, title_h + pad, W - right_w - pad * 3, H - (title_h + pad * 3) - 60)
+    # -------- drawing --------
+    def draw(self, screen):
+        screen.fill((12,12,16))
+        panel(screen, self.rc_hdr)
+        draw_text(screen, "Team Select", self.rc_hdr.x + 10, self.rc_hdr.y + 12, size=22)
 
-        # Right combined area, split into roster/details
-        right_all = pygame.Rect(self.rect_left.right + pad, self.rect_left.y, right_w, self.rect_left.h)
-        split = int(right_all.h * 0.56)
-        self.rect_rtop = pygame.Rect(right_all.x, right_all.y, right_all.w, split - pad // 2)
-        self.rect_rbot = pygame.Rect(right_all.x, self.rect_rtop.bottom + pad, right_all.w, right_all.bottom - (self.rect_rtop.bottom + pad))
+        panel(screen, self.rc_left, color=(24,24,28))
+        draw_text(screen, "Teams", self.rc_left.x + 10, self.rc_left.y + 8, size=18)
+        self._draw_team_list(screen)
 
-        # Buttons row
-        self.rect_buttons = pygame.Rect(right_all.x, self.rect_left.bottom + pad, right_all.w, 52)
-        bw, bh = 200, 52
-        bx = self.rect_buttons.right - (bw * 2 + pad)
-        by = self.rect_buttons.y
-        self.btn_start = Button(pygame.Rect(bx, by, bw, bh), "Start Season", self._start)
-        self.btn_back  = Button(pygame.Rect(bx + bw + pad, by, bw, bh), "Back", self._back)
+        panel(screen, self.rc_right, color=(24,24,28))
+        self._draw_team_detail(screen)
 
-        # ListViews (clip area inside panels; we leave header space via top_offset in draw)
-        team_items = [_team_name(t) for t in self.career.teams]
-        self.lv_teams = ListView(self.rect_left.inflate(-16, -16), team_items, row_h=28, on_select=self._on_team_pick)
-        # Pre-select by tid
+        for b in self._buttons:
+            b.draw(screen)
+
+    def _draw_team_list(self, screen):
+        area = Rect(self.rc_left.x + 8, self.rc_left.y + 34, self.rc_left.w - 16, self.rc_left.h - 42)
+        pygame.draw.rect(screen, (18,18,22), area, border_radius=6)
+        start = self.scroll
+        max_rows = area.h // self.row_h
+        rows = self.teams[start:start+max_rows]
+
+        for i, t in enumerate(rows):
+            y = area.y + i*self.row_h
+            tid = int(t.get("tid", t.get("id", -1)))
+            # draw highlight behind the whole row if selected
+            if tid == self.sel_tid:
+                pygame.draw.rect(screen, (60,60,90), Rect(area.x+2, y+1, area.w-4, self.row_h-2), border_radius=4)
+            name = t.get("name", f"Team {tid}")
+            draw_text(screen, f"{tid:02d}  {name}", area.x + 8, y + 4, size=18)
+
+    def _draw_team_detail(self, screen):
+        team = _team_by_tid(self.teams, self.sel_tid) or {"name": f"Team {self.sel_tid}", "fighters": []}
+        draw_text(screen, team.get("name", f"Team {self.sel_tid}"), self.rc_right.x + 10, self.rc_right.y + 8, size=20)
+        # simple grid of fighter stats
+        cols = [("PID", 60), ("Name", 180), ("HP", 80), ("AC", 60), ("STR", 60), ("DEX", 60)]
+        x = self.rc_right.x + 10
+        y = self.rc_right.y + 40
+        # header
+        cx = x
+        for title, w in cols:
+            draw_text(screen, title, cx, y, (220,220,230), 18)
+            cx += w
+        y += 26
+        # rows
+        fighters: List[Dict[str, Any]] = list(team.get("fighters", []))
+        max_rows = (self.rc_right.h - 80) // 24
+        for p in fighters[:max_rows]:
+            cx = x
+            vals = [
+                int(p.get("pid", p.get("id", 0))),
+                str(p.get("name", "?")),
+                f"{int(p.get('hp', 0))}/{int(p.get('max_hp', p.get('hp', 0)))}",
+                int(p.get("ac", p.get("AC", 10))),
+                int(p.get("STR", 10)),
+                int(p.get("DEX", 10)),
+            ]
+            for (title, w), val in zip(cols, vals):
+                draw_text(screen, str(val), cx, y, (230,230,235), 18); cx += w
+            y += 24
+
+    # -------- actions --------
+    def _confirm(self):
         try:
-            self.lv_teams.selected = next(i for i, t in enumerate(self.career.teams) if int(_get(t, "tid", -1)) == self.selected_tid)
-        except StopIteration:
-            self.lv_teams.selected = 0 if self.career.teams else -1
-
-        roster = self._roster_for_tid(self.selected_tid)
-        self.lv_roster = ListView(self.rect_rtop.inflate(-16, -48), [_fighter_line(f) for f in roster], row_h=28, on_select=self._on_player_pick)
-
-    # ---------- helpers ----------
-    def _roster_for_tid(self, tid: int) -> List[Any]:
-        team = next((t for t in self.career.teams if int(_get(t, "tid", -1)) == int(tid)), None)
-        return list(_get(team, "fighters", _get(team, "roster", []))) if team else []
-
-    # ---------- actions ----------
-    def _on_team_pick(self, index: int) -> None:
-        if 0 <= index < len(self.career.teams):
-            self.selected_tid = int(_get(self.career.teams[index], "tid", self.selected_tid))
-            roster = self._roster_for_tid(self.selected_tid)
-            if self.lv_roster:
-                self.lv_roster.set_items([_fighter_line(f) for f in roster])
-            self.selected_player_idx = -1
-
-    def _on_player_pick(self, index: int) -> None:
-        self.selected_player_idx = index
-
-    def _start(self) -> None:
-        self.career.user_team_id = int(self.selected_tid)
-        from .state_season_hub import SeasonHubState
-        self.app.push_state(SeasonHubState(self.app, self.career))
-
-    def _back(self) -> None:
+            self.career.user_tid = int(self.sel_tid)
+        except Exception:
+            pass
         self.app.pop_state()
 
-    # ---------- events/update ----------
-    def handle(self, event) -> None:
-        if self.lv_teams:  self.lv_teams.handle(event)
-        if self.lv_roster: self.lv_roster.handle(event)
-        self.btn_start.handle(event)
-        self.btn_back.handle(event)
-
-    def update(self, dt: float) -> None:
-        mp = pygame.mouse.get_pos()
-        # ListView.update is a no-op (kept for API compatibility)
-        self.btn_start.update(mp)
-        self.btn_back.update(mp)
-
-    # ---------- draw ----------
-    def draw(self, surf) -> None:
-        th = self.theme
-        surf.fill(th.bg)
-
-        # Title
-        title = "Choose Your Team"
-        r = self.font_title.get_rect(title)
-        r.center = (self.app.width // 2, self.rect_title.centery + 6)
-        self.font_title.render_to(surf, r.topleft, title, th.text)
-
-        # Left: Teams
-        draw_panel(surf, self.rect_left, th)
-        draw_text(surf, "Teams", (self.rect_left.x + 12, self.rect_left.y + 10), 20, th.subt, align="topleft")
-        if self.lv_teams:
-            # Leave space for header: start rows at y + 32
-            self.lv_teams.draw(surf, th, top_offset=32, font_size=20)
-
-        # Right top: roster
-        draw_panel(surf, self.rect_rtop, th)
-        team_obj = next((t for t in self.career.teams if int(_get(t, "tid", -1)) == self.selected_tid), None)
-        draw_text(surf, _team_name(team_obj) if team_obj else "—", (self.rect_rtop.x + 12, self.rect_rtop.y + 10), 26, th.text, align="topleft")
-        if self.lv_roster:
-            # a bit more header space for longer team names
-            self.lv_roster.draw(surf, th, top_offset=40, font_size=20)
-
-        # Right bottom: player details
-        draw_panel(surf, self.rect_rbot, th)
-        inner = self.rect_rbot.inflate(-16, -16)
-        roster = self._roster_for_tid(self.selected_tid)
-        if 0 <= self.selected_player_idx < len(roster):
-            f = roster[self.selected_player_idx]
-            header = _fighter_line(f)
-            self.font_head.render_to(surf, (inner.x, inner.y), header, th.text)
-
-            y = inner.y + 24
-            hp  = _get(f, "hp", _get(f, "HP", 0))
-            mhp = _get(f, "max_hp", _get(f, "MaxHP", hp))
-            ac  = _get(f, "AC", _get(f, "ac", 10))
-            mv  = _get(f, "speed", _get(f, "SPD", _get(f, "move", 6)))
-            self.font_det_h.render_to(surf, (inner.x, y), f"HP: {hp}/{mhp}    AC: {ac}    Movement: {mv}", th.text)
-            y += 22
-
-            labels = ["STR","DEX","CON","INT","WIS","CHA"]
-            vals = [str(_get(f, k.lower(), _get(f, k, "—"))) for k in labels]
-            col_w = inner.w // 6
-            for i, lab in enumerate(labels):
-                lx = inner.x + i * col_w + col_w // 2
-                rlab = self.font_det.get_rect(lab); rlab.midtop = (lx, y)
-                self.font_det.render_to(surf, rlab.topleft, lab, th.subt)
-            y += 16
-            for i, val in enumerate(vals):
-                lx = inner.x + i * col_w + col_w // 2
-                rvl = self.font_det.get_rect(val); rvl.midtop = (lx, y)
-                self.font_det.render_to(surf, rvl.topleft, val, th.text)
-            y += 26
-
-            arm = _get(f, "armor", _get(f, "equipped_armor", "—"))
-            wep = _get(f, "weapon", _get(f, "equipped_weapon", "—"))
-            self.font_det.render_to(surf, (inner.x, y), f"Armor: {arm}    Weapon: {wep}", th.text)
-        else:
-            self.font_det.render_to(surf, (inner.x, inner.y), "Click a player above to view stats.", th.subt)
-
-        # Buttons
-        self.btn_start.draw(surf, th)
-        self.btn_back.draw(surf, th)
-
-
-def create(app):
-    return TeamSelectState(app)
+    def _back(self):
+        self.app.pop_state()
