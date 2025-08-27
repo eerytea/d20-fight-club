@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pygame
 from pygame import Rect
-from typing import Optional
 
 # ---- Optional real UI kit ----
 try:
@@ -26,7 +25,7 @@ except Exception:
     def panel(surface, rect, color=(30,30,38)):
         pygame.draw.rect(surface, color, rect, border_radius=10)
 
-# ---- Child states (optional) ----
+# ---- Child states ----
 try:
     from ui.state_season_hub import SeasonHubState
 except Exception:
@@ -47,6 +46,18 @@ try:
     from core.usecases.states.state_reputation import ReputationState
 except Exception:
     ReputationState = None
+try:
+    from ui.state_save_load import SaveLoadState
+except Exception:
+    SaveLoadState = None
+try:
+    from ui.state_team_select import TeamSelectState
+except Exception:
+    TeamSelectState = None
+try:
+    from ui.state_training import TrainingState
+except Exception:
+    TrainingState = None
 
 # ---- Career (for default/new career) ----
 try:
@@ -61,6 +72,9 @@ class MenuState:
       - Season
       - Exhibition
       - Roster
+      - Save / Load
+      - Team Select
+      - Training
       - Reputation
       - Settings
       - Quit
@@ -77,11 +91,17 @@ class MenuState:
         self.btn_season = Button(Rect(x, y, w, h), "Season", self._open_season); y += h + gap
         self.btn_exhib  = Button(Rect(x, y, w, h), "Exhibition", self._open_exhibition); y += h + gap
         self.btn_roster = Button(Rect(x, y, w, h), "Roster", self._open_roster); y += h + gap
+        self.btn_savel  = Button(Rect(x, y, w, h), "Save / Load", self._open_saveload); y += h + gap
+        self.btn_select = Button(Rect(x, y, w, h), "Team Select", self._open_team_select); y += h + gap
+        self.btn_train  = Button(Rect(x, y, w, h), "Training", self._open_training); y += h + gap
         self.btn_rep    = Button(Rect(x, y, w, h), "Reputation", self._open_reputation); y += h + gap
         self.btn_setts  = Button(Rect(x, y, w, h), "Settings", self._open_settings); y += h + gap
         self.btn_quit   = Button(Rect(x, y, w, h), "Quit", self._quit)
 
-        self._buttons = [self.btn_season, self.btn_exhib, self.btn_roster, self.btn_rep, self.btn_setts, self.btn_quit]
+        self._buttons = [
+            self.btn_season, self.btn_exhib, self.btn_roster, self.btn_savel,
+            self.btn_select, self.btn_train, self.btn_rep, self.btn_setts, self.btn_quit
+        ]
 
     # ---------------- events ----------------
     def handle_event(self, ev):
@@ -125,6 +145,21 @@ class MenuState:
         if RosterState is not None and car is not None:
             tid = getattr(car, "user_tid", 0)
             self.app.push_state(RosterState(self.app, car, tid=tid))
+
+    def _open_saveload(self):
+        if SaveLoadState is not None:
+            self.app.push_state(SaveLoadState(self.app))
+
+    def _open_team_select(self):
+        car = self._ensure_career()
+        if TeamSelectState is not None and car is not None:
+            self.app.push_state(TeamSelectState(self.app, car))
+
+    def _open_training(self):
+        car = self._ensure_career()
+        if TrainingState is not None and car is not None:
+            tid = getattr(car, "user_tid", 0)
+            self.app.push_state(TrainingState(self.app, car, tid=tid))
 
     def _open_reputation(self):
         car = self._ensure_career()
