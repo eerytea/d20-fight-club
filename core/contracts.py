@@ -1,65 +1,70 @@
 from __future__ import annotations
+from typing import TypedDict, Literal, Tuple, List, Dict, Any, Optional
 
-from dataclasses import dataclass, asdict
-from typing import Dict, Any, Optional, Literal, List, Tuple
+# ---- Canonical shapes (our "shared language") ----
 
-# --------- Canonical keys (use these names everywhere) ---------
-
-# Fighter keys (dicts or dataclass-as-dict)
-# pid:int, name:str, team_id:int(0/1), x:int, y:int, hp:int, max_hp:int, ac:int, alive:bool, role?:str
-FighterDict = Dict[str, Any]
-
-# Fixture / Result keys (week is 1-based)
-# {"week": int, "home_id": int, "away_id": int, "played": bool,
-#  "k_home": int, "k_away": int, "winner": 0|1|None, "comp_kind": str}
-FixtureDict = Dict[str, Any]
-MatchResult = Dict[str, Any]
-
-# Standings row
-# {"tid","name","P","W","D","L","K","KD","PTS"}
-StandingRow = Dict[str, Any]
-
-# Typed events allowed in combat log
-EventType = Literal["round", "move", "hit", "miss", "down", "blocked", "end"]
-TypedEvent = Dict[str, Any]
-
-
-# --------- Optional dataclasses (you can use plain dicts too) ---------
-
-@dataclass
-class Fighter:
+class FighterDict(TypedDict, total=False):
     pid: int
     name: str
-    team_id: int
-    x: int = 0
-    y: int = 0
-    hp: int = 10
-    max_hp: int = 10
-    ac: int = 10
-    alive: bool = True
-    role: Optional[str] = None
-    # extra stats are OK; keep them on a side dict if you like
+    team_id: int            # 0 (home) or 1 (away)
+    x: int
+    y: int
+    hp: int
+    max_hp: int
+    ac: int
+    alive: bool
+    role: str               # optional, e.g., "Bruiser", "Healer"
+    xp: int
+    STR: int; DEX: int; CON: int; INT: int; WIS: int; CHA: int
 
-    def as_dict(self) -> FighterDict:
-        return asdict(self)
-
-
-@dataclass
-class Fixture:
-    week: int
+class FixtureDict(TypedDict, total=False):
+    week: int               # 1-based
     home_id: int
     away_id: int
-    played: bool = False
-    k_home: int = 0
-    k_away: int = 0
-    winner: Optional[int] = None  # 0=home, 1=away, None=draw
-    comp_kind: str = "league"
+    played: bool
+    k_home: int
+    k_away: int
+    winner: Optional[Literal[0,1]]  # None for draw/unplayed
+    comp_kind: str          # e.g., "league", "cup"
+    # friendly aliases (kept for older screens/data)
+    home_tid: int
+    away_tid: int
+    A: int
+    B: int
 
-    def as_dict(self) -> FixtureDict:
-        d = asdict(self)
-        # Keep alias names some screens expect:
-        d["home_tid"] = d["home_id"]
-        d["away_tid"] = d["away_id"]
-        d["A"] = d["home_id"]
-        d["B"] = d["away_id"]
-        return d
+class MatchResultDict(TypedDict, total=False):
+    home_id: int
+    away_id: int
+    k_home: int
+    k_away: int
+    winner: Optional[Literal[0,1]]
+
+class StandingRow(TypedDict, total=False):
+    tid: int
+    name: str
+    P: int; W: int; D: int; L: int
+    K: int     # kills for
+    KD: int    # kill diff
+    PTS: int
+
+class TypedEvent(TypedDict, total=False):
+    type: Literal["round","move","hit","miss","down","blocked","end"]
+    round: int
+    name: str
+    target: str
+    dmg: int
+    to: Tuple[int,int]
+    at: Tuple[int,int]
+    winner: Optional[Literal[0,1]]
+
+# ---- Expected key sets (used by tests/adapters) ----
+
+FIGHTER_KEYS_REQ = {"pid","name","team_id","hp","max_hp","ac","alive","STR","DEX","CON","INT","WIS","CHA"}
+FIXTURE_KEYS_REQ = {"week","home_id","away_id","played","k_home","k_away","winner","comp_kind"}
+RESULT_KEYS_REQ  = {"home_id","away_id","k_home","k_away","winner"}
+STAND_ROW_KEYS   = {"tid","name","P","W","D","L","K","KD","PTS"}
+EVENT_TYPES      = {"round","move","hit","miss","down","blocked","end"}
+
+# Some aliases older code might still pass (adapters accept these)
+FIGHTER_ALIASES = {"id":"pid","tid":"team_id","HP":"hp","HP_max":"max_hp","AC":"ac","tx":"x","ty":"y"}
+FIXTURE_ALIASES = {"home_tid":"home_id","away_tid":"away_id","A":"home_id","B":"away_id"}
