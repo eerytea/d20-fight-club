@@ -142,6 +142,7 @@ class TeamSelectState:
 
     # -------- actions --------
     def _confirm(self):
+        # 🔧 the important fix: write to user_tid (not user_team_id)
         try:
             self.career.user_tid = int(self.sel_tid)
         except Exception:
