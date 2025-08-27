@@ -1,258 +1,246 @@
 # core/career.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple, Any
+from datetime import date
 
-from .config import (
-    TEAM_SIZE,
-    LEAGUE_TEAMS,
-    ROUNDS_DOUBLE_ROUND_ROBIN,
-    DEFAULT_SEED,
-)
-from .schedule import build_double_round_robin
-from .standings import new_table, Table, H2HMap, sort_table
-
-
-# --- Creation helpers ---------------------------------------------------------
-
-_TEAM_NAMES = [
-    "Alderfall Dragons", "Blackridge Wolves", "Stormbreak Griffins", "Titan's Gate",
-    "Nightveil Phantoms", "Ironcrest Knights", "Ashmar Rangers", "Silvercoil Serpents",
-    "Ravenmere", "Stoneheart Golems", "Starhaven Magi", "Shadowfen Stalkers",
-    "Frostpeak Yetis", "Sunspire Paladins", "Redwater Raiders", "Moonveil Oracles",
-    "Thornbarb Vipers", "Eaglecrest Sentinels", "Direbrook Bears", "Mirewatch Leeches",
-    "Cinderforge Hammers", "Whisperwind Sylphs", "Grimhold Reapers", "Highspire Wardens",
-]
-
-def _default_team_name(i: int) -> str:
-    return _TEAM_NAMES[i % len(_TEAM_NAMES)]
-
-def _generate_teams(
-    n: int,
-    team_size: int,
-    seed: int,
-    provided_names: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
-    teams: List[Dict[str, Any]] = []
-
-    try:
-        from . import creator
-        have_creator = hasattr(creator, "generate_team")
-    except Exception:
-        creator = None
-        have_creator = False
-
-    for tid in range(n):
-        name = (provided_names[tid] if provided_names and tid < len(provided_names)
-                else _default_team_name(tid))
-        if have_creator:
-            team = creator.generate_team(
-                tid=tid,
-                name=name,
-                size=team_size,
-                seed=seed + 31 * tid,
-            )
-        else:
-            roster = []
-            for slot in range(team_size):
-                roster.append({
-                    "fid": tid * 1000 + slot,
-                    "name": f"{name} #{slot+1}",
-                    "level": 1,
-                    "class": "Fighter",
-                    "hp": 10,
-                    "ac": 12,
-                    "speed": 6,
-                    "ovr": 40 + (slot % 5),
-                    "xp": 0,
-                })
-            team = {
-                "tid": tid,
-                "name": name,
-                "color": (180, 180, 220),
-                "budget": 1_000_000,
-                "wage_bill": 0,
-                "roster": roster,
-            }
-
-        team.setdefault("tid", tid)
-        team.setdefault("name", name)
-        team.setdefault("roster", [])
-        teams.append(team)
-
-    return teams
-
-
-# --- Models -------------------------------------------------------------------
+# --- Local lightweight types -------------------------------------------------
 
 @dataclass
 class Fixture:
-    id: str
-    week: int
+    week: int                 # 1-based
     home_id: int
     away_id: int
     played: bool = False
-    kills_home: int = 0
-    kills_away: int = 0
-    winner_tid: Optional[int] = None
+    k_home: int = 0
+    k_away: int = 0
+    winner: Optional[int] = None  # 0=home, 1=away, None=draw
+    comp_kind: str = "league"     # "league"|"cup"|...
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id, "week": self.week,
-            "home_id": self.home_id, "away_id": self.away_id,
-            "played": self.played,
-            "kills_home": self.kills_home, "kills_away": self.kills_away,
-            "winner_tid": self.winner_tid,
-        }
+    # UI/test-friendly aliases (read-only properties)
+    @property
+    def home_tid(self) -> int: return self.home_id
+    @property
+    def away_tid(self) -> int: return self.away_id
+    @property
+    def A(self) -> int: return self.home_id
+    @property
+    def B(self) -> int: return self.away_id
+
+# --- Utility: deterministic small-score generator ---------------------------
+
+def _mix_seed(seed: int, a: str) -> int:
+    # Very simple 64-bit mix; stable across runs
+    x = (seed ^ 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
+    for ch in a.encode("utf-8"):
+        x ^= ch + 0x9E3779B97F4A7C15 + ((x << 6) & 0xFFFFFFFFFFFFFFFF) + (x >> 2)
+        x &= 0xFFFFFFFFFFFFFFFF
+    return x
+
+def _deterministic_kills(seed: int, week: int, home_id: int, away_id: int) -> Tuple[int, int]:
+    ident = f"W{week}:{home_id}-{away_id}"
+    r = _mix_seed(seed, ident)
+    k_home = (r >> 5) % 5 + ((r >> 17) & 1)   # 0..5
+    k_away = (r >> 9) % 5 + ((r >> 19) & 1)   # 0..5
+    return int(k_home), int(k_away)
+
+# --- Career data model -------------------------------------------------------
 
 @dataclass
 class Career:
-    seed: int
-    week: int
-    teams: List[Dict[str, Any]]
-    fixtures: List[Fixture]
-    table: Table
-    h2h: H2HMap
-    user_team_id: Optional[int] = None
+    seed: int = 12345
+    week: int = 1                                   # 1-based
+    user_tid: Optional[int] = 0
+    teams: List[Dict[str, Any]] = field(default_factory=list)
+    fixtures_by_week: List[List[Dict[str, Any]]] = field(default_factory=list)
+    fixtures: List[Dict[str, Any]] = field(default_factory=list)
+    # standings keyed by tid
+    standings: Dict[int, Dict[str, Any]] = field(default_factory=dict)
 
-    # --- Construction ---------------------------------------------------------
+    # ---------- construction ----------
     @classmethod
-    def new(
-        cls,
-        seed: int = DEFAULT_SEED,
-        n_teams: int = LEAGUE_TEAMS,
-        team_size: int = TEAM_SIZE,
-        user_team_id: Optional[int] = 0,
-        team_names: Optional[List[str]] = None,
-        **kwargs: Any,
-    ) -> "Career":
-        # Accept alias used by tests
-        if "team_count" in kwargs and kwargs["team_count"] is not None:
-            n_teams = int(kwargs["team_count"])
+    def new(cls,
+            seed: int = 12345,
+            n_teams: int = 20,
+            team_size: int = 5,
+            user_team_id: Optional[int] = 0,
+            team_names: Optional[List[str]] = None) -> "Career":
+        # Team names fallback
+        if not team_names:
+            team_names = [f"Team {i}" for i in range(n_teams)]
+        teams: List[Dict[str, Any]] = []
+        for tid in range(n_teams):
+            fighters = []
+            for pid in range(team_size):
+                fighters.append({
+                    "pid": pid,
+                    "name": f"P{pid}",
+                    "team_id": 0,  # set dynamically in match builder
+                    "hp": 10,
+                    "max_hp": 10,
+                    "ac": 10,
+                    "alive": True,
+                    "STR": 10, "DEX": 10, "CON": 10, "INT": 8, "WIS": 8, "CHA": 8,
+                })
+            teams.append({"tid": tid, "name": team_names[tid], "fighters": fighters})
 
-        teams = _generate_teams(n_teams, team_size, seed, team_names)
-        team_ids = [t["tid"] for t in teams]
+        # Build double round-robin fixtures
+        # circle method
+        ids = list(range(n_teams))
+        if n_teams % 2 == 1:
+            ids.append(-1)
+        n = len(ids)
+        half = n // 2
+        arr = ids[:]
+        weeks_pairs: List[List[Tuple[int,int]]] = []
+        for _ in range(n-1):
+            week_pairs: List[Tuple[int,int]] = []
+            for i in range(half):
+                t1, t2 = arr[i], arr[n-1-i]
+                if t1 != -1 and t2 != -1:
+                    week_pairs.append((t1, t2))
+            weeks_pairs.append(week_pairs)
+            arr = [arr[0]] + [arr[-1]] + arr[1:-1]
+        # double round robin: add reversed fixtures after first leg
+        all_weeks: List[List[Tuple[int,int]]] = []
+        all_weeks.extend(weeks_pairs)
+        all_weeks.extend([(b,a) for (a,b) in wp] for wp in weeks_pairs)
 
-        fixtures_dicts = build_double_round_robin(
-            team_ids, rounds=ROUNDS_DOUBLE_ROUND_ROBIN, shuffle_seed=seed
-        )
-        fixtures = [Fixture(**f) for f in fixtures_dicts]
+        fixtures_by_week: List[List[Dict[str, Any]]] = []
+        for w, wp in enumerate(all_weeks, start=1):
+            week_list: List[Dict[str, Any]] = []
+            for (a,b) in wp:
+                week_list.append({"week": w, "home_id": a, "away_id": b, "played": False, "comp_kind": "league"})
+            fixtures_by_week.append(week_list)
+        fixtures_flat = [fx for week in fixtures_by_week for fx in week]
 
-        # --- Normalize weeks to start at 1 (some builders are 0-based) -------
-        if fixtures:
-            min_week = min(f.week for f in fixtures)
-            if min_week <= 0:
-                shift = 1 - min_week
-                for f in fixtures:
-                    f.week = int(f.week) + shift
+        car = cls(seed=seed, week=1, user_tid=user_team_id, teams=teams,
+                  fixtures_by_week=fixtures_by_week, fixtures=fixtures_flat)
+        car._recompute_standings()
+        return car
 
-        table, h2h = new_table(team_ids)
-        return cls(
-            seed=seed,
-            week=1,  # Week counter is 1-based
-            teams=teams,
-            fixtures=fixtures,
-            table=table,
-            h2h=h2h,
-            user_team_id=user_team_id,
-        )
+    # ---------- helpers for UI ----------
+    def team_name(self, tid: Any) -> str:
+        try_tid = str(tid)
+        for t in self.teams:
+            if str(t.get("tid", t.get("id"))) == try_tid:
+                return t.get("name", f"Team {tid}")
+        # fallback mapping
+        mapping = getattr(self, "team_names", None)
+        if isinstance(mapping, dict) and try_tid in mapping:
+            return str(mapping[try_tid])
+        if isinstance(mapping, list):
+            try:
+                i = int(try_tid)
+                return mapping[i]
+            except Exception:
+                pass
+        return f"Team {tid}"
 
-    # --- Query helpers ---------------------------------------------------------
-    def team_by_id(self, tid: int) -> Dict[str, Any]:
-        return next(t for t in self.teams if t["tid"] == tid)
+    # ---------- persistence-ish ----------
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
-    def fixtures_in_week(self, week: Optional[int] = None) -> List[Fixture]:
-        w = self.week if week is None else int(week)
-        return [fx for fx in self.fixtures if int(fx.week) == w]
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "Career":
+        # lenient load
+        return cls(**d)
 
-    def find_fixture(self, fixture_id: str) -> Fixture:
-        return next(fx for fx in self.fixtures if fx.id == fixture_id)
+    # ---------- standings view ----------
+    def table_rows(self) -> List[Dict[str, Any]]:
+        return [dict(v) for _, v in sorted(self.standings.items(), key=lambda kv: int(kv[0]))]
 
-    def user_fixture_this_week(self) -> Optional[Fixture]:
-        if self.user_team_id is None:
-            return None
-        for fx in self.fixtures_in_week():
-            if not fx.played and (fx.home_id == self.user_team_id or fx.away_id == self.user_team_id):
+    def table_rows_sorted(self) -> List[Dict[str, Any]]:
+        rows = list(self.standings.values())
+        rows.sort(key=lambda r: (r["PTS"], r["KD"], r["K"]), reverse=True)
+        return [dict(r) for r in rows]
+
+    # ---------- results & standings ----------
+    def record_result(self, result: Dict[str, Any]) -> None:
+        """Persist a finished match and update standings.
+        Expected result keys: home_tid, away_tid, K_home, K_away, winner
+        """
+        h = int(result.get("home_tid") or result.get("home_id"))
+        a = int(result.get("away_tid") or result.get("away_id"))
+        kh = int(result.get("K_home", result.get("k_home", 0)))
+        ka = int(result.get("K_away", result.get("k_away", 0)))
+        w = result.get("winner", None)
+        # Mark fixture
+        fx = self._find_fixture(h, a)
+        if fx is None:
+            # create ad-hoc fixture in current week (failsafe)
+            fx = {"week": self.week, "home_id": h, "away_id": a, "played": False, "comp_kind": "league"}
+            self.fixtures.append(fx)
+            while len(self.fixtures_by_week) < self.week:
+                self.fixtures_by_week.append([])
+            self.fixtures_by_week[self.week-1].append(fx)
+        fx["played"] = True
+        fx["k_home"] = kh
+        fx["k_away"] = ka
+        fx["winner"] = w
+        self._recompute_standings()
+
+    # alias names some code might call
+    def save_match_result(self, result: Dict[str, Any]) -> None:
+        self.record_result(result)
+    def apply_result(self, result: Dict[str, Any]) -> None:
+        self.record_result(result)
+
+    def _find_fixture(self, home_id: int, away_id: int) -> Optional[Dict[str, Any]]:
+        # search current week first
+        for fx in self.fixtures_by_week[self.week-1] if 0 <= self.week-1 < len(self.fixtures_by_week) else []:
+            if int(fx.get("home_id")) == home_id and int(fx.get("away_id")) == away_id:
+                return fx
+        # search all
+        for fx in self.fixtures:
+            if int(fx.get("home_id")) == home_id and int(fx.get("away_id")) == away_id:
                 return fx
         return None
 
-    def remaining_unplayed_in_week(self, week: Optional[int] = None) -> List[Fixture]:
-        return [fx for fx in self.fixtures_in_week(week) if not fx.played]
+    def _recompute_standings(self) -> None:
+        # initialize
+        table: Dict[int, Dict[str, Any]] = {int(t["tid"]): {"tid": int(t["tid"]), "name": self.team_name(t["tid"]),
+                                                            "P": 0, "W": 0, "D": 0, "L": 0,
+                                                            "K": 0, "KD": 0, "PTS": 0}
+                                            for t in self.teams}
+        # accumulate from played fixtures
+        for fx in self.fixtures:
+            if not fx.get("played"):
+                continue
+            h, a = int(fx["home_id"]), int(fx["away_id"])
+            kh, ka = int(fx.get("k_home", 0)), int(fx.get("k_away", 0))
+            w = fx.get("winner")
+            th = table[h]; ta = table[a]
+            th["P"] += 1; ta["P"] += 1
+            th["K"] += kh; ta["K"] += ka
+            th["KD"] += (kh - ka); ta["KD"] += (ka - kh)
+            if w == 0: th["W"] += 1; ta["L"] += 1; th["PTS"] += 3
+            elif w == 1: ta["W"] += 1; th["L"] += 1; ta["PTS"] += 3
+            else: th["D"] += 1; ta["D"] += 1; th["PTS"] += 1; ta["PTS"] += 1
+        self.standings = table
 
-    def is_week_done(self, week: Optional[int] = None) -> bool:
-        return all(fx.played for fx in self.fixtures_in_week(week))
+    # ---------- sim week ----------
+    def simulate_week_ai(self) -> None:
+        """Sim AI-vs-AI fixtures for the current week; leave the user's match unplayed."""
+        this_week = [fx for fx in self.fixtures_by_week[self.week-1]] if 0 <= self.week-1 < len(self.fixtures_by_week) else []
+        for fx in this_week:
+            if fx.get("played"):
+                continue
+            # Skip user team's fixture so they can play it
+            if self.user_tid is not None and (str(fx["home_id"]) == str(self.user_tid) or str(fx["away_id"]) == str(self.user_tid)):
+                continue
+            kh, ka = _deterministic_kills(self.seed, int(fx["week"]), int(fx["home_id"]), int(fx["away_id"]))
+            w = 0 if kh > ka else (1 if ka > kh else None)
+            self.record_result({"home_tid": fx["home_id"], "away_tid": fx["away_id"], "K_home": kh, "K_away": ka, "winner": w})
+        # If all fixtures of this week are played, advance
+        if all(fx.get("played") for fx in this_week) and this_week:
+            self.advance_week()
 
-    # --- Mutation --------------------------------------------------------------
-    def record_result(self, fixture_id: str, kills_home: int, kills_away: int) -> None:
-        fx = self.find_fixture(fixture_id)
-        fx.kills_home = int(kills_home)
-        fx.kills_away = int(kills_away)
-        fx.played = True
+    # ---------- week advance ----------
+    def advance_week(self) -> None:
+        self.week = int(self.week) + 1
 
-        if kills_home > kills_away:
-            fx.winner_tid = fx.home_id
-        elif kills_away > kills_home:
-            fx.winner_tid = fx.away_id
-        else:
-            fx.winner_tid = None
-
-        from .standings import apply_result
-        apply_result(self.table, self.h2h, fx.home_id, fx.away_id, fx.kills_home, fx.kills_away)
-
-    def advance_week_if_done(self) -> None:
-        if self.is_week_done(self.week):
-            self.week += 1
-
-    # --- Views for UI ----------------------------------------------------------
-    def standings_sorted(self) -> List[Tuple[int, Dict[str, int]]]:
-        return sort_table(self.table, self.h2h)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "seed": self.seed,
-            "week": self.week,
-            "teams": self.teams,
-            "fixtures": [fx.to_dict() for fx in self.fixtures],
-            "table": self.table,
-            "h2h": {f"{k[0]}_{k[1]}": v for k, v in self.h2h.items()},
-            "user_team_id": self.user_team_id,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Career":
-        fixtures = [Fixture(**fx) for fx in data.get("fixtures", [])]
-        raw_h2h = data.get("h2h", {})
-        h2h: H2HMap = {}
-        for k, v in raw_h2h.items():
-            a, b = k.split("_")
-            h2h[(int(a), int(b))] = dict(v)
-        return cls(
-            seed=data.get("seed", DEFAULT_SEED),
-            week=data.get("week", 1),
-            teams=list(data.get("teams", [])),
-            fixtures=fixtures,
-            table=dict(data.get("table", {})),
-            h2h=h2h,
-            user_team_id=data.get("user_team_id"),
-        )
-
-# --- Back-compat convenience expected by tests --------------------------------
-
-def new_career(
-    seed: int = DEFAULT_SEED,
-    n_teams: int = LEAGUE_TEAMS,
-    team_size: int = TEAM_SIZE,
-    user_team_id: Optional[int] = 0,
-    team_names: Optional[List[str]] = None,
-    **kwargs: Any,
-) -> Career:
-    if "team_count" in kwargs and kwargs["team_count"] is not None:
-        n_teams = int(kwargs["team_count"])
-    return Career.new(
-        seed=seed,
-        n_teams=n_teams,
-        team_size=team_size,
-        user_team_id=user_team_id,
-        team_names=team_names,
-    )
+    # Optional back-compat names some UIs call
+    def next_week(self) -> None:
+        self.advance_week()
