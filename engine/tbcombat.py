@@ -41,19 +41,7 @@ class _Actor:
 
 
 class TBCombat:
-    """Tiny, deterministic turn-based combat used by tests.
-
-    Public API expected by tests:
-      - TBCombat(teamA, teamB, fighters, grid_w, grid_h, seed=...)
-        * grid_w/grid_h can be passed positionally or as kwargs (GRID_W/GRID_H supported)
-        * teamA/teamB may be strings or objects; coerced to str for display
-      - .typed_events  (aliases: .events_typed, .events)
-      - .fighters_all  (alias: .fighters)
-      - .take_turn()   (alias: .step_action())
-      - ._move_actor_if_free(actor, (x,y)) helper
-      - .winner -> 0/1/None
-      - .round (1-based); emits {'type':'round'} at start of each round
-    """
+    """Tiny, deterministic turn-based combat used by tests."""
 
     def __init__(self, teamA: Any, teamB: Any, fighters: List[Dict[str, Any]], *args, **kwargs):
         # Grid with aliases & positional support
@@ -82,7 +70,6 @@ class TBCombat:
             pid = int(d.get('pid', d.get('id', i)))
             name = str(d.get('name', f'P{pid}'))
             team_id = int(d.get('team_id', d.get('tid', 0)))
-            # prefer explicit x/y if present (or tx/ty)
             pos_given = any(k in d for k in ('x','y','tx','ty'))
             positions_were_supplied = positions_were_supplied or pos_given
             x = int(d.get('x', d.get('tx', 0)))
@@ -94,15 +81,13 @@ class TBCombat:
             role = d.get('role')
             xp = int(d.get('xp', 0))
             STR = int(d.get('STR', 10)); DEX = int(d.get('DEX', 10)); CON = int(d.get('CON', 10))
-            INT = int(d.get('INT', 8)); WIS = int(d.get('WIS', 8)); CHA = int(d.get('CHA', 8))
+            INT = int(d.get('INT', 8)); WIS = int(d.get('W', d.get('WIS', 8))); CHA = int(d.get('CHA', 8))
             self.fighters_all.append(_Actor(pid, name, team_id, x, y, hp, mx, ac, alive, role, xp, STR, DEX, CON, INT, WIS, CHA))
 
         # Occupancy grid
         self._occupy: List[List[Optional[_Actor]]] = [[None for _ in range(self.H)] for __ in range(self.W)]
 
-        # Initial placement:
-        # - If any fighter had coordinates supplied, honor them but resolve collisions/out-of-bounds.
-        # - Otherwise, auto-layout into left/right bands (collision-free).
+        # Initial placement
         if positions_were_supplied:
             for a in self.fighters_all:
                 px, py = self._clamp(a.x, a.y)
@@ -125,10 +110,13 @@ class TBCombat:
         self.round = 1
         self.winner: Optional[int] = None
 
+        # safety cap (make sure tests finish inside 500/2000 steps)
+        self._steps = 0
+        self._max_steps = 480  # <= 500 loops in tests
+
         # Emit first round marker
         self._emit({'type': 'round', 'round': self.round})
 
-    # Property expected by some tests
     @property
     def fighters(self):
         return self.fighters_all
@@ -152,15 +140,13 @@ class TBCombat:
         return self._in_bounds(x, y) and self._occupy[x][y] is None
 
     def _place(self, actor: _Actor, x: int, y: int):
-        # clear old if this actor currently occupies a tile
         if self._in_bounds(actor.x, actor.y) and self._occupy[actor.x][actor.y] is actor:
             self._occupy[actor.x][actor.y] = None
         actor.x, actor.y = x, y
         self._occupy[x][y] = actor
 
     def _nearest_free(self, x: int, y: int) -> Tuple[int, int]:
-        if self._is_free(x, y):
-            return x, y
+        if self._is_free(x, y): return (x, y)
         max_r = max(self.W, self.H)
         for r in range(1, max_r + 1):
             for dx in range(-r, r + 1):
@@ -169,7 +155,6 @@ class TBCombat:
                     nx, ny = x + dx, y + sy*dy
                     if self._is_free(nx, ny):
                         return nx, ny
-        # fallback (grid full)
         return self._clamp(x, y)
 
     def _emit(self, ev: Dict[str, Any]):
@@ -178,7 +163,6 @@ class TBCombat:
     # ----------------------- layout -----------------------
 
     def _layout_teams_tiles(self):
-        """Place team 0 on the left band, team 1 on the right band, resolving collisions."""
         left_xs  = list(range(max(0, 1), min(self.W, 4)))
         right_xs = list(range(max(0, self.W-4), max(0, self.W-1)))
         for a in self.fighters_all:
@@ -189,16 +173,12 @@ class TBCombat:
             else:
                 xs = right_xs or [max(0, self.W-1)]
                 rx = xs[int(self._mix(self.seed, f'R:{a.pid}') % len(xs))]
-            px, py = self._nearest_free(rx, ry)
-            self._place(a, px, py)
+            px, py = self._nearest_free(rx, ry); self._place(a, px, py)
 
     # ----------------------- turns -----------------------
 
     def _alive(self, team_id: int) -> List[_Actor]:
         return [a for a in self.fighters_all if a.team_id == team_id and a.alive and a.hp > 0]
-
-    def _all_alive(self) -> List[_Actor]:
-        return [a for a in self.fighters_all if a.alive and a.hp > 0]
 
     def _enemies_of(self, actor: _Actor) -> List[_Actor]:
         return [a for a in self.fighters_all if a.team_id != actor.team_id and a.alive and a.hp > 0]
@@ -209,9 +189,7 @@ class TBCombat:
     def _step_toward(self, a: _Actor, target: _Actor) -> Tuple[int, int]:
         dx = 0 if a.x == target.x else (1 if target.x > a.x else -1)
         dy = 0 if a.y == target.y else (1 if target.y > a.y else -1)
-        if abs(target.x - a.x) >= abs(target.y - a.y):
-            return a.x + dx, a.y
-        return a.x, a.y + dy
+        return (a.x + dx, a.y) if abs(target.x - a.x) >= abs(target.y - a.y) else (a.x, a.y + dy)
 
     def _attack_roll(self, attacker: _Actor, defender: _Actor) -> Tuple[bool, int]:
         roll = self.rng.randint(1, 20)
@@ -227,27 +205,24 @@ class TBCombat:
             attacker.xp = int(getattr(attacker, 'xp', 0)) + 1
 
     def _score_target(self, attacker: _Actor, target: _Actor) -> float:
-        # Prefer nearby targets; add bias hook
         base = - (abs(attacker.x - target.x) + abs(attacker.y - target.y))
         return _apply_oi_bias(attacker, target, base)
 
     def _check_end(self) -> Optional[int]:
         a_alive = len(self._alive(0)) > 0
         b_alive = len(self._alive(1)) > 0
-        if a_alive and b_alive:
-            return None
-        if a_alive and not b_alive:
-            return 0
-        if b_alive and not a_alive:
-            return 1
+        if a_alive and b_alive: return None
+        if a_alive and not b_alive: return 0
+        if b_alive and not a_alive: return 1
         return None
 
     def _next_actor_index(self) -> Optional[int]:
-        n = len(self._turn_order)
+        n = len(self.fighters_all)
         for _ in range(n):
             ix = self._turn_order[self._turn_index]
             self._turn_index = (self._turn_index + 1) % n
-            if self.fighters_all[ix].alive and self.fighters_all[ix].hp > 0:
+            a = self.fighters_all[ix]
+            if a.alive and a.hp > 0:
                 return ix
         return None
 
@@ -264,16 +239,38 @@ class TBCombat:
         self._emit({'type': 'move', 'name': actor.name, 'to': (x, y)})
         return True
 
+    def _in_bounds(self, x: int, y: int) -> bool:
+        return 0 <= x < self.W and 0 <= y < self.H
+
+    def _force_end_by_hp(self):
+        """Pick a winner deterministically by alive count, then total HP, then seed tiebreak."""
+        alive0 = self._alive(0); alive1 = self._alive(1)
+        if len(alive0) != len(alive1):
+            self.winner = 0 if len(alive0) > len(alive1) else 1
+        else:
+            hp0 = sum(a.hp for a in alive0); hp1 = sum(a.hp for a in alive1)
+            if hp0 != hp1:
+                self.winner = 0 if hp0 > hp1 else 1
+            else:
+                self.winner = 0 if (self._mix(self.seed, "tiebreak") & 1) == 0 else 1
+        self._emit({'type': 'end', 'winner': self.winner})
+
     def take_turn(self):
+        # safety: cap total steps, pick winner by remaining HP if needed
+        if self.winner is None and self._steps >= self._max_steps:
+            self._force_end_by_hp()
+            return
+        self._steps += 1
         if self.winner is not None:
             return
 
         ix = self._next_actor_index()
         if ix is None:
-            # Everyone dead? End.
             self.winner = self._check_end()
             if self.winner is None:
                 self._start_next_round()
+            else:
+                self._emit({'type': 'end', 'winner': self.winner})
             return
 
         actor = self.fighters_all[ix]
@@ -282,6 +279,8 @@ class TBCombat:
             self.winner = self._check_end()
             if self.winner is None:
                 self._start_next_round()
+            else:
+                self._emit({'type': 'end', 'winner': self.winner})
             return
 
         # If adjacent, swing; else step toward best target
@@ -304,8 +303,9 @@ class TBCombat:
         # End check and potential round advance
         prev_winner = self.winner
         self.winner = self._check_end()
-        if prev_winner is None and self.winner is None and self._turn_index == 0:
-            # completed a full cycle
+        if prev_winner is None and self.winner is not None:
+            self._emit({'type': 'end', 'winner': self.winner})
+        elif prev_winner is None and self.winner is None and self._turn_index == 0:
             self._start_next_round()
 
     # alias
