@@ -5,10 +5,16 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Dict, Any, Tuple
 import random
 
+# Optional imports (don’t crash editor/tests if these aren’t present)
 try:
     from core.career import Career
 except Exception:
     Career = None  # type: ignore
+
+try:
+    from core.creator import generate_fighter
+except Exception:
+    generate_fighter = None  # type: ignore
 
 def _import_opt(fullname: str):
     try:
@@ -64,65 +70,8 @@ def _rand_color(rng: random.Random) -> Tuple[int, int, int]:
     return (rng.randint(60, 220), rng.randint(60, 220), rng.randint(60, 220))
 
 def _ovr(p: Dict[str, Any]) -> int:
-    STR = p.get("STR", 10); DEX = p.get("DEX", 10); CON = p.get("CON", 10)
-    INT = p.get("INT", 8);  WIS = p.get("WIS", 8);  CHA = p.get("CHA", 8)
-    score = (STR*0.35 + DEX*0.35 + CON*0.30 + (INT+WIS+CHA)*0.10)
-    return int(round(score))
-
-def _make_player(pid: int, team_id: int, rng: random.Random) -> Dict[str, Any]:
-    FIRST = ["Arin","Bren","Cael","Dara","Eryn","Finn","Garr","Hale","Iona","Joss",
-             "Kade","Lira","Mara","Nico","Orin","Pax","Quin","Rhea","Sora","Ty",
-             "Una","Vale","Wren","Xan","Yara","Zed"]
-    LAST  = ["Blackwood","Stormborn","Ironhart","Quickstep","Nightbloom","Brightshield",
-             "Stone","Ashenvale","Dawnrider","Farsight","Rivensong","Graywolf",
-             "Thorn","Whitespear","Hawke","Mistral","Holloway","Kingsley","Rowan","Dusk"]
-
-    first = rng.choice(FIRST)
-    last  = rng.choice(LAST)
-    name  = f"{first} {last}"
-
-    jersey = (pid % 99) + 1
-    STR = rng.randint(8, 14)
-    DEX = rng.randint(8, 14)
-    CON = rng.randint(8, 14)
-    INT = rng.randint(7, 12)
-    WIS = rng.randint(7, 12)
-    CHA = rng.randint(7, 12)
-    hp = rng.randint(8, 12)
-
-    p = {
-        "pid": pid,
-        "num": jersey,
-        "name": name,
-        "team_id": team_id,
-        "hp": hp, "max_hp": hp, "ac": rng.randint(8, 12), "alive": True,
-        "STR": STR, "DEX": DEX, "CON": CON, "INT": INT, "WIS": WIS, "CHA": CHA,
-    }
-    p["OVR"] = _ovr(p)
-    return p
-
-def _make_league(country: str, level: int, rng: random.Random, team_size: int = 8) -> Dict[str, Any]:
-    name = f"{country} {'Premier' if level == 1 else 'Division'}"
-    teams = []
-    for i in range(20):
-        tname = _rand_name(rng)
-        color = _rand_color(rng)
-        tid = i
-        fighters = [_make_player(pid=j, team_id=tid, rng=rng) for j in range(team_size)]
-        teams.append({"tid": tid, "name": tname, "color": color, "fighters": fighters})
-    return {"name": name, "level": level, "teams": teams}
-
-def _build_world(seed: int) -> Dict[str, Any]:
-    rng = random.Random(seed)
-    world = {"countries": []}
-    for cname in _COUNTRIES:
-        crng = random.Random((seed << 1) ^ hash(cname))
-        leagues = [
-            _make_league(cname, level=1, rng=crng),
-            _make_league(cname, level=2, rng=crng),
-        ]
-        world["countries"].append({"name": cname, "leagues": leagues})
-    return world
+    # best-effort OVR accessor across old/new generators
+    return int(p.get("OVR", p.get("ovr", p.get("OVR_RATING", 60))))
 
 # ----------------- Team Select State -----------------
 class TeamSelectState:
@@ -131,6 +80,7 @@ class TeamSelectState:
       - Left: Countries (8)
       - Middle: League toggle (Top / Bottom) + 20-team list
       - Right: Top = players of selected team; Bottom = selected player's stats
+    - Top-right: Regenerate button (re-rolls all players on all teams)
     Start Season builds a Career from the selected league (20 teams).
     """
     def __init__(self, app):
@@ -138,6 +88,7 @@ class TeamSelectState:
         self.font = pygame.font.SysFont(None, 24)
         self.h1 = pygame.font.SysFont(None, 34)
         self.h2 = pygame.font.SysFont(None, 22)
+        self.small = pygame.font.SysFont(None, 20)
 
         self.rect_countries: Optional[pygame.Rect] = None
         self.rect_league: Optional[pygame.Rect] = None
@@ -146,7 +97,7 @@ class TeamSelectState:
         self.rect_stats: Optional[pygame.Rect] = None
 
         self.seed = getattr(self.app, "world_seed", 7777)
-        self.world = _build_world(self.seed)
+        self.world = self._build_world(self.seed)
 
         self.country_idx = getattr(self.app, "last_country_idx", 0)
         self.league_level = getattr(self.app, "last_league_level", 1)  # 1 or 2
@@ -160,6 +111,67 @@ class TeamSelectState:
         self.toggle_top: Optional[Button] = None
         self.toggle_bottom: Optional[Button] = None
 
+    # ---------- World / teams ----------
+    def _build_world(self, seed: int) -> Dict[str, Any]:
+        rng = random.Random(seed)
+        world = {"countries": []}
+        for cname in _COUNTRIES:
+            crng = random.Random((seed << 1) ^ hash(cname))
+            leagues = [
+                self._make_league(cname, level=1, rng=crng),
+                self._make_league(cname, level=2, rng=crng),
+            ]
+            world["countries"].append({"name": cname, "leagues": leagues})
+        return world
+
+    def _new_fighter(self, team_tid: int, jersey: int, country: str, rng: random.Random) -> Dict[str, Any]:
+        """
+        Create one fighter using core.creator if available; otherwise fallback simple stub.
+        """
+        if generate_fighter is not None:
+            f = generate_fighter(level=1, rng=rng, town=country, neg_trait_prob=0.15)
+            f["team_id"] = team_tid
+            f["pid"] = jersey - 1
+            f["num"] = jersey
+            f["max_hp"] = f.get("max_hp", f.get("hp", 10))
+            f["alive"] = True
+            f["origin"] = country  # for UI display
+            return f
+        else:
+            # Fallback minimal
+            first = ["Arin","Bren","Cael","Dara","Eryn","Finn","Garr","Hale","Iona","Joss","Kade","Lira","Mara","Nico","Orin","Pax","Quin","Rhea","Sora","Ty","Una","Vale","Wren","Xan","Yara","Zed"]
+            last  = ["Blackwood","Stormborn","Ironhart","Quickstep","Nightbloom","Brightshield","Stone","Ashenvale","Dawnrider","Farsight","Rivensong","Graywolf","Thorn","Whitespear","Hawke","Mistral","Holloway","Kingsley","Rowan","Dusk"]
+            name = f"{rng.choice(first)} {rng.choice(last)}"
+            hp = rng.randint(8, 12)
+            p = {
+                "pid": jersey - 1,
+                "num": jersey,
+                "name": name,
+                "team_id": team_tid,
+                "hp": hp, "max_hp": hp, "ac": rng.randint(8, 12), "alive": True,
+                "str": rng.randint(8, 14),
+                "dex": rng.randint(8, 14),
+                "con": rng.randint(8, 14),
+                "int": rng.randint(7, 12),
+                "wis": rng.randint(7, 12),
+                "cha": rng.randint(7, 12),
+                "OVR": rng.randint(50, 80),
+                "origin": country,
+            }
+            return p
+
+    def _make_league(self, country: str, level: int, rng: random.Random, team_size: int = 8) -> Dict[str, Any]:
+        name = f"{country} {'Premier' if level == 1 else 'Division'}"
+        teams = []
+        for i in range(20):
+            tname = f"{country} {_rand_name(rng)}"
+            color = _rand_color(rng)
+            tid = i
+            fighters = [self._new_fighter(team_tid=tid, jersey=(j % 99) + 1, country=country, rng=rng) for j in range(team_size)]
+            teams.append({"tid": tid, "name": tname, "color": color, "fighters": fighters})
+        return {"name": name, "level": level, "teams": teams}
+
+    # ---------- Lifecycle ----------
     def enter(self):
         self._layout()
 
@@ -178,18 +190,23 @@ class TeamSelectState:
         self.rect_roster = pygame.Rect(self.rect_detail.x, self.rect_detail.y, self.rect_detail.w, int(self.rect_detail.h*0.60))
         self.rect_stats  = pygame.Rect(self.rect_detail.x, self.rect_roster.bottom + pad, self.rect_detail.w, self.rect_detail.bottom - (self.rect_roster.bottom + pad))
 
+        self.btns = []
+
+        # Start / Back (bottom-right of detail panel)
         btn_w, btn_h = 160, 44
         by = self.rect_detail.bottom - btn_h - 10
         bx = self.rect_detail.right - btn_w - 10
-        self.btns = [
-            Button(pygame.Rect(bx, by, btn_w, btn_h), "Start Season", self._start),
-            Button(pygame.Rect(bx - btn_w - 10, by, btn_w, btn_h), "Back", self._back),
-        ]
+        self.btns.append(Button(pygame.Rect(bx, by, btn_w, btn_h), "Start Season", self._start))
+        self.btns.append(Button(pygame.Rect(bx - btn_w - 10, by, btn_w, btn_h), "Back", self._back))
 
+        # League toggles
         tg_w, tg_h = 140, 36
         tgy = self.rect_league.y + 12
-        self.toggle_top = Button(pygame.Rect(self.rect_league.x + 12, tgy, tg_w, tg_h), "Top League", lambda: self._set_level(1))
+        self.toggle_top = Button(pygame.Rect(self.rect_league.x + 12, tgy,   tg_w, tg_h), "Top League",    lambda: self._set_level(1))
         self.toggle_bottom = Button(pygame.Rect(self.rect_league.x + 12 + tg_w + 10, tgy, tg_w, tg_h), "Bottom League", lambda: self._set_level(2))
+
+        # Regenerate (top-right corner of screen)
+        self.btns.append(Button(pygame.Rect(w - 160 - 16, 16, 160, 40), "Regenerate", self._regen_all_fighters))
 
     # ------------- Convenience getters -------------
     def _countries(self) -> List[Dict[str, Any]]:
@@ -307,6 +324,26 @@ class TeamSelectState:
             st = SeasonHubState(self.app)
         self.app.push_state(st)
 
+    def _regen_all_fighters(self):
+        """Regenerate every fighter on every team in the currently loaded WORLD."""
+        r = random.Random()  # nondeterministic re-roll
+        for c in self.world.get("countries", []):
+            country = c.get("name", "Unknown")
+            for league in c.get("leagues", []):
+                for t in league.get("teams", []):
+                    tid = int(t.get("tid", 0))
+                    size = len(t.get("fighters", [])) or 8
+                    new_roster: List[Dict[str, Any]] = []
+                    for j in range(size):
+                        jersey = (j % 99) + 1
+                        f = self._new_fighter(team_tid=tid, jersey=jersey, country=country, rng=r)
+                        new_roster.append(f)
+                    t["fighters"] = new_roster
+
+        # keep selection sane
+        self.player_idx = 0
+        self.scroll_players = 0
+
     # ------------- Event handling -------------
     def handle(self, event: pygame.event.Event):
         if event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
@@ -381,6 +418,7 @@ class TeamSelectState:
         title = self.h1.render("Choose Your Team", True, (235, 235, 240))
         screen.blit(title, (16, 20))
 
+        # Panels
         self._draw_panel(screen, self.rect_countries, "Countries")
         self._draw_countries(screen)
 
@@ -396,6 +434,11 @@ class TeamSelectState:
             if b.text.startswith("Start"):
                 b.disabled = (self.team_idx is None)
             b.draw(screen, self.font)
+
+        if self.toggle_top:
+            self.toggle_top.draw(screen, self.font, selected=(self.league_level == 1))
+        if self.toggle_bottom:
+            self.toggle_bottom.draw(screen, self.font, selected=(self.league_level == 2))
 
     # ------ draw helpers ------
     def _draw_panel(self, screen: pygame.Surface, rect: Optional[pygame.Rect], title: str):
@@ -461,9 +504,10 @@ class TeamSelectState:
         for i, p in enumerate(fighters):
             r = pygame.Rect(list_area.x, y0 + i*row_h, list_area.w, row_h - 4)
             selected = (self.player_idx == i)
-            ovr = p.get('OVR', _ovr(p))
+            ovr = _ovr(p)
             num = p.get('num', 0)
-            label = f"#{num:02d}  {p.get('name','Player')}   OVR {ovr}"
+            nm = p.get('name', 'Player')
+            label = f"#{num:02d}  {nm}   OVR {ovr}"
             Button(r, label, lambda: None).draw(screen, self.font, selected=selected)
 
         screen.set_clip(prev)
@@ -480,16 +524,67 @@ class TeamSelectState:
             screen.blit(txt, (rect.x + 12, rect.y + 40))
             return
 
-        y = rect.y + 36
-        def put(line: str):
-            nonlocal y
-            screen.blit(self.font.render(line, True, (220,220,225)), (rect.x + 12, y))
-            y += 24
+        # Convenience getters (handle lower/UPPER keys)
+        def G(key, default=None):
+            return p.get(key, p.get(key.upper(), default))
 
-        ovr = p.get("OVR", _ovr(p))
-        put(f"Name: #{p.get('num',0):02d}  {p.get('name')}")
-        put(f"OVR: {ovr}")
-        put(f"HP:  {p.get('hp')}/{p.get('max_hp')}")
+        name = G("name", "Unknown")
+        num  = int(G("num", 0))
+        race = G("race", "-")
+        origin = G("origin", self._country().get("name", "-"))
+        ovr  = int(G("ovr", G("OVR", 60)))
+        pot  = int(G("potential", 70))
+        cls  = G("class", "Fighter")
+        hp   = int(G("hp", 10)); max_hp = int(G("max_hp", hp))
+        ac   = int(G("ac", 12))
+
+        STR = int(G("str", G("STR", 10))); DEX = int(G("dex", G("DEX", 10)))
+        CON = int(G("con", G("CON", 10))); INT = int(G("int", G("INT", 10)))
+        WIS = int(G("wis", G("WIS", 10))); CHA = int(G("cha", G("CHA", 10)))
+
+        weapon_name = "-"
+        wpn = G("weapon", {})
+        if isinstance(wpn, dict):
+            weapon_name = wpn.get("name", "-")
+        armor_name = G("armor", f"AC {ac}")
+
+        # Layout lines
+        x0 = rect.x + 12
+        y  = rect.y + 36
+        line = lambda text: (screen.blit(self.font.render(text, True, (220,220,225)), (x0, y)), None) or setattr_nonlocal('y', y + 24)
+
+        # Helpers to increment y inside lambda
+        def setattr_nonlocal(attr, value):
+            nonlocal y
+            y = value
+
+        # Line 1: Name, #Number
+        line(f"Name: {name}    #{num:02d}")
+
+        # Line 2: Race, Origin, OVR, Potential
+        line(f"Race: {race}    Origin: {origin}    OVR: {ovr}    Potential: {pot}")
+
+        # Line 3: Class, HP, AC
+        line(f"Class: {cls}    HP: {hp}/{max_hp}    AC: {ac}")
+
+        # Line 4: Attributes in a row with numbers beneath
         y += 6
-        for k in ("STR","DEX","CON","INT","WIS","CHA"):
-            put(f"{k}:  {p.get(k)}")
+        labels = ("STR","DEX","CON","INT","WIS","CHA")
+        vals   = (STR, DEX, CON, INT, WIS, CHA)
+        col_w = (rect.w - 24) // 6
+        top_y = y
+        # labels
+        for i, lab in enumerate(labels):
+            lx = x0 + i*col_w + col_w//2
+            surf = self.small.render(lab, True, (210,210,215))
+            screen.blit(surf, (lx - surf.get_width()//2, top_y))
+        # numbers
+        y = top_y + 18
+        for i, v in enumerate(vals):
+            lx = x0 + i*col_w + col_w//2
+            surf = self.h2.render(str(v), True, (235,235,240))
+            screen.blit(surf, (lx - surf.get_width()//2, y))
+        y += 28
+
+        # Line 5: Armor and Weapon
+        line(f"Armor: {armor_name}    Weapon: {weapon_name}")
