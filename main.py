@@ -8,7 +8,8 @@ from ui.state_menu import MenuState
 def main():
     try:
         app = App(width=1024, height=576, title="D20 Fight Club")
-        app.push_state(MenuState())
+        # pass the app into MenuState (required)
+        app.push_state(MenuState(app))
         app.run()
     except Exception:
         # Minimal crash logging compatible with your saves/ folder
