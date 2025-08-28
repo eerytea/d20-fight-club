@@ -117,3 +117,25 @@ def as_event_dict(e: Any) -> Dict[str, Any]:
         if k in d:
             out[k] = d[k]
     return out
+    
+# ---- Safe override: tolerant team_name_from ----
+def _team_name_from_safe(career, tid: Any) -> str:
+    try:
+        if tid is None:
+            return "—"
+        tid_i = int(tid)
+    except Exception:
+        return str(tid)
+    for t in getattr(career, "teams", []):
+        try:
+            if int(t.get("tid", t.get("id", -999))) == tid_i:
+                return t.get("name", f"Team {tid_i}")
+        except Exception:
+            continue
+    tn = getattr(career, "team_names", None)
+    if isinstance(tn, dict) and tid_i in tn:
+        return str(tn[tid_i])
+    return f"Team {tid_i}"
+
+# install tolerant version
+team_name_from = _team_name_from_safe
