@@ -520,8 +520,7 @@ class TeamSelectState:
 
         p = self._selected_player()
         if not p:
-            txt = self.font.render("Select a player to see stats.", True, (190, 190, 195))
-            screen.blit(txt, (rect.x + 12, rect.y + 40))
+            # No placeholder text, per request—just an empty panel.
             return
 
         # Convenience getters (handle lower/UPPER keys)
@@ -542,21 +541,30 @@ class TeamSelectState:
         CON = int(G("con", G("CON", 10))); INT = int(G("int", G("INT", 10)))
         WIS = int(G("wis", G("WIS", 10))); CHA = int(G("cha", G("CHA", 10)))
 
+        # Weapon / Equipped Armor names (prefer explicit names; no AC fallback)
         weapon_name = "-"
         wpn = G("weapon", {})
         if isinstance(wpn, dict):
             weapon_name = wpn.get("name", "-")
-        armor_name = G("armor", f"AC {ac}")
+        elif isinstance(wpn, str):
+            weapon_name = wpn
+
+        equipped_armor = (
+            G("equipped_armor", None)
+            or (G("armor", {}).get("name") if isinstance(G("armor", None), dict) else (G("armor") if isinstance(G("armor", None), str) else None))
+            or G("armor_name", None)
+            or "-"
+        )
 
         # Layout lines
         x0 = rect.x + 12
         y  = rect.y + 36
-        line = lambda text: (screen.blit(self.font.render(text, True, (220,220,225)), (x0, y)), None) or setattr_nonlocal('y', y + 24)
 
-        # Helpers to increment y inside lambda
         def setattr_nonlocal(attr, value):
             nonlocal y
             y = value
+
+        line = lambda text: (screen.blit(self.font.render(text, True, (220,220,225)), (x0, y)), None) or setattr_nonlocal('y', y + 24)
 
         # Line 1: Name, #Number
         line(f"Name: {name}    #{num:02d}")
@@ -586,5 +594,5 @@ class TeamSelectState:
             screen.blit(surf, (lx - surf.get_width()//2, y))
         y += 28
 
-        # Line 5: Armor and Weapon
-        line(f"Armor: {armor_name}    Weapon: {weapon_name}")
+        # Line 5: Equipped Armor and Weapon
+        line(f"Equipped Armor: {equipped_armor}    Weapon: {weapon_name}")
