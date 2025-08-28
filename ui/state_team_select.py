@@ -61,21 +61,27 @@ def _rand_name(rng: random.Random) -> str:
     return f"{rng.choice(_TEAM_WORDS_A)} {rng.choice(_TEAM_WORDS_B)}"
 
 def _rand_color(rng: random.Random) -> Tuple[int, int, int]:
-    # muted but distinct
     return (rng.randint(60, 220), rng.randint(60, 220), rng.randint(60, 220))
 
 def _ovr(p: Dict[str, Any]) -> int:
-    # Simple derived overall; tweak later to match your class assigner
     STR = p.get("STR", 10); DEX = p.get("DEX", 10); CON = p.get("CON", 10)
     INT = p.get("INT", 8);  WIS = p.get("WIS", 8);  CHA = p.get("CHA", 8)
-    # Emphasize physical a bit
     score = (STR*0.35 + DEX*0.35 + CON*0.30 + (INT+WIS+CHA)*0.10)
     return int(round(score))
 
 def _make_player(pid: int, team_id: int, rng: random.Random) -> Dict[str, Any]:
-    # Jersey number from pid (1..99 loop)
+    FIRST = ["Arin","Bren","Cael","Dara","Eryn","Finn","Garr","Hale","Iona","Joss",
+             "Kade","Lira","Mara","Nico","Orin","Pax","Quin","Rhea","Sora","Ty",
+             "Una","Vale","Wren","Xan","Yara","Zed"]
+    LAST  = ["Blackwood","Stormborn","Ironhart","Quickstep","Nightbloom","Brightshield",
+             "Stone","Ashenvale","Dawnrider","Farsight","Rivensong","Graywolf",
+             "Thorn","Whitespear","Hawke","Mistral","Holloway","Kingsley","Rowan","Dusk"]
+
+    first = rng.choice(FIRST)
+    last  = rng.choice(LAST)
+    name  = f"{first} {last}"
+
     jersey = (pid % 99) + 1
-    # Attributes
     STR = rng.randint(8, 14)
     DEX = rng.randint(8, 14)
     CON = rng.randint(8, 14)
@@ -83,9 +89,11 @@ def _make_player(pid: int, team_id: int, rng: random.Random) -> Dict[str, Any]:
     WIS = rng.randint(7, 12)
     CHA = rng.randint(7, 12)
     hp = rng.randint(8, 12)
+
     p = {
         "pid": pid,
-        "name": f"#{jersey:02d}",
+        "num": jersey,
+        "name": name,
         "team_id": team_id,
         "hp": hp, "max_hp": hp, "ac": rng.randint(8, 12), "alive": True,
         "STR": STR, "DEX": DEX, "CON": CON, "INT": INT, "WIS": WIS, "CHA": CHA,
@@ -94,13 +102,11 @@ def _make_player(pid: int, team_id: int, rng: random.Random) -> Dict[str, Any]:
     return p
 
 def _make_league(country: str, level: int, rng: random.Random, team_size: int = 8) -> Dict[str, Any]:
-    # level 1 = top league, level 2 = bottom league
     name = f"{country} {'Premier' if level == 1 else 'Division'}"
     teams = []
     for i in range(20):
         tname = _rand_name(rng)
         color = _rand_color(rng)
-        # team_id will be remapped later to 0..19 for the selected league
         tid = i
         fighters = [_make_player(pid=j, team_id=tid, rng=rng) for j in range(team_size)]
         teams.append({"tid": tid, "name": tname, "color": color, "fighters": fighters})
@@ -110,7 +116,6 @@ def _build_world(seed: int) -> Dict[str, Any]:
     rng = random.Random(seed)
     world = {"countries": []}
     for cname in _COUNTRIES:
-        # independent rng per country for stability
         crng = random.Random((seed << 1) ^ hash(cname))
         leagues = [
             _make_league(cname, level=1, rng=crng),
@@ -134,27 +139,23 @@ class TeamSelectState:
         self.h1 = pygame.font.SysFont(None, 34)
         self.h2 = pygame.font.SysFont(None, 22)
 
-        # Panels (computed in enter)
         self.rect_countries: Optional[pygame.Rect] = None
         self.rect_league: Optional[pygame.Rect] = None
         self.rect_detail: Optional[pygame.Rect] = None
         self.rect_roster: Optional[pygame.Rect] = None
         self.rect_stats: Optional[pygame.Rect] = None
 
-        # Data
         self.seed = getattr(self.app, "world_seed", 7777)
         self.world = _build_world(self.seed)
-        # Persist selections in app for convenience
+
         self.country_idx = getattr(self.app, "last_country_idx", 0)
         self.league_level = getattr(self.app, "last_league_level", 1)  # 1 or 2
         self.team_idx: Optional[int] = None
         self.player_idx: Optional[int] = None
 
-        # Scroll state (pixels)
         self.scroll_teams = 0
         self.scroll_players = 0
 
-        # Buttons
         self.btns: List[Button] = []
         self.toggle_top: Optional[Button] = None
         self.toggle_bottom: Optional[Button] = None
@@ -166,7 +167,6 @@ class TeamSelectState:
     def _layout(self):
         w, h = self.app.screen.get_size()
         pad = 16
-        # left column: countries
         left_w = max(220, int(w * 0.22))
         mid_w = max(380, int(w * 0.34))
         right_w = w - (left_w + mid_w + pad*4)
@@ -175,11 +175,9 @@ class TeamSelectState:
         self.rect_league    = pygame.Rect(self.rect_countries.right + pad, 70, mid_w, h - 70 - pad)
         self.rect_detail    = pygame.Rect(self.rect_league.right + pad, 70, right_w, h - 70 - pad)
 
-        # right split: roster top, stats bottom
         self.rect_roster = pygame.Rect(self.rect_detail.x, self.rect_detail.y, self.rect_detail.w, int(self.rect_detail.h*0.60))
         self.rect_stats  = pygame.Rect(self.rect_detail.x, self.rect_roster.bottom + pad, self.rect_detail.w, self.rect_detail.bottom - (self.rect_roster.bottom + pad))
 
-        # bottom-right control buttons
         btn_w, btn_h = 160, 44
         by = self.rect_detail.bottom - btn_h - 10
         bx = self.rect_detail.right - btn_w - 10
@@ -188,7 +186,6 @@ class TeamSelectState:
             Button(pygame.Rect(bx - btn_w - 10, by, btn_w, btn_h), "Back", self._back),
         ]
 
-        # league toggle buttons at top of middle panel
         tg_w, tg_h = 140, 36
         tgy = self.rect_league.y + 12
         self.toggle_top = Button(pygame.Rect(self.rect_league.x + 12, tgy, tg_w, tg_h), "Top League", lambda: self._set_level(1))
@@ -222,12 +219,25 @@ class TeamSelectState:
         if 0 <= self.player_idx < len(fs): return fs[self.player_idx]
         return None
 
+    # ------------- Scroll helper -------------
+    def _clamp_scroll(self, current: int, delta: int, item_count: int, row_h: int, view_rect: Optional[pygame.Rect]) -> int:
+        """Up wheel (event.y>0) moves content down (toward 0)."""
+        if not view_rect:
+            return 0
+        content_h = item_count * row_h
+        max_neg = min(0, view_rect.h - content_h)
+        new_val = current + delta
+        if new_val > 0:
+            new_val = 0
+        if new_val < max_neg:
+            new_val = max_neg
+        return new_val
+
     # ------------- Actions -------------
     def _set_level(self, level: int):
         if level not in (1, 2): return
         self.league_level = level
         setattr(self.app, "last_league_level", level)
-        # keep previous team_idx if in range; else reset
         self.team_idx = None
         self.player_idx = None
         self.scroll_teams = 0
@@ -236,7 +246,6 @@ class TeamSelectState:
     def _select_country(self, idx: int):
         self.country_idx = idx % len(self._countries())
         setattr(self.app, "last_country_idx", self.country_idx)
-        # reset downstream selections
         self.team_idx = None
         self.player_idx = None
         self.scroll_teams = 0
@@ -261,11 +270,8 @@ class TeamSelectState:
         if SeasonHubState is None:
             return
 
-        # Build a Career for JUST the selected league (20 teams).
-        # We remap team IDs to 0..19 for compatibility with schedule/tests.
         league = self._league()
         teams_src = league["teams"]
-        # Remap tid → 0..19 and fix player team_id accordingly
         remapped = []
         for i, t in enumerate(teams_src):
             fighters = []
@@ -277,15 +283,12 @@ class TeamSelectState:
 
         user_tid = self.team_idx if self.team_idx is not None else 0
         if Career is not None:
-            # pass correct names so schedule shows proper team names
             names = [t["name"] for t in remapped]
             car = Career.new(seed=self.seed, n_teams=len(remapped), team_size=len(remapped[0]["fighters"]), user_team_id=user_tid, team_names=names)
-            # overwrite generated fighters with our world rosters
             for i, t in enumerate(remapped):
                 car.teams[i]["fighters"] = t["fighters"]
                 car.teams[i]["name"] = t["name"]
         else:
-            # tiny fallback
             car = type("MiniCareer", (), {})()
             car.teams = remapped
             car.week = 1; car.user_tid = user_tid
@@ -309,38 +312,44 @@ class TeamSelectState:
         if event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
             self._back(); return
 
-        # scroll
         if event.type == pygame.MOUSEWHEEL:
             mx, my = pygame.mouse.get_pos()
-            if self.rect_league and self.rect_league.collidepoint(mx, my):
-                self.scroll_teams = max(min(self.scroll_teams - event.y*24, 0), -500)
-            elif self.rect_roster and self.rect_roster.collidepoint(mx, my):
-                self.scroll_players = max(min(self.scroll_players - event.y*24, 0), -500)
+            step = 24
 
-        # buttons
+            if self.rect_league and self.rect_league.collidepoint(mx, my):
+                list_area = self.rect_league.inflate(-16, -74)
+                list_area.y = self.rect_league.y + 60
+                row_h = 34
+                n_items = len(self._teams())
+                self.scroll_teams = self._clamp_scroll(self.scroll_teams, event.y * step, n_items, row_h, list_area)
+
+            elif self.rect_roster and self.rect_roster.collidepoint(mx, my):
+                list_area = self.rect_roster.inflate(-16, -54)
+                list_area.y = self.rect_roster.y + 36
+                row_h = 28
+                team = self._selected_team()
+                n_items = len(team.get("fighters", [])) if team else 0
+                self.scroll_players = self._clamp_scroll(self.scroll_players, event.y * step, n_items, row_h, list_area)
+
         for b in self.btns:
             b.handle(event)
 
         if self.toggle_top: self.toggle_top.handle(event)
         if self.toggle_bottom: self.toggle_bottom.handle(event)
 
-        # clicks in lists
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             x, y = event.pos
 
-            # countries list
             if self.rect_countries and self.rect_countries.collidepoint(x, y):
-                inner = self.rect_countries.inflate(-16, -58)  # leave room for header
-                y0 = inner.y
+                inner = self.rect_countries.inflate(-16, -58)
+                inner.y = self.rect_countries.y + 48
                 row_h = 36
-                idx = (y - y0) // row_h
+                idx = (y - inner.y) // row_h
                 if 0 <= idx < len(self._countries()):
                     self._select_country(int(idx))
                 return
 
-            # team list
             if self.rect_league and self.rect_league.collidepoint(x, y):
-                # list area below toggle
                 list_area = self.rect_league.inflate(-16, -74)
                 list_area.y = self.rect_league.y + 60
                 row_h = 34
@@ -350,13 +359,13 @@ class TeamSelectState:
                     self._select_team(idx)
                 return
 
-            # player list
             if self.rect_roster and self.rect_roster.collidepoint(x, y):
                 list_area = self.rect_roster.inflate(-16, -54)
+                list_area.y = self.rect_roster.y + 36
                 row_h = 28
                 y_scroll = y - (list_area.y + self.scroll_players)
-                t = self._selected_team()
-                n = len(t.get("fighters", [])) if t else 0
+                team = self._selected_team()
+                n = len(team.get("fighters", [])) if team else 0
                 idx = int(y_scroll // row_h)
                 if 0 <= idx < n:
                     self._select_player(idx)
@@ -369,26 +378,20 @@ class TeamSelectState:
         w, h = screen.get_size()
         screen.fill((16, 16, 20))
 
-        # Titles
         title = self.h1.render("Choose Your Team", True, (235, 235, 240))
         screen.blit(title, (16, 20))
 
-        # Countries panel
         self._draw_panel(screen, self.rect_countries, "Countries")
         self._draw_countries(screen)
 
-        # League panel (middle)
         self._draw_panel(screen, self.rect_league, f"{self._country()['name']} League")
         self._draw_league_toggle(screen)
         self._draw_team_list(screen)
 
-        # Detail panel (right)
         self._draw_panel(screen, self.rect_detail, "Roster & Player")
         self._draw_roster(screen)
         self._draw_player_stats(screen)
 
-        # Buttons
-        # Disable Start until a team is selected
         for b in self.btns:
             if b.text.startswith("Start"):
                 b.disabled = (self.team_idx is None)
@@ -413,7 +416,6 @@ class TeamSelectState:
             Button(r, c["name"], lambda: None).draw(screen, self.font, selected=selected)
 
     def _draw_league_toggle(self, screen: pygame.Surface):
-        # buttons already positioned in layout
         if self.toggle_top:
             self.toggle_top.draw(screen, self.font, selected=(self.league_level == 1))
         if self.toggle_bottom:
@@ -427,7 +429,6 @@ class TeamSelectState:
         row_h = 34
         teams = self._teams()
 
-        # clip
         prev = screen.get_clip()
         screen.set_clip(list_area)
 
@@ -443,7 +444,6 @@ class TeamSelectState:
     def _draw_roster(self, screen: pygame.Surface):
         rect = self.rect_roster
         if not rect: return
-        # header
         head = self.h2.render("Players", True, (210, 210, 215))
         screen.blit(head, (rect.x + 12, rect.y + 8))
 
@@ -461,7 +461,9 @@ class TeamSelectState:
         for i, p in enumerate(fighters):
             r = pygame.Rect(list_area.x, y0 + i*row_h, list_area.w, row_h - 4)
             selected = (self.player_idx == i)
-            label = f"{p.get('name','P'):<5}  OVR {p.get('OVR', _ovr(p))}"
+            ovr = p.get('OVR', _ovr(p))
+            num = p.get('num', 0)
+            label = f"#{num:02d}  {p.get('name','Player')}   OVR {ovr}"
             Button(r, label, lambda: None).draw(screen, self.font, selected=selected)
 
         screen.set_clip(prev)
@@ -478,19 +480,16 @@ class TeamSelectState:
             screen.blit(txt, (rect.x + 12, rect.y + 40))
             return
 
-        # Basic grid
         y = rect.y + 36
-        line = lambda k, v: screen.blit(self.font.render(f"{k}: {v}", True, (220, 220, 225)), (rect.x + 12, vline()))
-        def vline():
+        def put(line: str):
             nonlocal y
-            py = y
+            screen.blit(self.font.render(line, True, (220,220,225)), (rect.x + 12, y))
             y += 24
-            return py
 
         ovr = p.get("OVR", _ovr(p))
-        screen.blit(self.font.render(f"Name: {p.get('name')}", True, (220,220,225)), (rect.x + 12, vline()))
-        screen.blit(self.font.render(f"OVR: {ovr}", True, (220,220,225)), (rect.x + 12, vline()))
-        screen.blit(self.font.render(f"HP: {p.get('hp')}/{p.get('max_hp')}", True, (220,220,225)), (rect.x + 12, vline()))
+        put(f"Name: #{p.get('num',0):02d}  {p.get('name')}")
+        put(f"OVR: {ovr}")
+        put(f"HP:  {p.get('hp')}/{p.get('max_hp')}")
         y += 6
         for k in ("STR","DEX","CON","INT","WIS","CHA"):
-            screen.blit(self.font.render(f"{k}: {p.get(k)}", True, (220,220,225)), (rect.x + 12, vline()))
+            put(f"{k}:  {p.get(k)}")
