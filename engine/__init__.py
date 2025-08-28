@@ -2,7 +2,7 @@
 """
 Public API for the engine package.
 
-Tests expect these names to be importable *from engine*:
+Tests expect these names to be importable from `engine`:
 - TBCombat
 - Team, Fighter, Weapon, fighter_from_dict
 - layout_teams_tiles
@@ -10,7 +10,7 @@ Tests expect these names to be importable *from engine*:
 
 from __future__ import annotations
 
-# Re-export core classes & helpers
+# Explicit, eager re-exports (simple and robust)
 from .tbcombat import TBCombat
 from .model import Team, Fighter, Weapon, fighter_from_dict
 from .grid import layout_teams_tiles
