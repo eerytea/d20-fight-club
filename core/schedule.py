@@ -1,88 +1,115 @@
 # core/schedule.py
 from __future__ import annotations
-from typing import List, Dict, Tuple, Iterable, Optional
-import random
+from typing import List, Dict, Optional
 import hashlib
+import random
 
 def _stable_id(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:12]
 
 def build_double_round_robin(team_ids: List[int], rounds: int = 2, shuffle_seed: Optional[int] = None) -> List[Dict]:
     """
-    Circle method, home/away balanced across two rounds.
-    Returns a list of fixtures: { 'id', 'week', 'home_id', 'away_id' }.
-    """
-    assert len(team_ids) >= 2, "Need at least two teams"
-    n = len(team_ids)
+    Build a round-robin schedule using the circle method.
+    Returns a flat list of fixtures with 0-based weeks and home/away balanced across rounds.
 
-    # If odd, add a BYE (-1); we won't emit fixtures for byes.
-    ids = team_ids[:]
-    bye_id = None
+    Each fixture dict has:
+      - id: str
+      - week: int (0-based)
+      - home_id: int
+      - away_id: int
+    """
+    ids = list(map(int, team_ids))
+    assert len(ids) >= 2, "Need at least two teams"
+
+    n = len(ids)
+    # If odd, add a bye (-1) which we drop later
+    bye = None
     if n % 2 == 1:
-        bye_id = -1
-        ids.append(bye_id)
+        bye = -1
+        ids.append(bye)
         n += 1
 
-    # Optionally stabilize starting order for cosmetic variety
+    fixed = ids[0]
+    rot = ids[1:]
+
     if shuffle_seed is not None:
-        rnd = random.Random(shuffle_seed)
-        rnd.shuffle(ids)
+        rng = random.Random(int(shuffle_seed))
+        rng.shuffle(rot)
 
-    half = n // 2
-    weeks_one_round: List[List[Tuple[int, int]]] = []
+    weeks = []
+    # One full round (n-1 weeks)
+    for w in range(n - 1):
+        week_pairs = []
+        left = [fixed] + rot[: (n // 2) - 1]
+        right = list(reversed(rot[(n // 2) - 1 :]))
+        pairs = list(zip(left, right))
+        week_pairs.extend(pairs)
 
-    # Circle algorithm: fix first, rotate the rest
-    arr = ids[:]
-    for _ in range(n - 1):
-        left = arr[:half]
-        right = list(reversed(arr[half:]))
-        pairings = list(zip(left, right))
-        weeks_one_round.append(pairings)
-
-        # rotate (keep arr[0] fixed)
-        arr = [arr[0]] + [arr[-1]] + arr[1:-1]
+        # rotate
+        rot = [rot[-1]] + rot[:-1]
+        weeks.append(week_pairs)
 
     fixtures: List[Dict] = []
-    week = 0
-
-    # Round 1: pairings as drawn (assign home/away alternating for balance)
-    for pairings in weeks_one_round:
-        for i, (a, b) in enumerate(pairings):
-            if bye_id in (a, b):
-                continue
-            # lightly balance home/away across the round
-            home, away = (a, b) if (i % 2 == 0) else (b, a)
-            fid = _stable_id(f"R1-W{week}-H{home}-A{away}")
-            fixtures.append({"id": fid, "week": week, "home_id": home, "away_id": away})
-        week += 1
-
-    # Round 2: swap home/away for the mirror
-    for pairings in weeks_one_round:
-        for i, (a, b) in enumerate(pairings):
-            if bye_id in (a, b):
-                continue
-            home, away = (b, a) if (i % 2 == 0) else (a, b)
-            fid = _stable_id(f"R2-W{week}-H{home}-A{away}")
-            fixtures.append({"id": fid, "week": week, "home_id": home, "away_id": away})
-        week += 1
-
-    # If rounds != 2, replicate pattern appropriately (always alternate home/away per mirror)
-    if rounds not in (1, 2):
-        base = fixtures[:]
-        fixtures = []
-        for r in range(rounds):
-            for fx in base:
+    # two rounds: swap home/away on alternate rounds for balance
+    for r in range(int(rounds)):
+        for w, pairs in enumerate(weeks):
+            for a, b in pairs:
+                if a == bye or b == bye:
+                    continue
+                # Alternate home/away across rounds
                 if r % 2 == 0:
-                    home, away = fx["home_id"], fx["away_id"]
+                    home, away = a, b
                 else:
-                    home, away = fx["away_id"], fx["home_id"]
-                fixtures.append({
-                    "id": _stable_id(f"R{r+1}-W{fx['week']}-H{home}-A{away}"),
-                    "week": fx["week"] + (r * (n - 1)),
-                    "home_id": home,
-                    "away_id": away,
-                })
+                    home, away = b, a
+                fixtures.append(
+                    {
+                        "id": _stable_id(f"R{r+1}-W{w}-H{home}-A{away}"),
+                        "week": w + r * (len(weeks)),
+                        "home_id": int(home),
+                        "away_id": int(away),
+                    }
+                )
 
-    # Sort by week then home id for determinism
+    # Sort deterministically
     fixtures.sort(key=lambda f: (f["week"], f["home_id"], f["away_id"]))
     return fixtures
+
+def fixtures_double_round_robin(
+    n_teams: int,
+    start_week: int = 1,
+    comp_kind: str = "league",
+    shuffle_seed: Optional[int] = None,
+) -> List[List[Dict]]:
+    """
+    Public helper expected by tests and other modules.
+
+    Returns a list of weeks, where each week is a list of fixture dicts with keys:
+      - week (1-based, starting at start_week)
+      - home_id, away_id
+      - played (False)
+      - k_home, k_away (0)
+      - winner (None)
+      - comp_kind (str)
+    """
+    team_ids = list(range(int(n_teams)))
+    flat = build_double_round_robin(team_ids, rounds=2, shuffle_seed=shuffle_seed)
+
+    # Bucket by week (0-based -> 1-based with start offset)
+    max_w = max((fx["week"] for fx in flat), default=-1)
+    weeks: List[List[Dict]] = [[] for _ in range(max_w + 1)]
+    for fx in flat:
+        w0 = int(fx["week"])
+        weeks[w0].append(
+            {
+                "id": fx["id"],
+                "week": start_week + w0,
+                "home_id": int(fx["home_id"]),
+                "away_id": int(fx["away_id"]),
+                "played": False,
+                "k_home": 0,
+                "k_away": 0,
+                "winner": None,
+                "comp_kind": comp_kind,
+            }
+        )
+    return weeks
