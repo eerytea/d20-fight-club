@@ -469,3 +469,131 @@ else:
         Career.table_rows_sorted = _safe_table_rows_sorted  # type: ignore[attr-defined]
     else:
         Career.table_rows_sorted = _safe_table_rows_sorted  # type: ignore[attr-defined]
+
+# ---- Append-only backcompat helpers (paste at end of core/career.py) ----
+from typing import Any as _Any, Dict as _Dict, List as _List
+
+try:
+    from core import standings as _ST
+except Exception:
+    _ST = None  # type: ignore
+
+class _DotDict(dict):
+    __getattr__ = dict.get
+    def __setattr__(self, k, v): self[k] = v
+
+def _wrap_fixtures_like_objects(obj):
+    try:
+        if isinstance(getattr(obj, "fixtures_by_week", None), list):
+            new_wk: _List[_List[_DotDict]] = []
+            for wk in getattr(obj, "fixtures_by_week"):
+                if isinstance(wk, list):
+                    new_wk.append([_DotDict(dict(fx)) if not isinstance(fx, _DotDict) else fx for fx in wk])
+            obj.fixtures_by_week = new_wk  # type: ignore
+        if isinstance(getattr(obj, "fixtures", None), list):
+            obj.fixtures = [_DotDict(dict(fx)) if not isinstance(fx, _DotDict) else fx for fx in obj.fixtures]  # type: ignore
+    except Exception:
+        pass
+
+def _recompute_standings_safe(self):
+    if _ST is None:
+        try:
+            ids = [int(t.get("tid", t.get("id"))) for t in self.teams]
+        except Exception:
+            ids = list(range(len(getattr(self, "teams", []))))
+        names = {tid: (t.get("name", f"Team {tid}")) for tid, t in zip(ids, self.teams)}
+        table = {tid: {"tid": tid, "name": names.get(tid, f"Team {tid}"), "PTS": 0, "GF": 0, "GA": 0, "GD": 0, "P": 0, "W": 0, "D": 0, "L": 0} for tid in ids}
+        for fx in getattr(self, "fixtures", []):
+            fx = dict(fx)
+            if not fx.get("played"):
+                continue
+            h = int(fx.get("home_id", fx.get("home_tid", fx.get("A", 0))))
+            a = int(fx.get("away_id", fx.get("away_tid", fx.get("B", 1))))
+            kh = int(fx.get("k_home", fx.get("K_home", fx.get("kh", 0))))
+            ka = int(fx.get("k_away", fx.get("K_away", fx.get("ka", 0))))
+            table[h]["P"] += 1; table[a]["P"] += 1
+            table[h]["GF"] += kh; table[a]["GF"] += ka
+            table[h]["GA"] += ka; table[a]["GA"] += kh
+            table[h]["GD"] = table[h]["GF"] - table[h]["GA"]
+            table[a]["GD"] = table[a]["GF"] - table[a]["GA"]
+            if kh > ka:
+                table[h]["W"] += 1; table[a]["L"] += 1; table[h]["PTS"] += 3
+            elif ka > kh:
+                table[a]["W"] += 1; table[h]["L"] += 1; table[a]["PTS"] += 3
+            else:
+                table[h]["D"] += 1; table[a]["D"] += 1; table[h]["PTS"] += 1; table[a]["PTS"] += 1
+        rows = list(table.values())
+        rows.sort(key=lambda r: (r["PTS"], r["GD"], r["GF"]), reverse=True)
+        out = []
+        for r in rows:
+            rr = dict(r); rr["K"] = rr.get("GF", 0); rr["KD"] = rr.get("GD", 0)
+            out.append(rr)
+        self.standings = {row["tid"]: row for row in out}
+        return
+
+    try:
+        ids = [int(t.get("tid", t.get("id"))) for t in self.teams]
+        names = {int(t.get("tid", t.get("id"))): t.get("name", f"Team {i}") for i, t in enumerate(self.teams)}
+        table, h2h = _ST.new_table(ids, names)
+        for fx in getattr(self, "fixtures", []):
+            if not fx.get("played"):
+                continue
+            h = int(fx.get("home_id", fx.get("home_tid", fx.get("A", 0))))
+            a = int(fx.get("away_id", fx.get("away_tid", fx.get("B", 1))))
+            kh = int(fx.get("k_home", fx.get("K_home", fx.get("kh", 0))))
+            ka = int(fx.get("k_away", fx.get("K_away", fx.get("ka", 0))))
+            _ST.apply_result(table, h2h, h, a, kh, ka)
+        rows = _ST.table_rows_sorted(table, h2h)
+        for r in rows:
+            r["K"] = int(r.get("GF", r.get("goals_for", 0)))
+            r["KD"] = int(r.get("GD", r.get("goals_for", 0) - r.get("goals_against", 0)))
+        self.standings = {row["tid"]: row for row in rows}
+    except Exception:
+        self.standings = {}
+
+def _table_rows_sorted_safe(self) -> _List[_Dict[str, _Any]]:
+    rows = list(getattr(self, "standings", {}).values())
+    if not rows:
+        try:
+            _recompute_standings_safe(self)
+            rows = list(getattr(self, "standings", {}).values())
+        except Exception:
+            rows = []
+    rows.sort(key=lambda r: (int(r.get("PTS", 0)), int(r.get("KD", 0)), int(r.get("K", 0))), reverse=True)
+    return rows
+
+try:
+    Career  # type: ignore[name-defined]
+except Exception:
+    pass
+else:
+    Career._recompute_standings = _recompute_standings_safe  # type: ignore[attr-defined]
+    Career.table_rows_sorted = _table_rows_sorted_safe        # type: ignore[attr-defined]
+
+    _orig_new = Career.new  # type: ignore[attr-defined]
+    @classmethod
+    def _patched_new(cls, *a, **k):
+        obj = _orig_new.__func__(cls, *a, **k)  # type: ignore
+        try:
+            _wrap_fixtures_like_objects(obj)
+            obj._recompute_standings()
+        except Exception:
+            pass
+        return obj
+    Career.new = classmethod(_patched_new)  # type: ignore[attr-defined]
+
+    _orig_from = Career.from_dict  # type: ignore[attr-defined]
+    @classmethod
+    def _patched_from_dict(cls, d):
+        obj = _orig_from.__func__(cls, d)  # type: ignore
+        try:
+            _wrap_fixtures_like_objects(obj)
+            if not isinstance(getattr(obj, "staff", None), dict):
+                obj.staff = {"by_club": {}, "training_focus": {}}  # type: ignore
+            elif "by_club" not in obj.staff:
+                obj.staff["by_club"] = {}  # type: ignore
+            obj._recompute_standings()
+        except Exception:
+            pass
+        return obj
+    Career.from_dict = classmethod(_patched_from_dict)  # type: ignore[attr-defined]
