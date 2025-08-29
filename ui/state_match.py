@@ -25,7 +25,8 @@ GRID_ROWS = 11
 PAD = 16
 HEADER_H = 48
 FOOTER_H = 60
-LOG_MIN_W = 360
+LOG_MIN_W = 260         # smaller log
+LOG_RATIO = 0.28        # ~28% of screen width for the log pane
 
 BG = (16, 16, 20)
 CARD = (42, 44, 52)
@@ -159,7 +160,7 @@ def _short_name(name: str) -> str:
     parts = [p for p in name.split() if p]
     if not parts: return "?"
     if len(parts) == 1:
-        return parts[0][:1] + "."
+        return parts[0][:1].upper() + "."
     return f"{parts[0][0].upper()}. {parts[-1].title()}"
 
 # ----------------- Match State -----------------
@@ -249,7 +250,11 @@ class MatchState:
 
     def _layout(self):
         w, h = self.app.screen.get_size()
-        avail_w = w - PAD*3 - LOG_MIN_W
+
+        # compute log width first (fixed percentage with a minimum)
+        log_w = max(LOG_MIN_W, int(w * LOG_RATIO))
+        # board gets the rest
+        avail_w = w - PAD*3 - log_w
         avail_h = h - PAD*3 - HEADER_H - FOOTER_H
         self.tile = max(30, min(avail_w // GRID_COLS, avail_h // GRID_ROWS))
         board_w = GRID_COLS * self.tile
@@ -258,15 +263,8 @@ class MatchState:
         self.rect_header = pygame.Rect(PAD, PAD, w - PAD*2, HEADER_H)
         by = self.rect_header.bottom + PAD
         self.rect_board = pygame.Rect(PAD + 4, by, board_w, board_h)
-        self.rect_log   = pygame.Rect(self.rect_board.right + PAD, by, w - (self.rect_board.right + PAD*2), board_h)
-        if self.rect_log.w < LOG_MIN_W:
-            avail_w = w - PAD*3 - LOG_MIN_W
-            self.tile = max(28, min(avail_w // GRID_COLS, avail_h // GRID_ROWS))
-            board_w = GRID_COLS * self.tile
-            board_h = GRID_ROWS * self.tile
-            self.rect_board.size = (board_w, board_h)
-            self.rect_log.x = self.rect_board.right + PAD
-            self.rect_log.w = LOG_MIN_W
+        # place log at right with fixed width
+        self.rect_log   = pygame.Rect(w - PAD - log_w, by, log_w, board_h)
 
         self.rect_footer = pygame.Rect(PAD, self.rect_board.bottom + PAD, w - PAD*2, FOOTER_H)
 
@@ -452,8 +450,8 @@ class MatchState:
                 cx, cy = _get_coord(f, 0)
                 rect = pygame.Rect(self.rect_board.x + cx*self.tile, self.rect_board.y + cy*self.tile, self.tile, self.tile)
                 # dot
-                r = int(min(rect.w, rect.h) * 0.32)
-                center = (rect.centerx, rect.centery - int(self.tile*0.08))  # slight lift to make room for HP bar
+                r = int(min(rect.w, rect.h) * 0.34)
+                center = (rect.centerx, rect.centery - int(self.tile*0.08))  # lift to make room for HP bar
                 col = HOME_COL if getattr(f, "team_id", 0) == 0 else AWAY_COL
                 pygame.draw.circle(screen, col, center, r)
                 pygame.draw.circle(screen, DOT_OUTLINE, center, r, 2)
@@ -471,7 +469,6 @@ class MatchState:
 
                 # Short name scaled to fit bar width
                 name_raw = getattr(f, "name", "") or ""
-                # Try first/last attributes if provided
                 first = getattr(f, "first", getattr(f, "first_name", None)) or ""
                 last  = getattr(f, "last", getattr(f, "last_name", None)) or ""
                 if first or last:
@@ -480,7 +477,6 @@ class MatchState:
                 # binary search a font size that fits the bar width
                 target_w = bar_w - 6
                 min_s, max_s = 10, max(12, int(self.tile * 0.35))
-                size = max_s
                 best_surf = None
                 while min_s <= max_s:
                     mid = (min_s + max_s) // 2
@@ -491,7 +487,6 @@ class MatchState:
                     if srf.get_width() <= target_w:
                         best_surf = srf
                         min_s = mid + 1
-                        size = mid
                     else:
                         max_s = mid - 1
                 if best_surf is None:
@@ -545,14 +540,67 @@ class MatchState:
             self.log_scroll = max(0, content_h - inner_h)
 
     def _event_kind(self, e) -> str:
-        if hasattr(e, "kind"): return getattr(e, "kind")
-        if isinstance(e, dict): return str(e.get("kind", e.get("t", "event")))
+        if hasattr(e, "kind"): return str(getattr(e, "kind"))
+        if isinstance(e, dict): return str(e.get("type", e.get("kind", e.get("t", "event"))))
         return e.__class__.__name__
 
     def _event_payload(self, e) -> Dict[str, Any]:
         if hasattr(e, "payload"): return dict(getattr(e, "payload"))
         if isinstance(e, dict): return dict(e)
         return {"text": repr(e)}
+
+    def _pretty_name(self, raw: str) -> str:
+        return (raw or "").replace("_", " ").strip()
+
+    def _format_event_line(self, k: str, p: Dict[str, Any]) -> Optional[str]:
+        # Normalize common fields
+        name   = self._pretty_name(str(p.get("name", p.get("actor", ""))))
+        target = self._pretty_name(str(p.get("target", p.get("defender", ""))))
+        to     = p.get("to")
+        at     = p.get("at")
+        dmg    = p.get("dmg", p.get("amount"))
+
+        # Legacy/simple kinds
+        if k == "round":
+            return f"— Round {p.get('round','?')} —"
+        if k == "move":
+            return f"{name} moved to {tuple(to) if isinstance(to, (list,tuple)) else to}"
+        if k == "blocked":
+            return f"{name} blocked at {tuple(at) if isinstance(at, (list,tuple)) else at}"
+        if k == "miss":
+            return f"{name} missed {target}"
+        if k == "hit":
+            return f"{name} hit {target} ({int(dmg)} dmg)" if dmg is not None else f"{name} hit {target}"
+        if k == "down":
+            return f"{name} is down"
+
+        # Engine object events
+        if k == "round_start":
+            return f"— Round {p.get('round','?')} —"
+        if k == "turn_start":
+            return f"{name}'s turn"
+        if k == "move_step":
+            return f"{name} moved to {tuple(p.get('to',(0,0)))}"
+        if k == "attack":
+            nat = p.get("nat", p.get("roll", 0)); ac = p.get("target_ac", p.get("ac", 0))
+            crit = bool(p.get("critical", False)); hit = bool(p.get("hit", p.get("success", False)))
+            if hit:
+                base = f"{name} hit {target}"
+                if crit: base += " (CRIT)"
+                return base
+            else:
+                return f"{name} missed {target}"
+        if k == "damage":
+            return f"{target or p.get('defender','?')} takes {int(p.get('amount',0))} dmg"
+        if k == "round_end":
+            return f"— End Round {p.get('round','?')} —"
+        if k == "end":
+            w = p.get("winner")
+            if w == 0 or w == "home": return "Match ends — Winner: home"
+            if w == 1 or w == "away": return "Match ends — Winner: away"
+            return "Match ends"
+
+        return None
 
     def _flush_events_to_log(self):
         if not self.combat: return
@@ -565,40 +613,19 @@ class MatchState:
                 self._push_log(e); continue
             k = self._event_kind(e)
             p = self._event_payload(e)
-
-            # Known event kinds
-            if k == "init":          self._push_log(f"Init {p.get('name','?')} = {p.get('init','?')}")
-            elif k == "round_start": self._push_log(f"— Round {p.get('round','?')} —")
-            elif k == "turn_start":  self._push_log(f"{p.get('actor','?')}'s turn")
-            elif k == "move_step":   self._push_log(f"  moves to {p.get('to',(0,0))}")
-            elif k == "attack":
-                nat = p.get("nat", p.get("roll", 0)); ac = p.get("target_ac", p.get("ac", 0))
-                crit = bool(p.get("critical", False)); hit = bool(p.get("hit", p.get("success", False)))
-                line = f"  attacks {p.get('defender','?')} (d20={nat} vs AC {ac})"
-                if crit: line += " — CRIT!"
-                if not hit: line += " — MISS"
-                self._push_log(line)
-            elif k == "damage":
-                self._push_log(f"    → {p.get('defender','?')} takes {p.get('amount',0)} (HP {p.get('hp_after',0)})")
-            elif k == "down":        self._push_log(f"    ✖ {p.get('name','?')} is down")
-            elif k == "round_end":   self._push_log(f"— End Round {p.get('round','?')} —")
-            elif k == "end":
-                w = p.get("winner"); r = p.get("reason","")
-                if w is not None: self._push_log(f"Match ends — Winner: {w} ({r})")
-                else:             self._push_log(f"Match ends — {r}")
-            else:
+            line = self._format_event_line(k, p)
+            if line is None:
                 # Fallback generic line
-                self._push_log(str(p.get("text", f"{k}: {p}")))
+                line = str(p.get("text", f"{k}: {p}"))
+            self._push_log(line)
         self._event_idx = len(evs)
 
     def _step_one_turn(self):
         try:
             before = len(self.combat.events)
             self.combat.take_turn()
-            # Flush freshly appended events
             if len(self.combat.events) > before:
                 self._flush_events_to_log()
-            # Safety finish if needed
             self._safety_end_check()
         except Exception:
             traceback.print_exc()
@@ -616,6 +643,5 @@ class MatchState:
             self.combat.winner = 0
             self._push_log("Match ends — Winner: home (all away down)")
         elif not alive0 and not alive1:
-            # edge case: both wiped
             self.combat.winner = None
             self._push_log("Match ends — Double KO")
