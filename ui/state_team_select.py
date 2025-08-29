@@ -47,7 +47,8 @@ class Button:
         if event.type == pygame.MOUSEMOTION:
             self.hover = self.rect.collidepoint(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.rect.collidepoint(event.pos): self.action()
+            if self.rect.collidepoint(event.pos):
+                self.action()
 
 # ---- World names/colors ----
 _COUNTRIES = ["Albion","Valoria","Karthos","Eldoria","Norska","Zafira","Solheim","Drakken"]
@@ -76,13 +77,10 @@ class TeamSelectState:
         self.rect_roster: Optional[pygame.Rect] = None
         self.rect_stats: Optional[pygame.Rect] = None
 
-        self.seed = getattr(self.app, "world_seed", 7777)
-        self.world = self._build_world(self.seed)
-
-        self.country_idx = getattr(self.app, "last_country_idx", 0)
-        self.league_level = getattr(self.app, "last_league_level", 1)  # 1 or 2
-        self.team_idx: Optional[int] = None
-        self.player_idx: Optional[int] = None
+        self.level = 0  # 0=Top, 1=Bottom divisions
+        self.country_idx: Optional[int] = 0
+        self.team_idx: Optional[int] = 0
+        self.player_idx: int = 0
 
         self.scroll_teams   = 0
         self.scroll_players = 0
@@ -93,174 +91,108 @@ class TeamSelectState:
         self.toggle_top: Optional[Button] = None
         self.toggle_bottom: Optional[Button] = None
 
+        # world
+        self.seed = 1337
+        self.world = self._build_world(self.seed)
+
     # ---- world build ----
     def _build_world(self, seed: int) -> Dict[str, Any]:
         rng = random.Random(seed)
         world = {"countries": []}
         for cname in _COUNTRIES:
-            crng = random.Random((seed << 1) ^ hash(cname))
-            leagues = [self._make_league(cname, 1, crng), self._make_league(cname, 2, crng)]
+            leagues = []
+            for li, lname in enumerate(["Top Division", "Second Division"]):
+                teams = []
+                for i in range(20):
+                    tid = i
+                    color = _rand_color(rng)
+                    name = _rand_name(rng)
+                    fighters = [self._new_fighter(tid, (j % 99)+1, cname, rng) for j in range(12)]
+                    teams.append({"tid": tid, "name": name, "color": color, "fighters": fighters})
+                leagues.append({"name": lname if li==0 else 'Division', "teams": teams})
             world["countries"].append({"name": cname, "leagues": leagues})
         return world
 
-    def _new_fighter(self, team_tid: int, jersey: int, country: str, rng: random.Random) -> Dict[str, Any]:
-        if generate_fighter is not None:
-            f = generate_fighter(level=1, rng=rng, town=country, neg_trait_prob=0.15)
-            f["team_id"] = team_tid; f["pid"] = jersey - 1; f["num"] = jersey
-            f["max_hp"] = f.get("max_hp", f.get("hp", 10)); f["alive"] = True
-            f["origin"] = country
-            return f
-        # fallback minimal
-        first = ["Arin","Bren","Cael","Dara","Eryn","Finn","Garr","Hale","Iona","Joss","Kade","Lira","Mara","Nico","Orin","Pax","Quin","Rhea","Sora","Ty","Una","Vale","Wren","Xan","Yara","Zed"]
-        last  = ["Blackwood","Stormborn","Ironhart","Quickstep","Nightbloom","Brightshield","Stone","Ashenvale","Dawnrider","Farsight","Rivensong","Graywolf","Thorn","Whitespear","Hawke","Mistral","Holloway","Kingsley","Rowan","Dusk"]
-        name = f"{rng.choice(first)} {rng.choice(last)}"
-        hp = rng.randint(8, 12)
-        return {"pid":jersey-1,"num":jersey,"name":name,"team_id":team_tid,"hp":hp,"max_hp":hp,"ac":rng.randint(8,12),"alive":True,
-                "str":rng.randint(8,14),"dex":rng.randint(8,14),"con":rng.randint(8,14),"int":rng.randint(7,12),"wis":rng.randint(7,12),"cha":rng.randint(7,12),
-                "OVR":rng.randint(50,80),"origin":country}
+    def _new_fighter(self, tid: int, num: int, country: str, rng: random.Random) -> Dict[str, Any]:
+        if generate_fighter:
+            p = generate_fighter(seed=rng.randint(0, 10_000_000))
+            p["num"] = p.get("num", num)
+            p["team_id"] = tid
+            p["origin"] = p.get("origin", country)
+            p["OVR"] = p.get("OVR", p.get("ovr", 60))
+            return p
+        # fallback simple generator
+        name = f"F{tid}-{num:02d}"
+        STR = 10 + rng.randint(-1, 3)
+        DEX = 10 + rng.randint(-1, 3)
+        CON = 10 + rng.randint(-1, 3)
+        INT = 8 + rng.randint(0, 2)
+        WIS = 8 + rng.randint(0, 2)
+        CHA = 8 + rng.randint(0, 2)
+        ovr = int(0.6*STR + 0.7*DEX + 0.6*CON + 0.3*CHA + 4)
+        return {
+            "pid": int(f"{tid}{num:02d}"),
+            "name": name,
+            "num": num,
+            "race": "Human",
+            "origin": country,
+            "class": "Fighter",
+            "hp": 10, "max_hp": 10, "ac": 12,
+            "STR": STR, "DEX": DEX, "CON": CON, "INT": INT, "WIS": WIS, "CHA": CHA,
+            "OVR": ovr, "potential": ovr + rng.randint(3, 15),
+            "weapon": {"name": "Sword"},
+            "equipped_armor": "Leather",
+            "team_id": tid,
+        }
 
-    def _make_league(self, country: str, level: int, rng: random.Random, team_size: int = 8) -> Dict[str, Any]:
-        name = f"{country} {'Premier' if level == 1 else 'Division'}"
-        teams = []
-        for i in range(20):
-            tname = f"{country} {_rand_name(rng)}"; color = _rand_color(rng); tid = i
-            fighters = [self._new_fighter(tid, (j % 99)+1, country, rng) for j in range(team_size)]
-            teams.append({"tid": tid, "name": tname, "color": color, "fighters": fighters})
-        return {"name": name, "level": level, "teams": teams}
-
-    # ---- lifecycle/layout ----
-    def enter(self): self._layout()
-
-    def _layout(self):
+    # ---- life-cycle ----
+    def enter(self):
         w, h = self.app.screen.get_size()
-        pad = 16
-        left_w = max(220, int(w * 0.22))
-        mid_w  = max(380, int(w * 0.34))
-        right_w = w - (left_w + mid_w + pad*4)
+        pad = 12
+        col_w = (w - 2*pad) // 3
+        col_h = h - 2*pad - 76
 
-        self.rect_countries = pygame.Rect(pad, 70, left_w, h - 70 - pad)
-        self.rect_league    = pygame.Rect(self.rect_countries.right + pad, 70, mid_w, h - 70 - pad)
-        self.rect_detail    = pygame.Rect(self.rect_league.right + pad, 70, right_w, h - 70 - pad)
+        self.rect_countries = pygame.Rect(pad, 76 + pad, col_w - pad, col_h)
+        self.rect_league    = pygame.Rect(pad + col_w, 76 + pad, col_w - pad, col_h)
+        self.rect_detail    = pygame.Rect(pad + 2*col_w, 76 + pad, col_w - pad, col_h)
 
-        # top/bottom panes in the right column
-        self.rect_roster = pygame.Rect(self.rect_detail.x, self.rect_detail.y, self.rect_detail.w, int(self.rect_detail.h * 0.55))
-        self.rect_stats  = pygame.Rect(self.rect_detail.x, self.rect_roster.bottom + pad, self.rect_detail.w, self.rect_detail.bottom - (self.rect_roster.bottom + pad))
+        # detail splits
+        dpad = 10
+        self.rect_roster    = pygame.Rect(self.rect_detail.x + dpad, self.rect_detail.y + dpad,
+                                          self.rect_detail.w - 2*dpad, max(160, (self.rect_detail.h - 3*dpad)//2))
+        self.rect_stats     = pygame.Rect(self.rect_detail.x + dpad, self.rect_roster.bottom + dpad,
+                                          self.rect_detail.w - 2*dpad, self.rect_detail.bottom - dpad - (self.rect_roster.bottom + dpad))
 
-        self.btns = []
-        # bottom-right action buttons
-        btn_w, btn_h = 160, 44
-        by = self.rect_detail.bottom - btn_h - 10
-        bx = self.rect_detail.right - btn_w - 10
-        self.btns.append(Button(pygame.Rect(bx, by, btn_w, btn_h), "Start Season", self._start))
-        self.btns.append(Button(pygame.Rect(bx - btn_w - 10, by, btn_w, btn_h), "Back", self._back))
+        # toggles top/bottom
+        tb_w, tb_h = 120, 32
+        self.toggle_top    = Button(pygame.Rect(self.rect_league.x, self.rect_league.y - tb_h - 6, tb_w, tb_h), "Top League", self._set_level_top)
+        self.toggle_bottom = Button(pygame.Rect(self.rect_league.x + tb_w + 8, self.rect_league.y - tb_h - 6, tb_w, tb_h), "Bottom League", self._set_level_bottom)
+        self.btns = [self.toggle_top, self.toggle_bottom]
 
-        # league toggles
-        tg_w, tg_h = 140, 36
-        tgy = self.rect_league.y + 12
-        self.toggle_top = Button(pygame.Rect(self.rect_league.x + 12, tgy, tg_w, tg_h), "Top League", lambda: self._set_level(1))
-        self.toggle_bottom = Button(pygame.Rect(self.rect_league.x + 12 + tg_w + 10, tgy, tg_w, tg_h), "Bottom League", lambda: self._set_level(2))
-
-        # regenerate (top-right)
+        # regenerate button
         self.btns.append(Button(pygame.Rect(w - 160 - 16, 16, 160, 40), "Regenerate", self._regen_all_fighters))
 
-    # ---- getters ----
+    def _set_level_top(self): self.level = 0; self.scroll_teams = self.scroll_players = self.scroll_stats = 0
+    def _set_level_bottom(self): self.level = 1; self.scroll_teams = self.scroll_players = self.scroll_stats = 0
+
+    # ---- helpers ----
     def _countries(self) -> List[Dict[str, Any]]: return self.world["countries"]
-    def _country(self) -> Dict[str, Any]: return self._countries()[self.country_idx % len(self._countries())]
-    def _league(self) -> Dict[str, Any]:
-        leagues = self._country()["leagues"]
-        return next(l for l in leagues if int(l["level"]) == int(self.league_level))
+    def _country(self) -> Dict[str, Any]: return self._countries()[self.country_idx or 0]
+    def _league(self) -> Dict[str, Any]: return self._country()["leagues"][self.level]
     def _teams(self) -> List[Dict[str, Any]]: return self._league()["teams"]
     def _selected_team(self) -> Optional[Dict[str, Any]]:
-        if self.team_idx is None: return None
-        ts = self._teams(); return ts[self.team_idx] if 0 <= self.team_idx < len(ts) else None
+        idx = self.team_idx if self.team_idx is not None else 0
+        ts = self._teams()
+        if not ts: return None
+        if idx < 0 or idx >= len(ts): idx = 0
+        return ts[idx]
     def _selected_player(self) -> Optional[Dict[str, Any]]:
-        t = self._selected_team(); 
-        if not t or self.player_idx is None: return None
-        fs = t.get("fighters", []); return fs[self.player_idx] if 0 <= self.player_idx < len(fs) else None
-
-    # ---- scroll helpers ----
-    def _clamp_scroll(self, current: int, delta: int, item_count: int, row_h: int, view_rect: Optional[pygame.Rect]) -> int:
-        if not view_rect: return 0
-        content_h = item_count * row_h
-        max_neg = min(0, view_rect.h - content_h)
-        new_val = current + delta
-        if new_val > 0: new_val = 0
-        if new_val < max_neg: new_val = max_neg
-        return new_val
-
-    def _clamp_scroll_px(self, current: int, delta: int, content_h: int, view_rect: Optional[pygame.Rect]) -> int:
-        if not view_rect: return 0
-        if content_h <= 0: return 0
-        max_neg = min(0, view_rect.h - content_h)
-        new_val = current + delta
-        if new_val > 0: new_val = 0
-        if new_val < max_neg: new_val = max_neg
-        return new_val
-
-    # ---- actions ----
-    def _set_level(self, level: int):
-        if level not in (1,2): return
-        self.league_level = level; setattr(self.app, "last_league_level", level)
-        self.team_idx = None; self.player_idx = None
-        self.scroll_teams = self.scroll_players = self.scroll_stats = 0
-
-    def _select_country(self, idx: int):
-        self.country_idx = idx % len(self._countries()); setattr(self.app, "last_country_idx", self.country_idx)
-        self.team_idx = None; self.player_idx = None
-        self.scroll_teams = self.scroll_players = self.scroll_stats = 0
-
-    def _select_team(self, idx: int):
-        self.team_idx = idx; self.player_idx = 0
-        self.scroll_players = self.scroll_stats = 0
-
-    def _select_player(self, idx: int): self.player_idx = idx
-    def _back(self): self.app.pop_state()
-
-    def _start(self):
-        team = self._selected_team()
-        if not team: return
-        SeasonHubState = _import_opt("ui.state_season_hub.SeasonHubState")
-        if SeasonHubState is None: return
-
-        league = self._league()
-        remapped = []
-        for i, t in enumerate(league["teams"]):
-            fighters = []
-            for p in t.get("fighters", []):
-                cp = dict(p); cp["team_id"] = i; fighters.append(cp)
-            remapped.append({"tid": i, "name": t["name"], "color": t.get("color",(120,120,120)), "fighters": fighters})
-
-        user_tid = self.team_idx if self.team_idx is not None else 0
-        if Career is not None:
-            names = [t["name"] for t in remapped]
-            car = Career.new(seed=self.seed, n_teams=len(remapped), team_size=len(remapped[0]["fighters"]), user_team_id=user_tid, team_names=names)
-            for i, t in enumerate(remapped):
-                car.teams[i]["fighters"] = t["fighters"]; car.teams[i]["name"] = t["name"]
-        else:
-            car = type("MiniCareer", (), {})()
-            car.teams = remapped; car.week = 1; car.user_tid = user_tid
-            def _tn(tid):
-                for t in car.teams:
-                    if int(t.get("tid", -1)) == int(tid): return t.get("name", f"Team {tid}")
-                return f"Team {tid}"
-            car.team_name = _tn
-            car.fixtures_by_week = [[{"week":1,"home_id":0,"away_id":1,"played":False,"k_home":0,"k_away":0}]]
-            car.fixtures = list(car.fixtures_by_week[0])
-        self.app.career = car
-        try: st = SeasonHubState(self.app, career=car)
-        except TypeError: st = SeasonHubState(self.app)
-        self.app.push_state(st)
-
-    def _regen_all_fighters(self):
-        r = random.Random()
-        for c in self.world.get("countries", []):
-            country = c.get("name", "Unknown")
-            for league in c.get("leagues", []):
-                for t in league.get("teams", []):
-                    tid = int(t.get("tid", 0))
-                    size = len(t.get("fighters", [])) or 8
-                    t["fighters"] = [self._new_fighter(tid, (j%99)+1, country, r) for j in range(size)]
-        self.player_idx = 0; self.scroll_players = self.scroll_stats = 0
+        t = self._selected_team()
+        if not t: return None
+        plist = t.get("fighters", [])
+        if not plist: return None
+        i = max(0, min(self.player_idx, len(plist)-1))
+        return plist[i]
 
     # ---- events ----
     def handle(self, event: pygame.event.Event):
@@ -274,38 +206,45 @@ class TeamSelectState:
                 area = self.rect_league.inflate(-16, -74); area.y = self.rect_league.y + 60
                 self.scroll_teams = self._clamp_scroll(self.scroll_teams, event.y*step, len(self._teams()), 34, area)
             elif self.rect_roster and self.rect_roster.collidepoint(mx, my):
-                area = self.rect_roster.inflate(-16, -54); area.y = self.rect_roster.y + 36
-                n = len(self._selected_team().get("fighters", [])) if self._selected_team() else 0
-                self.scroll_players = self._clamp_scroll(self.scroll_players, event.y*step, n, 28, area)
+                list_area = self.rect_roster.inflate(-16, -54); list_area.y = self.rect_roster.y + 36
+                self.scroll_players = self._clamp_scroll(self.scroll_players, event.y*step, len(self._selected_team().get("fighters", [])), 28, list_area)
             elif self.rect_stats and self.rect_stats.collidepoint(mx, my):
                 content_h = max(self.stats_content_h, self.rect_stats.h)  # avoid lock before first draw
                 self.scroll_stats = self._clamp_scroll_px(self.scroll_stats, event.y*step, content_h, self.rect_stats)
 
-        for b in self.btns: b.handle(event)
-        if self.toggle_top: self.toggle_top.handle(event)
-        if self.toggle_bottom: self.toggle_bottom.handle(event)
+        for b in self.btns:
+            b.handle(event)
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            x, y = event.pos
-            if self.rect_countries and self.rect_countries.collidepoint(x, y):
+            mx, my = event.pos
+            # choose country
+            if self.rect_countries and self.rect_countries.collidepoint(mx, my):
                 inner = self.rect_countries.inflate(-16, -58); inner.y = self.rect_countries.y + 48
-                idx = (y - inner.y) // 36
-                if 0 <= idx < len(self._countries()): self._select_country(int(idx)); return
+                row_h = 36
+                idx = (my - inner.y) // row_h
+                if 0 <= idx < len(self._countries()):
+                    self._select_country(int(idx))
+            # choose team
+            if self.rect_league and self.rect_league.collidepoint(mx, my):
+                inner = self.rect_league.inflate(-16, -74); inner.y = self.rect_league.y + 60
+                row_h = 34
+                idx = (my - inner.y - self.scroll_teams) // row_h
+                if 0 <= idx < len(self._teams()):
+                    self._select_team(int(idx))
+            # choose player
+            if self.rect_roster and self.rect_roster.collidepoint(mx, my):
+                list_area = self.rect_roster.inflate(-16, -54); list_area.y = self.rect_roster.y + 36
+                row_h = 28
+                idx = (my - list_area.y - self.scroll_players) // row_h
+                team = self._selected_team()
+                plist = team.get("fighters", []) if team else []
+                if 0 <= idx < len(plist):
+                    self._select_player(int(idx))
 
-            if self.rect_league and self.rect_league.collidepoint(x, y):
-                area = self.rect_league.inflate(-16, -74); area.y = self.rect_league.y + 60
-                y_scroll = y - (area.y + self.scroll_teams); idx = int(y_scroll // 34)
-                if 0 <= idx < len(self._teams()): self._select_team(idx); return
+    def update(self, dt: float):
+        pass
 
-            if self.rect_roster and self.rect_roster.collidepoint(x, y):
-                area = self.rect_roster.inflate(-16, -54); area.y = self.rect_roster.y + 36
-                y_scroll = y - (area.y + self.scroll_players); idx = int(y_scroll // 28)
-                team = self._selected_team(); n = len(team.get("fighters", [])) if team else 0
-                if 0 <= idx < n: self._select_player(idx); return
-
-    # ---- update/draw ----
-    def update(self, dt: float): pass
-
+    # ---- draw ----
     def draw(self, screen: pygame.Surface):
         w, h = screen.get_size()
         screen.fill((16,16,20))
@@ -313,26 +252,22 @@ class TeamSelectState:
         screen.blit(title, (16, 20))
 
         self._draw_panel(screen, self.rect_countries, "Countries"); self._draw_countries(screen)
-        self._draw_panel(screen, self.rect_league, f"{self._country()['name']} League"); self._draw_league_toggle(screen); self._draw_team_list(screen)
-        self._draw_panel(screen, self.rect_detail, "Roster & Player"); self._draw_roster(screen)
+        self._draw_panel(screen, self.rect_league, f"{self._country().get('name','')} • {'Top' if self.level==0 else 'Division'}"); self._draw_league_toggle(screen); self._draw_team_list(screen)
+        self._draw_panel(screen, self.rect_detail, ""); self._draw_roster(screen)  # no right-box title
 
         # divider between roster and stats
         if self.rect_roster:
-            pygame.draw.line(screen, (28,28,32), (self.rect_roster.x+8, self.rect_roster.bottom), (self.rect_roster.right-8, self.rect_roster.bottom), 2)
+            pygame.draw.line(screen, (28,28,32), (self.rect_roster.x, self.rect_roster.bottom), (self.rect_roster.right-8, self.rect_roster.bottom), 2)
 
         self._draw_player_stats(screen)
 
-        for b in self.btns:
-            if b.text.startswith("Start"): b.disabled = (self.team_idx is None)
-            b.draw(screen, self.font)
-        if self.toggle_top: self.toggle_top.draw(screen, self.font, selected=(self.league_level==1))
-        if self.toggle_bottom: self.toggle_bottom.draw(screen, self.font, selected=(self.league_level==2))
-
+    # ---- draw helpers ----
     def _draw_panel(self, screen: pygame.Surface, rect: Optional[pygame.Rect], title: str):
         if not rect: return
         pygame.draw.rect(screen, (42,44,52), rect, border_radius=12)
         pygame.draw.rect(screen, (24,24,28), rect, 2, border_radius=12)
-        t = self.h2.render(title, True, (215,215,220)); screen.blit(t, (rect.x+12, rect.y+10))
+        if title:
+            t = self.h2.render(title, True, (215,215,220)); screen.blit(t, (rect.x+12, rect.y+10))
 
     def _draw_countries(self, screen: pygame.Surface):
         rect = self.rect_countries
@@ -344,51 +279,57 @@ class TeamSelectState:
             Button(r, c["name"], lambda: None).draw(screen, self.font, selected=(i == self.country_idx))
 
     def _draw_league_toggle(self, screen: pygame.Surface):
-        if self.toggle_top: self.toggle_top.draw(screen, self.font, selected=(self.league_level==1))
-        if self.toggle_bottom: self.toggle_bottom.draw(screen, self.font, selected=(self.league_level==2))
+        if self.toggle_top:    self.toggle_top.draw(screen, self.font, selected=(self.level==0))
+        if self.toggle_bottom: self.toggle_bottom.draw(screen, self.font, selected=(self.level==1))
 
     def _draw_team_list(self, screen: pygame.Surface):
         rect = self.rect_league
         if not rect: return
-        list_area = rect.inflate(-16, -74); list_area.y = rect.y + 60
-        row_h = 34; teams = self._teams()
-
-        prev = screen.get_clip(); screen.set_clip(list_area)
-        y = list_area.y + self.scroll_teams
-        for i, t in enumerate(teams):
-            r = pygame.Rect(list_area.x, y + i*row_h, list_area.w, row_h-6)
-            Button(r, t["name"], lambda: None).draw(screen, self.font, selected=(self.team_idx==i))
+        inner = rect.inflate(-16, -74); inner.y = rect.y + 60
+        row_h = 34
+        prev = screen.get_clip(); screen.set_clip(inner)
+        for i, t in enumerate(self._teams()):
+            y = inner.y + i*row_h + self.scroll_teams
+            r = pygame.Rect(inner.x, y, inner.w, row_h-6)
+            sel = (i == (self.team_idx or 0))
+            bg = (58, 60, 70) if not sel else (88, 92, 110)
+            pygame.draw.rect(screen, bg, r, border_radius=8)
+            pygame.draw.rect(screen, (24, 24, 28), r, 2, border_radius=8)
+            nm = t.get("name", f"Team {i}")
+            txt = self.font.render(nm, True, (230,230,235))
+            screen.blit(txt, (r.x + 10, r.y + (r.h - txt.get_height()) // 2))
         screen.set_clip(prev)
 
     def _draw_roster(self, screen: pygame.Surface):
         rect = self.rect_roster
         if not rect: return
-        head = self.h2.render("Players", True, (210,210,215)); screen.blit(head, (rect.x+12, rect.y+8))
+        # removed header: Players
         list_area = rect.inflate(-16, -54); list_area.y = rect.y + 36
         row_h = 28
         team = self._selected_team(); fighters = team.get("fighters", []) if team else []
 
         prev = screen.get_clip(); screen.set_clip(list_area)
-        y0 = list_area.y + self.scroll_players
         for i, p in enumerate(fighters):
-            r = pygame.Rect(list_area.x, y0 + i*row_h, list_area.w, row_h-4)
-            num = p.get('num',0); nm = p.get('name','Player'); ovr = _ovr(p)
-            label = f"#{num:02d}  {nm}   OVR {ovr}"
-            Button(r, label, lambda: None).draw(screen, self.font, selected=(self.player_idx==i))
+            y = list_area.y + i*row_h + self.scroll_players
+            rr = pygame.Rect(list_area.x, y, list_area.w, row_h-4)
+            sel = (i == self.player_idx)
+            bg = (58,60,70) if not sel else (88, 92, 110)
+            pygame.draw.rect(screen, bg, rr, border_radius=8)
+            pygame.draw.rect(screen, (24,24,28), rr, 2, border_radius=8)
+            nm = f"{p.get('name','?')}   #{int(p.get('num',0)):02d}   OVR {int(p.get('OVR',p.get('ovr',60)))}"
+            txt = self.font.render(nm, True, (230,230,235))
+            screen.blit(txt, (rr.x + 10, rr.y + (rr.h - txt.get_height()) // 2))
         screen.set_clip(prev)
 
     def _draw_player_stats(self, screen: pygame.Surface):
         rect = self.rect_stats
         if not rect: return
-        head = self.h2.render("Player", True, (210,210,215)); screen.blit(head, (rect.x+12, rect.y+8))
 
         p = self._selected_player()
         if not p:
-            # intentionally blank, per request
             self.stats_content_h = 0
             return
 
-        # unified getter
         def G(key, default=None): return p.get(key, p.get(key.upper(), default))
 
         name = G("name","Unknown"); num = int(G("num",0))
@@ -397,15 +338,20 @@ class TeamSelectState:
         cls = G("class","Fighter"); hp = int(G("hp",10)); max_hp = int(G("max_hp", hp)); ac = int(G("ac",12))
         STR = int(G("str",G("STR",10))); DEX = int(G("dex",G("DEX",10))); CON = int(G("con",G("CON",10)))
         INT = int(G("int",G("INT",10))); WIS = int(G("wis",G("WIS",10))); CHA = int(G("cha",G("CHA",10)))
-        wpn = G("weapon",{}); weapon_name = (wpn.get("name") if isinstance(wpn,dict) else (wpn if isinstance(wpn,str) else "-"))
-        equipped_armor = (G("equipped_armor", None)
-                          or (G("armor",{}).get("name") if isinstance(G("armor",None),dict) else (G("armor") if isinstance(G("armor",None),str) else None))
-                          or G("armor_name", None) or "-")
 
-        clip = rect.inflate(-12, -16)  # slight inset for scroll clip
+        wpn = G("weapon",{})
+        weapon_name = (wpn.get("name") if isinstance(wpn,dict) else (wpn if isinstance(wpn,str) else "-"))
+        equipped_armor = (
+            G("equipped_armor", None)
+            or (G("armor",{}).get("name") if isinstance(G("armor",None),dict) else (G("armor") if isinstance(G("armor",None),str) else None))
+            or G("armor_name", None) or "-"
+        )
+
+        clip = rect.inflate(-12, -16)
         prev = screen.get_clip(); screen.set_clip(clip)
 
-        x0 = rect.x + 12; y = rect.y + 36 + self.scroll_stats
+        x0 = rect.x + 12
+        y = rect.y + 12 + self.scroll_stats   # moved up (was +36)
         line_h = self.font.get_height() + 6
 
         def line(text: str):
@@ -413,12 +359,11 @@ class TeamSelectState:
             surf = self.font.render(text, True, (220,220,225))
             screen.blit(surf, (x0, y)); y += line_h
 
-        # structured lines
-        line(f"Name: {name}    #{num:02d}")
-        line(f"Race: {race}    Origin: {origin}    OVR: {ovr}    Potential: {pot}")
+        # Removed "Player" header and labels for name/race/origin
+        line(f"{name}    #{num:02d}")
+        line(f"{race}    {origin}    OVR: {ovr}    Potential: {pot}")
         line(f"Class: {cls}    HP: {hp}/{max_hp}    AC: {ac}")
 
-        # attributes grid
         y += 4
         labels = ("STR","DEX","CON","INT","WIS","CHA"); vals = (STR,DEX,CON,INT,WIS,CHA)
         col_w = (rect.w - 24) // 6; top_y = y
@@ -435,11 +380,87 @@ class TeamSelectState:
 
         line(f"Equipped Armor: {equipped_armor}    Weapon: {weapon_name}")
 
-        # compute content height for scroll clamp
-        self.stats_content_h = max(0, (y - (rect.y + 36)))
-
+        self.stats_content_h = max(0, (y - (rect.y + 12)))
         screen.set_clip(prev)
 
+    # ---- selection helpers ----
+    def _select_country(self, idx: int):
+        self.country_idx = idx
+        self.team_idx = 0; self.player_idx = 0
+        self.scroll_teams = self.scroll_players = self.scroll_stats = 0
+
+    def _select_team(self, idx: int):
+        self.team_idx = idx
+        self.player_idx = 0; self.scroll_players = self.scroll_stats = 0
+
+    def _select_player(self, idx: int):
+        self.player_idx = idx
+
+    # ---- scroll helpers ----
+    def _clamp_scroll(self, current: int, delta: int, n_items: int, row_h: int, view_rect: Optional[pygame.Rect]) -> int:
+        if not view_rect: return 0
+        content_h = n_items*row_h
+        max_neg = min(0, view_rect.h - content_h)
+        new_val = current + delta
+        if new_val > 0: new_val = 0
+        if new_val < max_neg: new_val = max_neg
+        return new_val
+
+    def _clamp_scroll_px(self, current: int, delta: int, content_h: int, view_rect: Optional[pygame.Rect]) -> int:
+        if not view_rect: return 0
+        if content_h <= 0: return 0
+        max_neg = min(0, view_rect.h - content_h)
+        new_val = current + delta
+        if new_val > 0: new_val = 0
+        if new_val < max_neg: new_val = max_neg
+        return new_val
+
+    # ---- actions ----
+    def _back(self):
+        self.app.pop_state()
+
+    def _start(self):
+        SeasonHubState = _import_opt("ui.state_season_hub.SeasonHubState")
+        if SeasonHubState is None: return
+
+        league = self._league()
+        remapped = []
+        for i, t in enumerate(league["teams"]):
+            fighters = []
+            for p in t.get("fighters", []):
+                cp = dict(p); cp["team_id"] = i; fighters.append(cp)
+            remapped.append({"tid": i, "name": t["name"], "color": t.get("color",(120,120,120)), "fighters": fighters})
+
+        user_tid = self.team_idx if self.team_idx is not None else 0
+        if Career is not None:
+            names = [t["name"] for t in remapped]
+            car = Career.new(seed=self.seed, n_teams=len(remapped), team_size=len(remapped[0]["fighters"]) if remapped else 12,
+                             names=names, fighters=remapped, user_tid=int(user_tid))
+        else:
+            car = type("MiniCareer", (), {})()
+            car.teams = remapped; car.week = 1; car.user_tid = int(user_tid); car.seed = self.seed
+            def _tn(tid):
+                for t in remapped:
+                    if int(t.get("tid",-1)) == int(tid): return t.get("name", f"Team {tid}")
+                return f"Team {tid}"
+            car.team_name = _tn
+
+        self.app.push_state(SeasonHubState(self.app, car))
+
+    def _tn(self, tid):
+        t = self._selected_team()
+        return t.get("name", f"Team {tid}") if t else f"Team {tid}"
+
+    def _regen_all_fighters(self):
+        r = random.Random()
+        for c in self.world.get("countries", []):
+            country = c.get("name", "Unknown")
+            for league in c.get("leagues", []):
+                for t in league.get("teams", []):
+                    tid = int(t.get("tid", 0))
+                    size = len(t.get("fighters", [])) or 8
+                    t["fighters"] = [self._new_fighter(tid, (j%99)+1, country, r) for j in range(size)]
+        self.player_idx = 0; self.scroll_players = self.scroll_stats = 0
 
 __all__ = ['TeamSelectState']
 TeamSelect = TeamSelectState
