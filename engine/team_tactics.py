@@ -21,6 +21,10 @@ class RoleSpec:
     roam: int = 99                        # max tiles to stray from anchor (Chebyshev)
     anchor: Optional[Tuple[int, int]] = None  # (cx, cy) or None
 
+    # 🎯 Patch B: one-shot roll modifiers for the *next* attack this turn
+    attack_advantage: bool = False
+    attack_disadvantage: bool = False
+
 @dataclass
 class TeamTactics:
     roles: Dict[Any, RoleSpec] = field(default_factory=dict)  # pid -> RoleSpec
@@ -42,7 +46,7 @@ class BaseController:
 
 class TacticsController(BaseController):
     """
-    A simple, D&D-ish controller that respects RoleSpec knobs.
+    A simple controller that respects RoleSpec knobs.
     It plans up to `speed` move steps (using world.path_step) and then attacks if in range.
     """
     def __init__(self, tactics: TeamTactics):
@@ -88,8 +92,6 @@ class TacticsController(BaseController):
     def decide(self, world, actor) -> List[dict]:
         spec = self._spec_for(actor)
 
-        # If HOLD stance: try to keep desired_range to the nearest enemy, don't overextend.
-        # (For now this just behaves like balanced with the same desired_range.)
         desired = max(1, int(spec.desired_range))
         desired = max(desired, world.reach(actor))  # don’t desire less than own reach
 
@@ -106,8 +108,14 @@ class TacticsController(BaseController):
         speed = world.speed(actor)
         intents: List[dict] = []
 
-        # If already within desired range: attack
+        # Already in range: request any one-shot roll modifiers, then attack
         if dist <= desired:
+            if getattr(spec, "attack_advantage", False):
+                try: world.grant_advantage(actor, 1)
+                except Exception: pass
+            if getattr(spec, "attack_disadvantage", False):
+                try: world.grant_disadvantage(actor, 1)
+                except Exception: pass
             intents.append({"type": "attack", "target": enemy})
             return intents
 
@@ -120,8 +128,14 @@ class TacticsController(BaseController):
                 break
             intents.append({"type": "move", "to": step})
 
-        # After moving, attack if in range
+        # After moving, apply one-shot roll modifiers if configured, then attack if in range
         if world.distance(actor, enemy) <= desired:
+            if getattr(spec, "attack_advantage", False):
+                try: world.grant_advantage(actor, 1)
+                except Exception: pass
+            if getattr(spec, "attack_disadvantage", False):
+                try: world.grant_disadvantage(actor, 1)
+                except Exception: pass
             intents.append({"type": "attack", "target": enemy})
 
         if not intents:
@@ -147,6 +161,10 @@ def _rolespec_from_dict(d: Dict[str, Any]) -> RoleSpec:
         rs.anchor = (int(anc[0]), int(anc[1]))
     elif isinstance(anc, dict) and "x" in anc and "y" in anc:
         rs.anchor = (int(anc["x"]), int(anc["y"]))
+
+    # 🎯 Patch B fields
+    rs.attack_advantage = bool(d.get("attack_advantage", rs.attack_advantage))
+    rs.attack_disadvantage = bool(d.get("attack_disadvantage", rs.attack_disadvantage))
     return rs
 
 def team_tactics_from_fixture(blob: Dict[str, Any]) -> TeamTactics:
