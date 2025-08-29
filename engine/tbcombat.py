@@ -1,313 +1,492 @@
+# engine/tbcombat.py
 from __future__ import annotations
-
-import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+import random
+import math
 
-# Optional OI bias hook
-try:
-    from engine.ai import weights as _OI  # apply_oi_bias(attacker, target, base)->score
-    def _apply_oi_bias(attacker, target, base: float) -> float:
-        try:
-            return float(_OI.apply_oi_bias(attacker, target, base))
-        except Exception:
-            return base
-except Exception:
-    def _apply_oi_bias(attacker, target, base: float) -> float:
-        return base
+# Public surface used by UI/other modules
+__all__ = ["TBCombat", "Team"]
 
-
-# ----------------------- Model -----------------------
-
+# --- Simple Team container (kept minimal; UI imports it from engine) ---
 @dataclass
-class _Actor:
-    pid: int
+class Team:
+    tid: int
     name: str
-    team_id: int
-    x: int
-    y: int
-    hp: int
-    max_hp: int
-    ac: int
-    alive: bool = True
-    role: Optional[str] = None
-    xp: int = 0
-    STR: int = 10
-    DEX: int = 10
-    CON: int = 10
-    INT: int = 8
-    WIS: int = 8
-    CHA: int = 8
+    color: Tuple[int, int, int] = (200, 200, 200)
 
+# --- Utility: ability modifier ---
+def _mod(score: int) -> int:
+    try:
+        return (int(score) - 10) // 2
+    except Exception:
+        return 0
 
+# --- Dice helpers ---
+def _parse_dice(spec: Any) -> Tuple[int, int]:
+    """
+    Accepts:
+      - tuple/list like (num, sides)
+      - string "XdY"
+      - int -> treated as 1d<int>
+      - None -> default 1d4
+    """
+    if isinstance(spec, (tuple, list)) and len(spec) == 2:
+        return max(1, int(spec[0])), max(1, int(spec[1]))
+    if isinstance(spec, str):
+        s = spec.lower().strip()
+        if "d" in s:
+            a, b = s.split("d", 1)
+            a = a.strip() or "1"
+            try:
+                return max(1, int(a)), max(1, int(b))
+            except Exception:
+                return 1, 4
+        try:
+            v = int(spec)
+            return 1, max(1, v)
+        except Exception:
+            return 1, 4
+    if isinstance(spec, int):
+        return 1, max(1, spec)
+    return 1, 4
+
+def _roll_dice(rng: random.Random, num: int, sides: int) -> int:
+    return sum(rng.randint(1, sides) for _ in range(max(1, num)))
+
+def _roll_d20(rng: random.Random, adv: int = 0) -> Tuple[int, int]:
+    """
+    Returns (natural, effective). adv=+1 advantage, -1 disadvantage, 0 normal.
+    We cap |adv| at 1 for now.
+    """
+    adv = 1 if adv > 0 else -1 if adv < 0 else 0
+    if adv == 0:
+        n = rng.randint(1, 20)
+        return n, n
+    a = rng.randint(1, 20)
+    b = rng.randint(1, 20)
+    return (a, max(a, b)) if adv > 0 else (a, min(a, b))
+
+# --- Grid helpers ---
+def _chebyshev(a: Tuple[int,int], b: Tuple[int,int]) -> int:
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+
+def _manhattan(a: Tuple[int,int], b: Tuple[int,int]) -> int:
+    return abs(a[0]-b[0]) + abs(a[1]-b[1])
+
+# --- Fighter helpers ---
+def _alive(f) -> bool:
+    return bool(getattr(f, "alive", True)) and getattr(f, "hp", 1) > 0
+
+def _ensure_xy(f):
+    # normalize {x,y} and {tx,ty} so the UI sees consistent coords
+    for attr in ("x", "tx"):
+        if not hasattr(f, attr):
+            try: setattr(f, attr, 0)
+            except Exception: pass
+    for attr in ("y", "ty"):
+        if not hasattr(f, attr):
+            try: setattr(f, attr, 0)
+            except Exception: pass
+
+def _name(f) -> str:
+    n = getattr(f, "name", None)
+    if n: return str(n)
+    first = getattr(f, "first", getattr(f, "first_name", "")) or ""
+    last  = getattr(f, "last", getattr(f, "last_name", "")) or ""
+    s = (first + " " + last).strip()
+    return s if s else f"F{getattr(f, 'pid', getattr(f, 'id', '?'))}"
+
+def _team_id(f) -> int:
+    return int(getattr(f, "team_id", getattr(f, "tid", 0)))
+
+def _dex_mod(f) -> int:
+    return _mod(getattr(f, "dex", getattr(f, "DEX", 10)))
+
+def _str_mod(f) -> int:
+    return _mod(getattr(f, "str", getattr(f, "STR", 10)))
+
+def _ac(f) -> int:
+    # Respect explicit AC if set; otherwise fallback to DEX-based baseline
+    if hasattr(f, "ac"):
+        try: return int(getattr(f, "ac"))
+        except Exception: pass
+    dex = getattr(f, "dex", getattr(f, "DEX", 10))
+    armor_bonus = getattr(f, "armor_bonus", 0)
+    return 10 + _mod(dex) + int(armor_bonus)
+
+def _weapon_profile(f) -> Tuple[int, int, str, int]:
+    """
+    Returns (num_dice, die_sides, ability_used, reach)
+    ability_used is "STR" or "DEX" for mod selection
+    """
+    w = getattr(f, "weapon", None)
+    if w is None:
+        return (1, 4, "STR", 1)
+    # Dict style
+    if isinstance(w, dict):
+        num, sides = _parse_dice(w.get("dice", w.get("formula", "1d4")))
+        reach = int(w.get("reach", 1))
+        ability = str(w.get("ability", w.get("mod", "STR"))).upper()
+        if ability not in ("STR", "DEX"):
+            ability = "STR"
+        return (num, sides, ability, max(1, reach))
+    # String style "1d6", optional suffix " reach=2" (loose parsing)
+    if isinstance(w, str):
+        # crude parse for "... reach=2" or "(reach 2)"
+        base = w
+        reach = 1
+        if "reach" in w:
+            try:
+                part = w.split("reach", 1)[1]
+                digits = "".join(ch for ch in part if ch.isdigit())
+                if digits:
+                    reach = int(digits)
+            except Exception:
+                pass
+            base = w.split("reach", 1)[0]
+        num, sides = _parse_dice(base.strip())
+        # finesse guess: daggers/rapiers use DEX
+        ability = "DEX" if any(k in w.lower() for k in ("dagger", "rapier", "finesse")) else "STR"
+        return (num, sides, ability, max(1, reach))
+    # Int -> 1dX
+    if isinstance(w, int):
+        num, sides = _parse_dice(w)
+        return (num, sides, "STR", 1)
+    # fallback
+    return (1, 4, "STR", 1)
+
+def _ability_mod(f, ability: str) -> int:
+    return _dex_mod(f) if ability == "DEX" else _str_mod(f)
+
+# --- TBCombat core ---
 class TBCombat:
-    """Tiny, deterministic turn-based combat used by tests.
+    """
+    Turn-based combat on a rectangular grid.
 
-    Public API expected by tests:
-      - TBCombat(teamA, teamB, fighters, grid_w, grid_h, seed=...)
-        * grid_w/grid_h can be passed positionally or as kwargs (GRID_W/GRID_H supported)
-        * teamA/teamB may be strings or objects; coerced to str for display
-      - .typed_events  (aliases: .events_typed, .events)
-      - .fighters_all  (alias: .fighters)
-      - .take_turn()   (alias: .step_action())
-      - ._move_actor_if_free(actor, (x,y)) helper
-      - .winner -> 0/1/None
-      - .round (1-based); emits {'type':'round'} at start of each round
+    Features:
+      - Initiative once at start (d20 + DEX mod), fixed across rounds.
+      - Per-turn speed (default 4); multi-step movement until in reach.
+      - Melee attacks with weapon profiles (XdY + mod), reach, crits on nat 20.
+      - Advantage/disadvantage supported at roll site (flags on fighters).
+      - Opportunity Attacks (OA): leaving an enemy's reach provokes one reaction per enemy each round.
+      - Event stream: 'round_start', 'turn_start', 'move_step', 'attack', 'damage', 'down', 'end'.
     """
 
-    def __init__(self, teamA: Any, teamB: Any, fighters: List[Dict[str, Any]], *args, **kwargs):
-        # Grid with aliases & positional support
-        self.W = int(kwargs.get('grid_w',
-                    kwargs.get('GRID_W',
-                        args[0] if len(args) >= 1 else kwargs.get('w', 11))))
-        self.H = int(kwargs.get('grid_h',
-                    kwargs.get('GRID_H',
-                        args[1] if len(args) >= 2 else kwargs.get('h', 11))))
-        self.seed = int(kwargs.get('seed', 12345))
+    def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], cols: int, rows: int, seed: Optional[int] = None):
+        self.teams = [teamA, teamB]
+        self.cols = int(cols)
+        self.rows = int(rows)
+        self.rng = random.Random(seed if seed is not None else random.randint(0, 10_000_000))
 
-        self.teamA = str(getattr(teamA, 'name', teamA))
-        self.teamB = str(getattr(teamB, 'name', teamB))
+        self.fighters: List[Any] = list(fighters)
+        for f in self.fighters:
+            _ensure_xy(f)
+            if not hasattr(f, "alive"):
+                try: setattr(f, "alive", True)
+                except Exception: pass
+            if not hasattr(f, "hp"):
+                try: setattr(f, "hp", getattr(f, "max_hp", 10))
+                except Exception: pass
+            if not hasattr(f, "speed"):
+                try: setattr(f, "speed", 4)  # default movement speed
+                except Exception: pass
 
-        self.rng = random.Random(self.seed)
-        self.typed_events: List[Dict[str, Any]] = []
-        # aliases
-        self.events_typed = self.typed_events
-        self.events = self.typed_events
-
-        # Normalize fighters into _Actor objects (tolerant input)
-        self.fighters_all: List[_Actor] = []
-        positions_were_supplied = False
-        for i, f in enumerate(fighters):
-            d = dict(f) if isinstance(f, dict) else f.__dict__.copy()
-            pid = int(d.get('pid', d.get('id', i)))
-            name = str(d.get('name', f'P{pid}'))
-            team_id = int(d.get('team_id', d.get('tid', 0)))
-            # prefer explicit x/y if present (or tx/ty)
-            pos_given = any(k in d for k in ('x','y','tx','ty'))
-            positions_were_supplied = positions_were_supplied or pos_given
-            x = int(d.get('x', d.get('tx', 0)))
-            y = int(d.get('y', d.get('ty', 0)))
-            hp = int(d.get('hp', d.get('HP', 10)))
-            mx = int(d.get('max_hp', d.get('MAX_HP', hp)))
-            ac = int(d.get('ac', d.get('AC', 10)))
-            alive = bool(d.get('alive', True))
-            role = d.get('role')
-            xp = int(d.get('xp', 0))
-            STR = int(d.get('STR', 10)); DEX = int(d.get('DEX', 10)); CON = int(d.get('CON', 10))
-            INT = int(d.get('INT', 8)); WIS = int(d.get('WIS', 8)); CHA = int(d.get('CHA', 8))
-            self.fighters_all.append(_Actor(pid, name, team_id, x, y, hp, mx, ac, alive, role, xp, STR, DEX, CON, INT, WIS, CHA))
-
-        # Occupancy grid
-        self._occupy: List[List[Optional[_Actor]]] = [[None for _ in range(self.H)] for __ in range(self.W)]
-
-        # Initial placement:
-        # - If any fighter had coordinates supplied, honor them but resolve collisions/out-of-bounds.
-        # - Otherwise, auto-layout into left/right bands (collision-free).
-        if positions_were_supplied:
-            for a in self.fighters_all:
-                px, py = self._clamp(a.x, a.y)
-                if not self._is_free(px, py):
-                    px, py = self._nearest_free(px, py)
-                self._place(a, px, py)
-        else:
-            self._layout_teams_tiles()
-
-        # Initiative order: deterministic from seed + pid + team_id
-        order = list(range(len(self.fighters_all)))
-        def _key(ix: int):
-            a = self.fighters_all[ix]
-            h = self._mix(self.seed, f'{a.team_id}:{a.pid}')
-            return (h, a.team_id, a.pid)
-        order.sort(key=_key)
-        self._turn_order = order
-        self._turn_index = 0
-
-        self.round = 1
+        # battle state
+        self.events: List[Any] = []
+        self.round: int = 1
+        self.turn_idx: int = 0  # index in initiative list
         self.winner: Optional[int] = None
 
-        # Emit first round marker
-        self._emit({'type': 'round', 'round': self.round})
+        # initiative & per-round reactions
+        self._initiative: List[int] = []  # list of indices into self.fighters
+        self._roll_initiative()
 
-    # Property expected by some tests
-    @property
-    def fighters(self):
-        return self.fighters_all
+        self._push({"type": "round_start", "round": self.round})
+        self._reset_reactions_for_round()
 
-    # ----------------------- utility -----------------------
-
-    def _mix(self, seed: int, text: str) -> int:
-        x = (seed ^ 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
-        for b in text.encode('utf-8'):
-            x ^= (b + 0x9E3779B97F4A7C15 + ((x << 6) & 0xFFFFFFFFFFFFFFFF) + (x >> 2))
-            x &= 0xFFFFFFFFFFFFFFFF
-        return x
-
-    def _clamp(self, x: int, y: int) -> Tuple[int, int]:
-        return max(0, min(x, self.W-1)), max(0, min(y, self.H-1))
-
-    def _in_bounds(self, x: int, y: int) -> bool:
-        return 0 <= x < self.W and 0 <= y < self.H
-
-    def _is_free(self, x: int, y: int) -> bool:
-        return self._in_bounds(x, y) and self._occupy[x][y] is None
-
-    def _place(self, actor: _Actor, x: int, y: int):
-        # clear old if this actor currently occupies a tile
-        if self._in_bounds(actor.x, actor.y) and self._occupy[actor.x][actor.y] is actor:
-            self._occupy[actor.x][actor.y] = None
-        actor.x, actor.y = x, y
-        self._occupy[x][y] = actor
-
-    def _nearest_free(self, x: int, y: int) -> Tuple[int, int]:
-        if self._is_free(x, y):
-            return x, y
-        max_r = max(self.W, self.H)
-        for r in range(1, max_r + 1):
-            for dx in range(-r, r + 1):
-                dy = r - abs(dx)
-                for sy in (-1, 1) if dy != 0 else (1,):
-                    nx, ny = x + dx, y + sy*dy
-                    if self._is_free(nx, ny):
-                        return nx, ny
-        # fallback (grid full)
-        return self._clamp(x, y)
-
-    def _emit(self, ev: Dict[str, Any]):
-        self.typed_events.append(ev)
-
-    # ----------------------- layout -----------------------
-
-    def _layout_teams_tiles(self):
-        """Place team 0 on the left band, team 1 on the right band, resolving collisions."""
-        left_xs  = list(range(max(0, 1), min(self.W, 4)))
-        right_xs = list(range(max(0, self.W-4), max(0, self.W-1)))
-        for a in self.fighters_all:
-            ry = int(self._mix(self.seed, f'pid:{a.pid}') % self.H)
-            if a.team_id == 0:
-                xs = left_xs or [0]
-                rx = xs[int(self._mix(self.seed, f'L:{a.pid}') % len(xs))]
-            else:
-                xs = right_xs or [max(0, self.W-1)]
-                rx = xs[int(self._mix(self.seed, f'R:{a.pid}') % len(xs))]
-            px, py = self._nearest_free(rx, ry)
-            self._place(a, px, py)
-
-    # ----------------------- turns -----------------------
-
-    def _alive(self, team_id: int) -> List[_Actor]:
-        return [a for a in self.fighters_all if a.team_id == team_id and a.alive and a.hp > 0]
-
-    def _all_alive(self) -> List[_Actor]:
-        return [a for a in self.fighters_all if a.alive and a.hp > 0]
-
-    def _enemies_of(self, actor: _Actor) -> List[_Actor]:
-        return [a for a in self.fighters_all if a.team_id != actor.team_id and a.alive and a.hp > 0]
-
-    def _adjacent(self, a: _Actor, b: _Actor) -> bool:
-        return abs(a.x - b.x) + abs(a.y - b.y) == 1
-
-    def _step_toward(self, a: _Actor, target: _Actor) -> Tuple[int, int]:
-        dx = 0 if a.x == target.x else (1 if target.x > a.x else -1)
-        dy = 0 if a.y == target.y else (1 if target.y > a.y else -1)
-        if abs(target.x - a.x) >= abs(target.y - a.y):
-            return a.x + dx, a.y
-        return a.x, a.y + dy
-
-    def _attack_roll(self, attacker: _Actor, defender: _Actor) -> Tuple[bool, int]:
-        roll = self.rng.randint(1, 20)
-        mod = max(-2, min(5, (attacker.STR - 10)//2))
-        hit = (roll + mod) >= max(8, defender.ac)
-        dmg = max(1, self.rng.randint(1, 4) + mod)
-        return hit, dmg
-
-    def _post_attack_down_check(self, attacker: _Actor, defender: _Actor):
-        if defender.hp <= 0 and defender.alive:
-            defender.alive = False
-            self._emit({'type': 'down', 'name': defender.name})
-            attacker.xp = int(getattr(attacker, 'xp', 0)) + 1
-
-    def _score_target(self, attacker: _Actor, target: _Actor) -> float:
-        # Prefer nearby targets; add bias hook
-        base = - (abs(attacker.x - target.x) + abs(attacker.y - target.y))
-        return _apply_oi_bias(attacker, target, base)
-
-    def _check_end(self) -> Optional[int]:
-        a_alive = len(self._alive(0)) > 0
-        b_alive = len(self._alive(1)) > 0
-        if a_alive and b_alive:
-            return None
-        if a_alive and not b_alive:
-            return 0
-        if b_alive and not a_alive:
-            return 1
-        return None
-
-    def _next_actor_index(self) -> Optional[int]:
-        n = len(self._turn_order)
-        for _ in range(n):
-            ix = self._turn_order[self._turn_index]
-            self._turn_index = (self._turn_index + 1) % n
-            if self.fighters_all[ix].alive and self.fighters_all[ix].hp > 0:
-                return ix
-        return None
-
-    def _start_next_round(self):
-        self.round += 1
-        self._emit({'type': 'round', 'round': self.round})
-
-    def _move_actor_if_free(self, actor: _Actor, dest_xy: Tuple[int, int]) -> bool:
-        x, y = int(dest_xy[0]), int(dest_xy[1])
-        if not self._in_bounds(x, y) or not self._is_free(x, y):
-            self._emit({'type': 'blocked', 'name': actor.name, 'at': (x, y)})
-            return False
-        self._place(actor, x, y)
-        self._emit({'type': 'move', 'name': actor.name, 'to': (x, y)})
-        return True
-
+    # --- Public API ---
     def take_turn(self):
+        """Advance the battle by exactly one actor's turn."""
         if self.winner is not None:
             return
 
-        ix = self._next_actor_index()
-        if ix is None:
-            # Everyone dead? End.
-            self.winner = self._check_end()
-            if self.winner is None:
-                self._start_next_round()
+        # Find next living actor
+        f_idx = self._next_living_index()
+        if f_idx is None:
+            # All dead? End battle.
+            self._end_if_finished()
             return
 
-        actor = self.fighters_all[ix]
-        enemies = self._enemies_of(actor)
-        if not enemies:
-            self.winner = self._check_end()
-            if self.winner is None:
-                self._start_next_round()
+        self.turn_idx = f_idx
+        actor = self.fighters[self._initiative[self.turn_idx]]
+        if not _alive(actor):
+            # skip just in case
+            self._advance_turn_pointer()
+            self._end_if_finished()
             return
 
-        # If adjacent, swing; else step toward best target
-        adj = [e for e in enemies if self._adjacent(actor, e)]
-        if adj:
-            target = sorted(adj, key=lambda t: (-self._score_target(actor, t), t.team_id, t.pid))[0]
-            hit, dmg = self._attack_roll(actor, target)
-            if hit:
-                target.hp = max(0, target.hp - dmg)
-                self._emit({'type': 'hit', 'name': actor.name, 'target': target.name, 'dmg': int(dmg)})
-                self._post_attack_down_check(actor, target)
-            else:
-                self._emit({'type': 'miss', 'name': actor.name, 'target': target.name})
+        self._push({"type": "turn_start", "actor": _name(actor), "actor_id": getattr(actor, "pid", None)})
+
+        # Take an AI turn: move towards nearest enemy until in reach, then attack once.
+        enemy = self._choose_target(actor)
+        if enemy is None:
+            # no enemies; end
+            self._end_if_finished()
+            self._advance_turn_pointer()
+            return
+
+        # Try to attack if already in reach
+        reach = self._reach(actor)
+        if self._in_reach(actor, enemy, reach):
+            self._attack(actor, enemy)
         else:
-            target = sorted(enemies, key=lambda t: (-self._score_target(actor, t), t.team_id, t.pid))[0]
-            nx, ny = self._step_toward(actor, target)
-            if not self._move_actor_if_free(actor, (nx, ny)):
-                pass  # blocked emits its own event
+            # Move up to speed steps toward enemy; stop if in reach mid-way
+            steps = max(0, int(getattr(actor, "speed", 4)))
+            for _ in range(steps):
+                if self._in_reach(actor, enemy, reach):
+                    break
+                moved = self._step_towards(actor, enemy)
+                if not moved:
+                    break  # blocked
+                if not _alive(enemy):
+                    break
+            # After movement, attack if now in reach
+            if _alive(actor) and _alive(enemy) and self._in_reach(actor, enemy, reach):
+                self._attack(actor, enemy)
 
-        # End check and potential round advance
-        prev_winner = self.winner
-        self.winner = self._check_end()
-        if prev_winner is None and self.winner is None and self._turn_index == 0:
-            # completed a full cycle
-            self._start_next_round()
+        self._advance_turn_pointer()
+        self._end_if_finished()
 
-    # alias
-    def step_action(self):
-        self.take_turn()
+    # --- Initiative & Round ---
+    def _roll_initiative(self):
+        # List of fighter indices
+        order = list(range(len(self.fighters)))
+        # Compute scores
+        init_scores = []
+        for i in order:
+            f = self.fighters[i]
+            n, eff = _roll_d20(self.rng)  # no adv on init for now
+            score = eff + _dex_mod(f)
+            init_scores.append((i, score, _dex_mod(f), self.rng.random()))
+        # Sort by score desc, then dex mod desc, then random tie-breaker
+        init_scores.sort(key=lambda t: (t[1], t[2], t[3]), reverse=True)
+        self._initiative = [i for (i, _, __, ___) in init_scores]
+        # Reset per-round reaction availability
+        self._reset_reactions_for_round()
+
+    def _reset_reactions_for_round(self):
+        for f in self.fighters:
+            try: setattr(f, "reaction_ready", True)
+            except Exception: pass
+
+    def _advance_turn_pointer(self):
+        # Move pointer; if we wrapped, new round
+        if len(self._initiative) == 0:
+            return
+        self.turn_idx = (self.turn_idx + 1) % len(self._initiative)
+        if self.turn_idx == 0:
+            # New round
+            self.round += 1
+            self._push({"type": "round_start", "round": self.round})
+            self._reset_reactions_for_round()
+
+    def _next_living_index(self) -> Optional[int]:
+        if not self._initiative:
+            return None
+        n = len(self._initiative)
+        for off in range(n):
+            idx = (self.turn_idx + off) % n
+            f = self.fighters[self._initiative[idx]]
+            if _alive(f):
+                return idx
+        return None
+
+    # --- Grid & Occupancy ---
+    def _pos(self, f) -> Tuple[int,int]:
+        return int(getattr(f, "x", getattr(f, "tx", 0))), int(getattr(f, "y", getattr(f, "ty", 0)))
+
+    def _set_pos(self, f, x: int, y: int):
+        try: setattr(f, "x", int(x)); setattr(f, "y", int(y))
+        except Exception: pass
+        try: setattr(f, "tx", int(x)); setattr(f, "ty", int(y))
+        except Exception: pass
+
+    def _occupied(self, x: int, y: int) -> Optional[Any]:
+        for g in self.fighters:
+            if not _alive(g): continue
+            gx, gy = self._pos(g)
+            if gx == x and gy == y:
+                return g
+        return None
+
+    def _in_bounds(self, x: int, y: int) -> bool:
+        return 0 <= x < self.cols and 0 <= y < self.rows
+
+    # --- Targeting & AI ---
+    def _choose_target(self, actor) -> Optional[Any]:
+        # Nearest living enemy by Chebyshev distance, tie-breaker: lowest HP then team order.
+        best = None
+        best_d = 10**9
+        ax, ay = self._pos(actor)
+        a_team = _team_id(actor)
+        for g in self.fighters:
+            if not _alive(g): continue
+            if _team_id(g) == a_team: continue
+            d = _chebyshev((ax, ay), self._pos(g))
+            if d < best_d:
+                best = g; best_d = d
+            elif d == best_d:
+                # tie-breaker: lower HP
+                if getattr(g, "hp", 1) < getattr(best, "hp", 1):
+                    best = g
+        return best
+
+    def _reach(self, f) -> int:
+        _, _, ability, reach = _weapon_profile(f)
+        return max(1, int(reach))
+
+    def _in_reach(self, a, b, reach: Optional[int] = None) -> bool:
+        if reach is None:
+            reach = self._reach(a)
+        ax, ay = self._pos(a)
+        bx, by = self._pos(b)
+        return _chebyshev((ax, ay), (bx, by)) <= int(reach)
+
+    def _neighbors4(self, x: int, y: int) -> List[Tuple[int,int]]:
+        return [(x+1,y), (x-1,y), (x,y+1), (x,y-1)]
+
+    def _step_towards(self, actor, target) -> bool:
+        """
+        Greedy 4-dir step toward the target with occupancy/bounds checks.
+        Triggers Opportunity Attacks if leaving enemy reach.
+        """
+        ax, ay = self._pos(actor)
+        tx, ty = self._pos(target)
+
+        # Try axis that reduces Manhattan distance most, then alternate options
+        options: List[Tuple[int,int]] = []
+        dx = tx - ax; dy = ty - ay
+        primary = []
+        if abs(dx) >= abs(dy):
+            primary = [(1 if dx > 0 else -1, 0)] if dx != 0 else []
+            secondary = [(0, 1 if dy > 0 else -1)] if dy != 0 else []
+        else:
+            primary = [(0, 1 if dy > 0 else -1)] if dy != 0 else []
+            secondary = [(1 if dx > 0 else -1, 0)] if dx != 0 else []
+        options = primary + secondary
+
+        # Add side options (try to slide around obstacles)
+        options += [(1,0), (-1,0), (0,1), (0,-1)]
+
+        # Evaluate unique next cells
+        tried = set()
+        for vx, vy in options:
+            nx, ny = ax + vx, ay + vy
+            if (nx,ny) in tried: continue
+            tried.add((nx,ny))
+            if not self._in_bounds(nx, ny): continue
+            if self._occupied(nx, ny): continue
+
+            # OA check: leaving reach of any enemy with reaction ready
+            threatened_by = self._enemies_in_reach_of(actor, (ax,ay))
+            threatened_after = self._enemies_in_reach_of(actor, (nx,ny))
+            provokers = [e for e in threatened_by if e not in threatened_after and getattr(e, "reaction_ready", True) and _alive(e)]
+
+            # Resolve OAs (each enemy at most once per round)
+            for e in list(provokers):
+                self._opportunity_attack(e, actor)
+                # mark reaction spent
+                try: setattr(e, "reaction_ready", False)
+                except Exception: pass
+                if not _alive(actor):
+                    # actor dropped before stepping out
+                    return False
+
+            # Perform the step
+            self._set_pos(actor, nx, ny)
+            self._push({"type": "move_step", "actor": _name(actor), "to": (nx, ny)})
+            return True
+
+        # Blocked
+        self._push({"type": "blocked", "actor": _name(actor), "at": (ax, ay)})
+        return False
+
+    def _enemies_in_reach_of(self, actor, pos: Tuple[int,int]) -> List[Any]:
+        a_team = _team_id(actor)
+        in_reach = []
+        for e in self.fighters:
+            if not _alive(e): continue
+            if _team_id(e) == a_team: continue
+            ex, ey = self._pos(e)
+            if _chebyshev((ex, ey), pos) <= self._reach(e):
+                in_reach.append(e)
+        return in_reach
+
+    # --- Attacking ---
+    def _attack(self, attacker, defender, *, is_reaction: bool = False):
+        if not (_alive(attacker) and _alive(defender)):
+            return
+        # Advantage/disadvantage flags (optional on fighter)
+        adv = 0
+        if getattr(attacker, "advantage", False): adv += 1
+        if getattr(attacker, "disadvantage", False): adv -= 1
+        # roll to hit
+        nat, eff = _roll_d20(self.rng, adv=adv)
+        num, sides, ability, reach = _weapon_profile(attacker)
+        atk_mod = _ability_mod(attacker, ability)
+        ac = _ac(defender)
+        crit = (nat == 20)
+        hit = (eff + atk_mod >= ac) or crit
+
+        self._push({
+            "type": "attack",
+            "actor": _name(attacker),
+            "target": _name(defender),
+            "roll": nat,
+            "effective": eff,
+            "mod": atk_mod,
+            "target_ac": ac,
+            "hit": hit,
+            "critical": crit,
+            "opportunity": bool(is_reaction),
+        })
+
+        if hit:
+            dice_num = num * (2 if crit else 1)
+            dmg = _roll_dice(self.rng, dice_num, sides) + atk_mod
+            if dmg < 1: dmg = 1
+            self._apply_damage(attacker, defender, dmg)
+
+    def _opportunity_attack(self, attacker, mover):
+        self._attack(attacker, mover, is_reaction=True)
+
+    def _apply_damage(self, attacker, defender, dmg: int):
+        try:
+            defender.hp = int(defender.hp) - int(dmg)
+        except Exception:
+            pass
+        self._push({"type": "damage", "actor": _name(attacker), "target": _name(defender), "amount": int(dmg)})
+
+        if getattr(defender, "hp", 0) <= 0 and _alive(defender):
+            try: setattr(defender, "alive", False)
+            except Exception: pass
+            self._push({"type": "down", "name": _name(defender)})
+
+    # --- End conditions ---
+    def _end_if_finished(self):
+        alive0 = any(_alive(f) and _team_id(f) == 0 for f in self.fighters)
+        alive1 = any(_alive(f) and _team_id(f) == 1 for f in self.fighters)
+        if alive0 and alive1:
+            return
+        if alive0 and not alive1:
+            self.winner = 0
+        elif alive1 and not alive0:
+            self.winner = 1
+        else:
+            self.winner = None  # double KO
+        self._push({"type": "end", "winner": self.winner})
+
+    # --- Events ---
+    def _push(self, e: Any):
+        self.events.append(e)
