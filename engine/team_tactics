@@ -1,0 +1,25 @@
+# engine/tactics.py
+from dataclasses import dataclass, field
+from typing import Dict, Tuple, Optional, Any, List
+
+@dataclass
+class RoleSpec:
+    # behavior knobs the manager edits
+    name: str = "fighter"                # e.g., 'tank','skirmisher','healer','sniper'
+    stance: str = "balanced"             # 'aggressive','balanced','defensive','hold'
+    desired_range: int = 1               # 1 for melee, 2–6 for reach/ranged
+    avoid_oa: bool = True                # try not to provoke opportunity attacks
+    focus: str = "closest"               # 'closest','lowest_hp','highest_ovr','healer','support'
+    roam: int = 99                       # max tiles away from anchor you’ll roam
+    anchor: Optional[Tuple[int,int]] = None  # formation anchor (cx,cy) or None
+
+@dataclass
+class TeamTactics:
+    # pid -> RoleSpec
+    roles: Dict[Any, RoleSpec] = field(default_factory=dict)
+    # optional team-wide defaults if a pid isn’t configured
+    default: RoleSpec = field(default_factory=RoleSpec)
+
+@dataclass
+class MatchTactics:
+    by_team: Dict[int, TeamTactics] = field(default_factory=dict)  # team_id -> TeamTactics
