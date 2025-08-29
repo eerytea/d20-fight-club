@@ -17,10 +17,43 @@ except Exception:
 @dataclass
 class Team:
     tid: int
-    name: str
+    name: str = "Team"
     color: Tuple[int, int, int] = (200, 200, 200)
 
-# --- Ability mods ---
+# --- Helpers for names/pos ---
+def _name(f) -> str:
+    try:
+        n = getattr(f, "name", None)
+        if n: return str(n)
+        fn = getattr(f, "first_name", "")
+        ln = getattr(f, "last_name", "")
+        s = (fn + " " + ln).strip()
+        return s or f"F{getattr(f, 'pid', getattr(f, 'id', ''))}"
+    except Exception:
+        return "Fighter"
+
+def _ensure_xy(f):
+    if hasattr(f, "tx") and hasattr(f, "ty"):
+        try: setattr(f, "x", int(getattr(f, "tx")))
+        except Exception: pass
+        try: setattr(f, "y", int(getattr(f, "ty")))
+        except Exception: pass
+        return
+    # Fallbacks
+    if hasattr(f, "x") and hasattr(f, "y"):
+        return
+    try: setattr(f, "x", int(getattr(f, "cx", getattr(f, "grid_x", 0))))
+    except Exception: setattr(f, "x", 0)
+    try: setattr(f, "y", int(getattr(f, "cy", getattr(f, "grid_y", 0))))
+    except Exception: setattr(f, "y", 0)
+
+def _team_id(f) -> int:
+    for k in ("team_id", "tid", "team", "side"):
+        if hasattr(f, k):
+            try: return int(getattr(f, k))
+            except Exception: pass
+    return 0
+
 def _mod(score: int) -> int:
     try:
         return (int(score) - 10) // 2
@@ -82,34 +115,9 @@ def _chebyshev(a: Tuple[int,int], b: Tuple[int,int]) -> int:
 def _alive(f) -> bool:
     return bool(getattr(f, "alive", True)) and getattr(f, "hp", 1) > 0
 
-def _ensure_xy(f):
-    for attr in ("x", "tx"):
-        if not hasattr(f, attr):
-            try: setattr(f, attr, 0)
-            except Exception: pass
-    for attr in ("y", "ty"):
-        if not hasattr(f, attr):
-            try: setattr(f, attr, 0)
-            except Exception: pass
-
-def _name(f) -> str:
-    n = getattr(f, "name", None)
-    if n: return str(n)
-    first = getattr(f, "first", getattr(f, "first_name", "")) or ""
-    last  = getattr(f, "last", getattr(f, "last_name", "")) or ""
-    s = (first + " " + last).strip()
-    return s if s else f"F{getattr(f, 'pid', getattr(f, 'id', '?'))}"
-
-def _team_id(f) -> int:
-    return int(getattr(f, "team_id", getattr(f, "tid", 0)))
-
-def _ac(f) -> int:
-    if hasattr(f, "ac"):
-        try: return int(getattr(f, "ac"))
-        except Exception: pass
-    dex = getattr(f, "dex", getattr(f, "DEX", 10))
-    armor_bonus = getattr(f, "armor_bonus", 0)
-    return 10 + _mod(dex) + int(armor_bonus)
+def _as_int(v, default=0) -> int:
+    try: return int(v)
+    except Exception: return default
 
 # --- Weapon traits ---
 def _weapon_profile(f) -> Tuple[int, int, str, int]:
@@ -140,75 +148,38 @@ def _weapon_profile(f) -> Tuple[int, int, str, int]:
         reach = 1
         if "reach" in wl:
             try:
-                part = wl.split("reach", 1)[1]
-                digits = "".join(ch for ch in part if ch.isdigit())
-                if digits: reach = int(digits)
-            except Exception: pass
-        num, sides = _parse_dice(wl.split("reach",1)[0].strip())
-        finesse_keys = ("finesse","rapier","dagger","shortsword","scimitar","whip")
-        if any(k in wl for k in finesse_keys):
-            ability = "FINESSE"
-        elif "dex" in wl:
-            ability = "DEX"
-        else:
-            ability = "STR"
+                for part in wl.replace("=", " ").replace(",", " ").split():
+                    if part.startswith("reach"):
+                        # allow "reach=2" or "reach 2"
+                        pass
+                import re
+                m = re.search(r"reach\s*=?\s*(\d+)", wl)
+                if m: reach = int(m.group(1))
+            except Exception:
+                reach = 1
+        finesse = ("finesse" in wl)
+        ability = "FINESSE" if finesse else ("DEX" if "bow" in wl or "javelin" in wl or "ranged" in wl else "STR")
+        num, sides = _parse_dice(wl.split()[0] if wl.split() else "1d4")
         return (num, sides, ability, max(1, reach))
-
-    # int -> 1dX
-    if isinstance(w, int):
-        num, sides = _parse_dice(w)
-        return (num, sides, "STR", 1)
 
     return (1, 4, "STR", 1)
 
 def _ranged_info(f) -> Tuple[bool, int, int, str]:
     """
-    Patch C: ranged weapons support.
-    Returns: (is_ranged, normal_range, long_range, ability_used_for_ranged)
-      - distances in tiles using Chebyshev metric
-      - ability default DEX (unless explicit or thrown/javelin => STR)
+    Returns (is_ranged, normal_range, long_range, ability_used_for_ranged)
     """
     w = getattr(f, "weapon", None)
-    if w is None:
-        return (False, 0, 0, "DEX")
-    # dict
-    if isinstance(w, dict):
-        is_rng = bool(w.get("ranged", False)) or ("range" in w)
-        ability = str(w.get("ability", w.get("mod", "DEX"))).upper()
-        if bool(w.get("finesse", False)):
-            ability = "FINESSE"
-        nr, lr = 0, 0
-        rng = w.get("range", None)
-        if isinstance(rng, str) and "/" in rng:
-            try:
-                a, b = rng.split("/", 1)
-                nr, lr = int(a), int(b)
-            except Exception:
-                nr, lr = 8, 16
-        elif isinstance(rng, (tuple, list)) and len(rng) == 2:
-            nr, lr = int(rng[0]), int(rng[1])
-        elif isinstance(rng, int):
-            nr, lr = int(rng), int(rng)*2
-        elif is_rng:
-            nr, lr = 8, 16
-        return (is_rng, max(0, nr), max(0, lr), ability)
+    if isinstance(w, dict) and w.get("ranged", False):
+        rng = w.get("range", (0, 0))
+        nr = _as_int(rng[0] if isinstance(rng, (list, tuple)) and len(rng) >= 1 else 0, 0)
+        lr = _as_int(rng[1] if isinstance(rng, (list, tuple)) and len(rng) >= 2 else nr, nr)
+        ability = str(w.get("ability", "DEX")).upper()
+        return True, nr, lr, ability
+    if isinstance(w, str) and any(k in w.lower() for k in ("bow", "javelin", "sling", "crossbow", "ranged", "dart")):
+        # loose default: 12/24 tiles for bows-esque, DEX ability
+        return True, 12, 24, "DEX"
+    return False, 0, 0, "DEX"
 
-    # string
-    if isinstance(w, str):
-        wl = w.lower()
-        # bows/crossbows default to 12/24 tiles
-        if any(k in wl for k in ("bow","crossbow","sling","arrow","bolt")):
-            return (True, 12, 24, "DEX")
-        # thrown defaults (javelin/throw) to 6/12 and STR
-        if any(k in wl for k in ("javelin","throw","thrown")):
-            return (True, 6, 12, "STR")
-        # otherwise not ranged
-        return (False, 0, 0, "DEX")
-
-    # int or other
-    return (False, 0, 0, "DEX")
-
-# --- TBCombat core ---
 class TBCombat:
     """
     Turn-based combat on a rectangular grid.
@@ -242,61 +213,141 @@ class TBCombat:
             if not hasattr(f, "speed"):
                 try: setattr(f, "speed", 4)
                 except Exception: pass
-            if not hasattr(f, "_adv_once"):
-                try: setattr(f, "_adv_once", 0)
-                except Exception: pass
-            if not hasattr(f, "_dis_once"):
-                try: setattr(f, "_dis_once", 0)
-                except Exception: pass
+            # action economy statuses
+            try: setattr(f, "_status_hidden", False)
+            except Exception: pass
+            try: setattr(f, "_status_dodging", False)
+            except Exception: pass
+            try: setattr(f, "reactions_left", 1)  # Patch D pool
+            except Exception: pass
 
-        # battle state
         self.events: List[Any] = []
-        self.round: int = 1
-        self.turn_idx: int = 0
-        self.winner: Optional[int] = None
-
-        # initiative & per-round reactions
+        self.round = 1
+        self.turn_idx = 0
         self._initiative: List[int] = []
+        self.winner: Optional[int] = None
+        self.controllers: Dict[int, BaseController] = {}  # tid->controller
+
         self._roll_initiative()
-
-        # optional controllers
-        self.controllers: Dict[int, BaseController] = {}
-
         self._push({"type": "round_start", "round": self.round})
-        self._reset_reactions_for_round()
 
-    # -------- Public hooks (controllers/UI) --------
-    def set_controllers(self, controllers: Dict[int, BaseController]):
-        self.controllers = controllers or {}
-
-    def speed(self, actor) -> int:
-        return int(getattr(actor, "speed", 4))
-
-    def reach(self, actor) -> int:
-        _, _, _, r = _weapon_profile(actor)
-        return max(1, int(r))
-
-    def distance(self, a, b) -> int:
-        return _chebyshev(self._pos(a), self._pos(b))
-
-    def distance_xy(self, a, xy: Tuple[int, int]) -> int:
-        return _chebyshev(self._pos(a), xy)
-
-    def iter_enemies(self, actor):
-        tid = _team_id(actor)
-        for g in self.fighters:
-            if _alive(g) and _team_id(g) != tid:
-                yield g
-
+    # --- world API surface used by controllers/UI ---
+    def speed(self, f) -> int: return int(getattr(f, "speed", 4))
+    def reach(self, f) -> int: return int(_weapon_profile(f)[3])
+    def distance(self, a, b) -> int: return _chebyshev(self._pos(a), self._pos(b))
+    def distance_xy(self, a, xy: Tuple[int,int]) -> int: return _chebyshev(self._pos(a), xy)
+    def path_step(self, actor, target, *, avoid_oa: bool = True) -> Optional[Tuple[int, int]]:
+        ax, ay = self._pos(actor); tx, ty = self._pos(target)
+        return self.path_step_towards(actor, (tx, ty), avoid_oa=avoid_oa)
     def grant_advantage(self, f, stacks: int = 1):
         try: setattr(f, "_adv_once", max(0, int(getattr(f, "_adv_once", 0))) + int(stacks))
         except Exception: pass
-
     def grant_disadvantage(self, f, stacks: int = 1):
         try: setattr(f, "_dis_once", max(0, int(getattr(f, "_dis_once", 0))) + int(stacks))
         except Exception: pass
 
-    def path_step(self, actor, target, *, avoid_oa: bool = True) -> Optional[Tuple[int, int]]:
+    # -------------- movement helpers --------------
+    def _pos(self, f) -> Tuple[int, int]:
+        return int(getattr(f, "x", getattr(f, "tx", 0))), int(getattr(f, "y", getattr(f, "ty", 0)))
+
+    def _set_pos(self, f, x: int, y: int):
+        try: setattr(f, "x", int(x)); setattr(f, "y", int(y))
+        except Exception: pass
+        try: setattr(f, "tx", int(x)); setattr(f, "ty", int(y))
+        except Exception: pass
+
+    def _occupied(self, x: int, y: int) -> bool:
+        for g in self.fighters:
+            if not _alive(g): continue
+            gx, gy = self._pos(g)
+            if gx == x and gy == y:
+                return True
+        return False
+
+    def _in_bounds(self, x: int, y: int) -> bool:
+        return 0 <= x < self.cols and 0 <= y < self.rows
+
+    # -------------- OA helpers & movement --------------
+    def _enemies_in_reach_of_pos(self, actor, pos: Tuple[int,int]) -> List[Any]:
+        a_team = _team_id(actor)
+        out = []
+        for e in self.fighters:
+            if not _alive(e): continue
+            if _team_id(e) == a_team: continue
+            ex, ey = self._pos(e)
+            if _chebyshev((ex, ey), pos) <= self.reach(e):
+                out.append(e)
+        return out
+
+    def _would_provoke_oa(self, actor, from_xy: Tuple[int,int], to_xy: Tuple[int,int]) -> bool:
+        before = self._enemies_in_reach_of_pos(actor, from_xy)
+        after  = self._enemies_in_reach_of_pos(actor, to_xy)
+        # Disengage cancels OA for this actor
+        if getattr(actor, "_turn_disengaged", False):
+            return False
+        for e in before:
+            if e not in after and int(getattr(e, "reactions_left", 1)) > 0 and _alive(e):
+                return True
+        return False
+
+    def _threatened_in_melee(self, actor) -> bool:
+        """Within 1 tile of any living enemy (used for ranged disadvantage)."""
+        ax, ay = self._pos(actor)
+        for e in self.fighters:
+            if not _alive(e): continue
+            if _team_id(e) == _team_id(actor): continue
+            ex, ey = self._pos(e)
+            if _chebyshev((ax, ay), (ex, ey)) <= 1:
+                return True
+        return False
+
+    def _move_one_step_to(self, actor, nx: int, ny: int) -> bool:
+        ax, ay = self._pos(actor)
+        if not self._in_bounds(nx, ny): return False
+        if self._occupied(nx, ny): return False
+
+        # OA check: leaving reach of any enemy
+        provokers = []
+        before = self._enemies_in_reach_of_pos(actor, (ax, ay))
+        after  = self._enemies_in_reach_of_pos(actor, (nx, ny))
+        for e in before:
+            if e not in after and int(getattr(e, "reactions_left", 1)) > 0 and _alive(e):
+                provokers.append(e)
+
+        for e in list(provokers):
+            self._opportunity_attack(e, actor)
+            try: setattr(e, "reactions_left", max(0, int(getattr(e, "reactions_left", 1)) - 1))
+            except Exception: pass
+            if not _alive(actor):
+                return False
+
+        # Moving reveals you (breaks Hide)
+        try:
+            if getattr(actor, "_status_hidden", False):
+                setattr(actor, "_status_hidden", False)
+        except Exception:
+            pass
+
+        self._set_pos(actor, nx, ny)
+        self._push({"type": "move_step", "actor": _name(actor), "to": (nx, ny)})
+
+        # After moving, trigger enemy readied actions (simple: melee attack when you enter their reach)
+        for e in self.fighters:
+            if not _alive(e): 
+                continue
+            if _team_id(e) == _team_id(actor):
+                continue
+            if getattr(e, "_ready", None) == "attack_on_enter_reach" and int(getattr(e, "reactions_left", 1)) > 0:
+                ex, ey = self._pos(e)
+                if _chebyshev((ex, ey), (nx, ny)) <= self.reach(e):
+                    # use a reaction to perform an immediate attack
+                    self._opportunity_attack(e, actor)
+                    try: setattr(e, "reactions_left", max(0, int(getattr(e, "reactions_left", 1)) - 1))
+                    except Exception: pass
+
+        return True
+
+    def _step_towards(self, actor, target) -> bool:
         ax, ay = self._pos(actor)
         tx, ty = self._pos(target)
         options: List[Tuple[int,int]] = []
@@ -309,8 +360,13 @@ class TBCombat:
             primary = [(0, 1 if dy > 0 else -1)] if dy != 0 else []
             secondary = [(1 if dx > 0 else -1, 0)] if dx != 0 else []
         options = primary + secondary + [(1,0), (-1,0), (0,1), (0,-1)]
-        best: Optional[Tuple[int,int]] = None
-        best_d = 10**9
+
+        desired = max(1, self.reach(actor))
+        avoid_oa = True
+        try:
+            avoid_oa = bool(getattr(actor, "avoid_oa", True))
+        except Exception:
+            pass
 
         for pass_i in (0, 1):  # first try to avoid OA, then allow if blocked
             best = None; best_d = 10**9
@@ -345,21 +401,100 @@ class TBCombat:
 
         self.turn_idx = f_idx
         actor = self.fighters[self._initiative[self.turn_idx]]
+        # Reset per-turn flags for the acting fighter
+        try:
+            # Dash/disengage are per-turn toggles
+            setattr(actor, "_turn_dash_applied", False)
+            setattr(actor, "_turn_disengaged", False)
+            # Dodge ends at the start of your next turn
+            if getattr(actor, "_status_dodging", False):
+                setattr(actor, "_status_dodging", False)
+            # Clear any untriggered ready at the start of your turn
+            if hasattr(actor, "_ready"):
+                delattr(actor, "_ready")
+        except Exception:
+            pass
         if not _alive(actor):
             self._advance_turn_pointer()
             self._end_if_finished()
             return
 
-        self._push({"type": "turn_start", "actor": _name(actor), "actor_id": getattr(actor, "pid", None)})
+        self._push({"type": "turn_start", "actor": _name(actor), "round": self.round})
 
-        ctrl = self.controllers.get(_team_id(actor))
-        if ctrl:
-            acted = self._execute_controller_turn(ctrl, actor)
-            if not acted:
-                self._baseline_turn(actor)
-        else:
-            self._baseline_turn(actor)
+        # Try controller first
+        controller = self.controllers.get(_team_id(actor))
+        intents: List[Dict[str, Any]] = []
+        if controller:
+            try:
+                out = controller.decide(self, actor)
+                if isinstance(out, list):
+                    intents = [x for x in out if isinstance(x, dict)]
+            except Exception:
+                intents = []
 
+        if intents:
+            steps_left = self.speed(actor)
+            acted = False
+            attacked = False
+            for it in intents:
+                typ = (it.get("type") if isinstance(it, dict) else None) or "end"
+                if typ == "move" and steps_left > 0:
+                    to = it.get("to")
+                    if isinstance(to, (list, tuple)) and len(to) == 2:
+                        nx, ny = int(to[0]), int(to[1])
+                        if self._move_one_step_to(actor, nx, ny):
+                            steps_left -= 1
+                            acted = True
+                            continue
+                elif typ == "dash":
+                    # Dash: add base speed more steps this turn
+                    if not getattr(actor, "_turn_dash_applied", False):
+                        steps_left += max(0, int(getattr(actor, "speed", 4)))
+                        try: setattr(actor, "_turn_dash_applied", True)
+                        except Exception: pass
+                        acted = True
+                        continue
+                elif typ == "disengage":
+                    try: setattr(actor, "_turn_disengaged", True)
+                    except Exception: pass
+                    acted = True
+                    continue
+                elif typ == "dodge":
+                    try: setattr(actor, "_status_dodging", True)
+                    except Exception: pass
+                    acted = True
+                    continue
+                elif typ == "hide":
+                    try: setattr(actor, "_status_hidden", True)
+                    except Exception: pass
+                    acted = True
+                    continue
+                elif typ == "ready":
+                    # Simple ready: store one melee attack to trigger when an enemy enters your reach
+                    try: setattr(actor, "_ready", "attack_on_enter_reach")
+                    except Exception: pass
+                    acted = True
+                    continue
+                elif typ == "attack" and not attacked:
+                    target = it.get("target")
+                    if target is not None and _alive(target):
+                        # allow ranged at distance; melee requires reach
+                        dist = _chebyshev(self._pos(actor), self._pos(target))
+                        _, _, _, reach = _weapon_profile(actor)
+                        is_ranged, _, lr, _ = _ranged_info(actor)
+                        can_attack = (is_ranged and dist <= max(1, lr)) or (dist <= reach)
+                        if can_attack:
+                            self._attack(actor, target)
+                            attacked = True
+                            acted = True
+                            break
+                elif typ == "end":
+                    break
+
+            return acted or attacked
+
+        # -------------- Baseline AI (melee & ranged) --------------
+        self._baseline_turn(actor)
         self._advance_turn_pointer()
         self._end_if_finished()
 
@@ -378,7 +513,7 @@ class TBCombat:
 
     def _reset_reactions_for_round(self):
         for f in self.fighters:
-            try: setattr(f, "reaction_ready", True)
+            try: setattr(f, "reactions_left", 1)
             except Exception: pass
 
     def _advance_turn_pointer(self):
@@ -402,106 +537,10 @@ class TBCombat:
         return None
 
     # -------------- positions & occupancy --------------
-    def _pos(self, f) -> Tuple[int,int]:
+    def _pos(self, f) -> Tuple[int, int]:
         return int(getattr(f, "x", getattr(f, "tx", 0))), int(getattr(f, "y", getattr(f, "ty", 0)))
 
-    def _set_pos(self, f, x: int, y: int):
-        try: setattr(f, "x", int(x)); setattr(f, "y", int(y))
-        except Exception: pass
-        try: setattr(f, "tx", int(x)); setattr(f, "ty", int(y))
-        except Exception: pass
-
-    def _occupied(self, x: int, y: int) -> Optional[Any]:
-        for g in self.fighters:
-            if not _alive(g): continue
-            gx, gy = self._pos(g)
-            if gx == x and gy == y:
-                return g
-        return None
-
-    def _in_bounds(self, x: int, y: int) -> bool:
-        return 0 <= x < self.cols and 0 <= y < self.rows
-
-    # -------------- OA helpers & movement --------------
-    def _enemies_in_reach_of_pos(self, actor, pos: Tuple[int,int]) -> List[Any]:
-        a_team = _team_id(actor)
-        out = []
-        for e in self.fighters:
-            if not _alive(e): continue
-            if _team_id(e) == a_team: continue
-            ex, ey = self._pos(e)
-            if _chebyshev((ex, ey), pos) <= self.reach(e):
-                out.append(e)
-        return out
-
-    def _would_provoke_oa(self, actor, from_xy: Tuple[int,int], to_xy: Tuple[int,int]) -> bool:
-        before = self._enemies_in_reach_of_pos(actor, from_xy)
-        after  = self._enemies_in_reach_of_pos(actor, to_xy)
-        for e in before:
-            if e not in after and getattr(e, "reaction_ready", True) and _alive(e):
-                return True
-        return False
-
-    def _threatened_in_melee(self, actor) -> bool:
-        """Within 1 tile of any living enemy (used for ranged disadvantage)."""
-        ax, ay = self._pos(actor)
-        for e in self.fighters:
-            if not _alive(e): continue
-            if _team_id(e) == _team_id(actor): continue
-            ex, ey = self._pos(e)
-            if _chebyshev((ax, ay), (ex, ey)) <= 1:
-                return True
-        return False
-
-    def _move_one_step_to(self, actor, nx: int, ny: int) -> bool:
-        ax, ay = self._pos(actor)
-        if not self._in_bounds(nx, ny): return False
-        if self._occupied(nx, ny): return False
-
-        # OA check: leaving reach of any enemy
-        provokers = []
-        before = self._enemies_in_reach_of_pos(actor, (ax, ay))
-        after  = self._enemies_in_reach_of_pos(actor, (nx, ny))
-        for e in before:
-            if e not in after and getattr(e, "reaction_ready", True) and _alive(e):
-                provokers.append(e)
-
-        for e in list(provokers):
-            self._opportunity_attack(e, actor)
-            try: setattr(e, "reaction_ready", False)
-            except Exception: pass
-            if not _alive(actor):
-                return False
-
-        self._set_pos(actor, nx, ny)
-        self._push({"type": "move_step", "actor": _name(actor), "to": (nx, ny)})
-        return True
-
-    def _step_towards(self, actor, target) -> bool:
-        ax, ay = self._pos(actor)
-        tx, ty = self._pos(target)
-        options: List[Tuple[int,int]] = []
-        dx = tx - ax; dy = ty - ay
-        primary = []
-        if abs(dx) >= abs(dy):
-            primary = [(1 if dx > 0 else -1, 0)] if dx != 0 else []
-            secondary = [(0, 1 if dy > 0 else -1)] if dy != 0 else []
-        else:
-            primary = [(0, 1 if dy > 0 else -1)] if dy != 0 else []
-            secondary = [(1 if dx > 0 else -1, 0)] if dx != 0 else []
-        options = primary + secondary + [(1,0), (-1,0), (0,1), (0,-1)]
-
-        tried = set()
-        for vx, vy in options:
-            nx, ny = ax + vx, ay + vy
-            if (nx, ny) in tried: continue
-            tried.add((nx, ny))
-            if self._move_one_step_to(actor, nx, ny):
-                return True
-        self._push({"type": "blocked", "actor": _name(actor), "at": (ax, ay)})
-        return False
-
-    # -------------- Attacking --------------
+    # -------------- attack --------------
     def _compute_advantage(self, attacker, defender) -> int:
         """Return -1/0/+1 and consume one-shot stacks if present."""
         adv = 0
@@ -524,6 +563,13 @@ class TBCombat:
         if not (_alive(attacker) and _alive(defender)):
             return
 
+        # Attacking reveals you (breaks Hide)
+        try:
+            if getattr(attacker, "_status_hidden", False):
+                setattr(attacker, "_status_hidden", False)
+        except Exception:
+            pass
+
         # weapon / ranged traits
         num, sides, ability_melee, reach = _weapon_profile(attacker)
         is_ranged, nr, lr, ability_ranged = _ranged_info(attacker)
@@ -542,48 +588,44 @@ class TBCombat:
                 })
                 return
 
-        # compute advantage (consume one-shots), then apply ranged context modifiers
+        # compute advantage (consume one-shots), then apply context modifiers
         adv = self._compute_advantage(attacker, defender)
         ctx_adv = 0
         if is_ranged:
             if dist > 0 and nr > 0 and dist > nr:
-                ctx_adv -= 1  # long range
+                ctx_adv -= 1  # long range disadvantage
             if self._threatened_in_melee(attacker):
-                ctx_adv -= 1  # melee-threat
-        adv = max(-1, min(1, adv + ctx_adv))
+                ctx_adv -= 1  # firing in melee disadvantage
 
-        nat, eff = _roll_d20(self.rng, adv=adv)
-        ac = _ac(defender)
-        crit = (nat == 20)
+        # Defender context: Dodge imposes disadvantage on incoming attacks
+        if getattr(defender, "_status_dodging", False):
+            ctx_adv -= 1
+        # Simple Hide: ranged attacks against hidden targets have disadvantage
+        if is_ranged and getattr(defender, "_status_hidden", False):
+            ctx_adv -= 1
 
-        hit = False
-        if is_ranged:
-            hit = (eff + atk_mod >= ac) or crit
-        else:
-            # melee must be in reach
-            hit = ((dist <= reach) and ((eff + atk_mod >= ac) or crit))
+        n_raw, n_eff = _roll_d20(self.rng, adv + ctx_adv)
+        crit = (n_eff == 20)
+        hit = (n_eff + atk_mod >= int(getattr(defender, "ac", getattr(defender, "AC", 10)))) or crit
 
-        # attack event
-        self._push({
+        log = {
             "type": "attack",
             "actor": _name(attacker),
             "target": _name(defender),
-            "roll": nat,
-            "effective": eff,
-            "mod": atk_mod,
-            "target_ac": ac,
-            "hit": hit,
-            "critical": crit,
+            "roll": n_raw,
+            "effective": n_eff,
+            "advantage": (adv + ctx_adv > 0),
+            "disadvantage": (adv + ctx_adv < 0),
+            "critical": bool(crit),
+            "hit": bool(hit),
             "opportunity": bool(is_reaction),
             "ranged": bool(is_ranged),
-            "advantage": True if adv > 0 else False,
-            "disadvantage": True if adv < 0 else False,
-        })
+        }
+        self._push(log)
 
         if hit:
-            dice_num = num * (2 if crit else 1)
-            dmg = _roll_dice(self.rng, dice_num, sides) + atk_mod
-            if dmg < 1: dmg = 1
+            dice = 2 if crit else 1
+            dmg = _roll_dice(self.rng, dice * num, sides) + max(0, atk_mod)
             self._apply_damage(attacker, defender, dmg)
 
     def _opportunity_attack(self, attacker, mover):
@@ -600,44 +642,18 @@ class TBCombat:
             except Exception: pass
             self._push({"type": "down", "name": _name(defender)})
 
-    # -------------- Controller execution --------------
-    def _execute_controller_turn(self, ctrl: BaseController, actor) -> bool:
-        intents = ctrl.decide(self, actor) or []
-        if not intents:
-            return False
-
-        steps_left = self.speed(actor)
-        acted = False
-        attacked = False
-        for it in intents:
-            typ = (it.get("type") if isinstance(it, dict) else None) or "end"
-            if typ == "move" and steps_left > 0:
-                to = it.get("to")
-                if isinstance(to, (list, tuple)) and len(to) == 2:
-                    nx, ny = int(to[0]), int(to[1])
-                    if self._move_one_step_to(actor, nx, ny):
-                        steps_left -= 1
-                        acted = True
-                        continue
-            elif typ == "attack" and not attacked:
-                target = it.get("target")
-                if target is not None and _alive(target):
-                    # allow ranged at distance; melee requires reach
-                    dist = _chebyshev(self._pos(actor), self._pos(target))
-                    _, _, _, reach = _weapon_profile(actor)
-                    is_ranged, _, lr, _ = _ranged_info(actor)
-                    can_attack = (is_ranged and dist <= max(1, lr)) or (dist <= reach)
-                    if can_attack:
-                        self._attack(actor, target)
-                        attacked = True
-                        acted = True
-                        break
-            elif typ == "end":
-                break
-
-        return acted or attacked
-
     # -------------- Baseline AI (melee & ranged) --------------
+    def _choose_target(self, actor):
+        best = None; best_score = (10**9, 10**9)
+        for e in self.fighters:
+            if not _alive(e): continue
+            if _team_id(e) == _team_id(actor): continue
+            d = _chebyshev(self._pos(actor), self._pos(e))
+            score = (d, -_as_int(getattr(e, "ovr", getattr(e, "OVR", 50)), 50))
+            if score < best_score:
+                best_score = score; best = e
+        return best
+
     def _baseline_turn(self, actor):
         enemy = self._choose_target(actor)
         if enemy is None:
@@ -647,54 +663,36 @@ class TBCombat:
         is_ranged, nr, lr, _ = _ranged_info(actor)
 
         if is_ranged:
-            if dist <= max(1, lr):  # in long range: shoot
+            if dist <= max(1, lr):  # in long range envelope, try to preserve distance
+                if dist <= 1:
+                    # threatened — step away if possible
+                    step = self.path_step_towards(actor, (self.cols - 1 if _team_id(actor) == 0 else 0, self._pos(actor)[1]), avoid_oa=True)
+                    if step: self._move_one_step_to(actor, *step)
+                # shoot
                 self._attack(actor, enemy)
-                return
-            # else step until within long range, then shoot
-            steps = max(0, self.speed(actor))
-            for _ in range(steps):
+            else:
+                # close/open with dash-like sequence
+                moves = max(1, self.speed(actor) * 2 if dist > lr else self.speed(actor))
+                for _ in range(moves):
+                    step = self.path_step(actor, enemy, avoid_oa=True)
+                    if not step: break
+                    self._move_one_step_to(actor, *step)
                 if _chebyshev(self._pos(actor), self._pos(enemy)) <= max(1, lr):
-                    break
-                moved = self._step_towards(actor, enemy)
-                if not moved: break
-                if not _alive(enemy): break
-            if _alive(actor) and _alive(enemy) and _chebyshev(self._pos(actor), self._pos(enemy)) <= max(1, lr):
-                self._attack(actor, enemy)
-            return
-
-        # melee logic (unchanged)
-        if dist <= reach:
-            self._attack(actor, enemy)
-            return
-        steps = max(0, self.speed(actor))
-        for _ in range(steps):
+                    self._attack(actor, enemy)
+        else:
+            # melee: walk toward and swing
+            for _ in range(self.speed(actor)):
+                if _chebyshev(self._pos(actor), self._pos(enemy)) <= reach: break
+                step = self.path_step(actor, enemy, avoid_oa=True)
+                if not step: break
+                self._move_one_step_to(actor, *step)
             if _chebyshev(self._pos(actor), self._pos(enemy)) <= reach:
-                break
-            moved = self._step_towards(actor, enemy)
-            if not moved:
-                break
-            if not _alive(enemy):
-                break
-        if _alive(actor) and _alive(enemy) and _chebyshev(self._pos(actor), self._pos(enemy)) <= reach:
-            self._attack(actor, enemy)
+                self._attack(actor, enemy)
 
-    def _choose_target(self, actor) -> Optional[Any]:
-        best = None
-        best_d = 10**9
-        ax, ay = self._pos(actor)
-        a_team = _team_id(actor)
-        for g in self.fighters:
-            if not _alive(g): continue
-            if _team_id(g) == a_team: continue
-            d = _chebyshev((ax, ay), self._pos(g))
-            if d < best_d:
-                best = g; best_d = d
-            elif d == best_d:
-                if getattr(g, "hp", 1) < getattr(best, "hp", 1):
-                    best = g
-        return best
+        self._advance_turn_pointer()
+        self._end_if_finished()
 
-    # -------------- End & events --------------
+    # -------------- end-of-battle --------------
     def _end_if_finished(self):
         alive0 = any(_alive(f) and _team_id(f) == 0 for f in self.fighters)
         alive1 = any(_alive(f) and _team_id(f) == 1 for f in self.fighters)
