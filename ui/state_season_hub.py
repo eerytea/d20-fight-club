@@ -110,26 +110,20 @@ def _set_fixture_result(raw: Any, sh: int, sa: int):
         pass
 
 def _recompute_standings(car):
-    # Try career’s hook first
     for hook in ("_recompute_standings", "recompute_standings", "recalc_standings", "_recalc_tables"):
         fn = getattr(car, hook, None)
         if callable(fn):
             try:
-                fn()
-                return
+                fn(); return
             except Exception:
                 pass
-    # Fallback standings with pts / WDL / GF / GA / GD
     try:
-        if not hasattr(car, "standings"):
-            car.standings = {}
-        # zero
+        if not hasattr(car, "standings"): car.standings = {}
         for t in car.teams:
             tid = int(t["tid"])
             car.standings.setdefault(tid, {"tid": tid, "pts":0, "w":0, "d":0, "l":0, "gf":0, "ga":0, "gd":0, "name":t["name"]})
             s = car.standings[tid]
             s.update({"pts":0, "w":0, "d":0, "l":0, "gf":0, "ga":0, "gd":0, "name":t["name"]})
-        # sum from all played fixtures so far
         wmax = getattr(car, "week", 1)
         weeks = getattr(car, "fixtures_by_week", [])
         total_weeks = len(weeks) if weeks else wmax
@@ -146,13 +140,12 @@ def _recompute_standings(car):
                     sas["w"] += 1; shs["l"] += 1; sas["pts"] += 3
                 else:
                     shs["d"] += 1; sas["d"] += 1; shs["pts"] += 1; sas["pts"] += 1
-        # GD and sorted table
         table = []
         for tid, s in car.standings.items():
             s["gd"] = s["gf"] - s["ga"]
             table.append(s)
         table.sort(key=lambda r: (r["pts"], r["gd"], r["gf"]), reverse=True)
-        car.table_sorted = table  # convenient for Table screen
+        car.table_sorted = table
     except Exception:
         pass
 
@@ -256,9 +249,10 @@ class SeasonHubState:
     def _back(self): self.app.pop_state()
 
     def _play(self):
-        """Open the user's fixture for the current week using a fixture dict (what state_match expects)."""
+        """Open the user's fixture for the current week using the correct MatchState signature."""
         MatchState = _import_opt("ui.state_match.MatchState")
         if MatchState is None: return
+
         user_tid = int(getattr(self.career, "user_tid", 0))
         week_fixtures = _fixtures_for_week(self.career, self.week)
         my = None
@@ -277,42 +271,40 @@ class SeasonHubState:
             "score_home": my["sh"], "score_away": my["sa"],
         }
 
-        # Try a few constructor shapes
+        # Try multiple constructor shapes. IMPORTANT: put (app, career, fixture) FIRST.
         attempts = [
-            (self.app, fixture, self.career),
             (self.app, self.career, fixture),
+            (self.app, fixture, self.career),
             (self.app, fixture),
             (self.app, home, away, self.career),
             (self.app, self.career, home, away),
             (self.app, home, away),
         ]
+        last_exc = None
         for args in attempts:
             try:
                 self.app.push_state(MatchState(*args))  # type: ignore
                 return
-            except TypeError:
+            except Exception as e:  # keep trying other shapes on ANY exception
+                last_exc = e
                 continue
-            except Exception:
-                traceback.print_exc()
-                return
-        # no match — silently ignore
+        # If none worked, print the last for debugging
+        if last_exc:
+            traceback.print_exception(type(last_exc), last_exc, last_exc.__traceback__)
 
     def _sim_week(self):
         """Advance all fixtures for this week, then bump week and recompute standings."""
-        # Prefer native sim
         used_native = False
         for name in ("sim_week", "simulate_week", "simulate_current_week", "sim_round"):
             fn = getattr(self.career, name, None)
             if callable(fn):
                 try:
-                    fn()
-                    used_native = True
+                    fn(); used_native = True
                 except Exception:
                     traceback.print_exc()
                 break
 
         if not used_native:
-            # Lightweight local simulation (deterministic by seed+week)
             try:
                 rnd = random.Random(getattr(self.career, "seed", 1) + self.week * 777)
                 week_fixtures = _fixtures_for_week(self.career, self.week)
@@ -344,40 +336,20 @@ class SeasonHubState:
         _recompute_standings(self.career)
 
     def _go_schedule(self):
-        Cls = _import_opt("ui.state_schedule.ScheduleState")
-        if Cls is None:
-            Cls = _import_opt("ui.state_schedule.Schedule")
-        if Cls is None:
-            # our bundled screen
-            Cls = _import_opt("ui.state_schedule") or None
         try:
-            from ui.state_schedule import ScheduleState as BuiltinSchedule  # type: ignore
-            self.app.push_state(BuiltinSchedule(self.app, self.career))
-            return
+            from ui.state_schedule import ScheduleState  # type: ignore
+            self.app.push_state(ScheduleState(self.app, self.career))
         except Exception:
-            pass
-        if Cls is not None:
-            try:
-                self.app.push_state(Cls(self.app, self.career))  # type: ignore
-            except Exception:
-                traceback.print_exc()
+            traceback.print_exc()
 
     def _go_table(self):
         try:
-            from ui.state_table import TableState as BuiltinTable  # type: ignore
-            self.app.push_state(BuiltinTable(self.app, self.career))
-            return
+            from ui.state_table import TableState  # type: ignore
+            self.app.push_state(TableState(self.app, self.career))
         except Exception:
-            pass
-        Cls = _import_opt("ui.state_table.TableState") or _import_opt("ui.state_table.Table")
-        if Cls:
-            try:
-                self.app.push_state(Cls(self.app, self.career))  # type: ignore
-            except Exception:
-                traceback.print_exc()
+            traceback.print_exc()
 
     def _go_roster(self):
-        # Push our read-only roster viewer (team-select style)
         try:
             from ui.state_roster_view import RosterViewState  # type: ignore
             self.app.push_state(RosterViewState(self.app, self.career))
