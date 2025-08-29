@@ -8,6 +8,7 @@ from engine.conditions import (
     CONDITION_PRONE, CONDITION_RESTRAINED, CONDITION_STUNNED,
     ensure_bag, has_condition, add_condition, clear_condition, decrement_all_for_turn
 )
+from engine.spells import line_aoe_cells
 
 __all__ = ["TBCombat", "Team"]
 
@@ -73,13 +74,24 @@ def _str_mod(f) -> int:
 def _con_mod(f) -> int:
     return _mod(getattr(f, "con", getattr(f, "CON", 10)))
 
+def _int_mod(f) -> int:
+    return _mod(getattr(f, "int", getattr(f, "INT", 10)))
+
+def _wis_mod(f) -> int:
+    return _mod(getattr(f, "wis", getattr(f, "WIS", 10)))
+
+def _cha_mod(f) -> int:
+    return _mod(getattr(f, "cha", getattr(f, "CHA", 10)))
+
 def _ability_mod(f, ability: str) -> int:
     a = (ability or "").upper()
     if a == "DEX": return _dex_mod(f)
     if a == "STR": return _str_mod(f)
     if a == "CON": return _con_mod(f)
+    if a == "INT": return _int_mod(f)
+    if a == "WIS": return _wis_mod(f)
+    if a == "CHA": return _cha_mod(f)
     if a == "FINESSE": return max(_dex_mod(f), _str_mod(f))  # Patch B
-    # INT/WIS/CHA treated as 0 unless you later add scores
     return 0
 
 # --- Dice helpers ---
@@ -172,6 +184,7 @@ class TBCombat:
 
     Patch D: Dash/Disengage/Dodge/Hide/Ready + reactions pool.
     Patch E: Saving Throws + Conditions (Prone/Restrained/Stunned) + Concentration hook.
+    Patch F: Healing + Simple Spells (spell attack, save-based, line AoE).
     """
     def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], cols: int, rows: int, seed: Optional[int] = None):
         self.teams = [teamA, teamB]
@@ -215,7 +228,6 @@ class TBCombat:
     def speed(self, f) -> int:
         base = int(getattr(f, "speed", 4))
         if has_condition(f, CONDITION_RESTRAINED): return 0
-        # (Optional) prone halves speed; keep simple: allow normal speed
         return base
     def reach(self, f) -> int: return int(_weapon_profile(f)[3])
     def distance(self, a, b) -> int: return _chebyshev(self._pos(a), self._pos(b))
@@ -232,15 +244,13 @@ class TBCombat:
 
     # --- Saving throws API (Patch E) ---
     def saving_throw(self, actor, ability: str, dc: int, *, adv: int = 0) -> Dict[str, Any]:
-        """Roll a save for actor; returns payload with success boolean and pushes a 'save' event."""
         a = (ability or "CON").upper()
-        adv_clamped = 1 if adv > 0 else (-1 if adv < 0 else 0)
-        # Contextual disadvantage for some conditions
+        adv_clamped = 1 if adv > 0 else -1 if adv < 0 else 0
         ctx = 0
         if a == "DEX" and has_condition(actor, CONDITION_RESTRAINED):
-            ctx -= 1  # restrained hurts DEX saves
+            ctx -= 1
         if a in ("STR", "DEX") and has_condition(actor, CONDITION_STUNNED):
-            ctx -= 1  # stunned auto-fails STR/DEX in 5e; we model as disadvantage
+            ctx -= 1
         n_raw, n_eff = _roll_d20(self.rng, adv_clamped + ctx)
         mod = _ability_mod(actor, a)
         total = n_eff + mod
@@ -314,7 +324,6 @@ class TBCombat:
         return False
 
     def _move_one_step_to(self, actor, nx: int, ny: int) -> bool:
-        # movement blocked by restrained/stunned
         if has_condition(actor, CONDITION_RESTRAINED) or has_condition(actor, CONDITION_STUNNED):
             return False
 
@@ -337,11 +346,8 @@ class TBCombat:
                 return False
 
         # Moving breaks Hide
-        try:
-            if getattr(actor, "_status_hidden", False):
-                setattr(actor, "_status_hidden", False)
-        except Exception:
-            pass
+        if getattr(actor, "_status_hidden", False):
+            setattr(actor, "_status_hidden", False)
 
         self._set_pos(actor, nx, ny)
         self._push({"type": "move_step", "actor": _name(actor), "to": (nx, ny)})
@@ -396,6 +402,113 @@ class TBCombat:
         dummy = type("T", (), {"x": tx, "y": ty})
         return self.path_step(actor, dummy, avoid_oa=avoid_oa)
 
+    # ---------------- Patch F: Spells & Healing ----------------
+
+    def _spell_attack_roll(self, caster, defender, *, ability: str, normal_range: int = 12, long_range: int = 24) -> Tuple[bool, bool, int, int, int]:
+        """Returns (hit, crit, raw, eff, atk_mod); logs are handled by caller."""
+        atk_mod = _ability_mod(caster, ability)
+        dist = _chebyshev(self._pos(caster), self._pos(defender))
+        if long_range <= 0 or dist > long_range:
+            return False, False, 0, 0, atk_mod
+        ctx_adv = 0
+        if normal_range and dist > normal_range:
+            ctx_adv -= 1
+        if self._threatened_in_melee(caster):
+            ctx_adv -= 1
+        # Defender context: dodge, hidden (vs ranged), prone, restrained, stunned
+        base_adv = self._compute_advantage_like_spell(caster, defender, is_ranged=True)
+        n_raw, n_eff = _roll_d20(self.rng, base_adv + ctx_adv)
+        crit = (n_eff == 20)
+        ac = int(getattr(defender, "ac", getattr(defender, "AC", 10)))
+        hit = (n_eff + atk_mod >= ac) or crit
+        return hit, crit, n_raw, n_eff, atk_mod
+
+    def _compute_advantage_like_spell(self, attacker, defender, *, is_ranged: bool) -> int:
+        adv = 0
+        # consume one-shots if caller granted
+        ao = max(0, int(getattr(attacker, "_adv_once", 0))); do = max(0, int(getattr(attacker, "_dis_once", 0)))
+        if ao > 0: adv += 1; setattr(attacker, "_adv_once", ao - 1)
+        if do > 0: adv -= 1; setattr(attacker, "_dis_once", do - 1)
+        # defender conditions
+        if has_condition(defender, CONDITION_RESTRAINED): adv += 1
+        if has_condition(defender, CONDITION_STUNNED): adv += 1
+        if has_condition(defender, CONDITION_PRONE):
+            if is_ranged: adv -= 1
+            else:         adv += 1
+        # attacker conditions
+        if has_condition(attacker, CONDITION_RESTRAINED): adv -= 1
+        # Patch D statuses
+        if getattr(defender, "_status_dodging", False): adv -= 1
+        if is_ranged and getattr(defender, "_status_hidden", False): adv -= 1
+        return 1 if adv > 0 else -1 if adv < 0 else 0
+
+    def _cast_heal(self, caster, target, dice: str = "1d8", ability: str = "WIS"):
+        num, sides = _parse_dice(dice)
+        heal_amt = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
+        try:
+            mhp = int(getattr(target, "max_hp", max(1, int(getattr(target, "hp", 1)))))
+            hp0 = int(getattr(target, "hp", 0))
+            target.hp = min(mhp, hp0 + int(heal_amt))
+        except Exception:
+            pass
+        self._push({"type": "heal", "source": _name(caster), "target": _name(target), "amount": int(heal_amt)})
+
+    def _cast_spell_attack(self, caster, target, *, dice: str = "1d8", ability: str = "INT", normal_range: int = 12, long_range: int = 24):
+        if not (_alive(caster) and _alive(target)): return
+        hit, crit, n_raw, n_eff, atk_mod = self._spell_attack_roll(caster, target, ability=ability, normal_range=normal_range, long_range=long_range)
+        log = {
+            "type": "spell_attack",
+            "actor": _name(caster),
+            "target": _name(target),
+            "roll": n_raw, "effective": n_eff,
+            "advantage": False, "disadvantage": False,  # already baked in; UI tags still infer from attack/disadv flags if you want
+            "critical": bool(crit),
+            "hit": bool(hit),
+        }
+        self._push(log)
+        if hit:
+            num, sides = _parse_dice(dice)
+            dmg = _roll_dice(self.rng, (2 if crit else 1) * num, sides) + max(0, _ability_mod(caster, ability))
+            self._apply_damage(caster, target, dmg)
+
+    def _cast_spell_save(self, caster, target, *, save: str = "DEX", dc: int = 12, dice: Optional[str] = "1d8", ability: str = "INT", half_on_success: bool = False, apply_condition_on_fail: Optional[Tuple[str,int]] = None):
+        if not (_alive(caster) and _alive(target)): return
+        res = self.saving_throw(target, save, dc)
+        dmg = 0
+        if dice:
+            num, sides = _parse_dice(dice)
+            base = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
+            if res["success"] and half_on_success:
+                dmg = max(0, base // 2)
+            elif not res["success"]:
+                dmg = max(0, base)
+        if dmg > 0:
+            self._apply_damage(caster, target, dmg)
+        if (not res["success"]) and apply_condition_on_fail:
+            cname, dur = apply_condition_on_fail
+            add_condition(target, cname, int(dur))
+            self._push({"type": "condition_applied", "source": _name(caster), "target": _name(target), "condition": cname, "duration": int(dur)})
+
+    def _cast_spell_line(self, caster, target_xy: Tuple[int,int], *, length: int = 8, dice: str = "1d6", ability: str = "INT", save: Optional[str] = None, dc: int = 12, half_on_success: bool = False):
+        sx, sy = self._pos(caster)
+        tx, ty = int(target_xy[0]), int(target_xy[1])
+        cells = line_aoe_cells(sx, sy, tx, ty, length, self.cols, self.rows)
+        self._push({"type": "spell_aoe", "shape": "line", "source": _name(caster), "cells": cells})
+        # hit every creature (enemy or ally—up to your later rules; here we hit enemies only)
+        for f in self.fighters:
+            if not _alive(f): continue
+            if _team_id(f) == _team_id(caster):  # friendly fire off for now
+                continue
+            fx, fy = self._pos(f)
+            if (fx, fy) in cells:
+                if save:
+                    self._cast_spell_save(caster, f, save=save, dc=dc, dice=dice, ability=ability, half_on_success=half_on_success)
+                else:
+                    # treat as auto-hit spell attack (no roll)
+                    num, sides = _parse_dice(dice)
+                    dmg = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
+                    self._apply_damage(caster, f, dmg)
+
     # -------------- main turn --------------
     def take_turn(self):
         if self.winner is not None:
@@ -415,15 +528,13 @@ class TBCombat:
             self._push({"type": "condition_ended", "target": _name(actor), "condition": k})
 
         # Reset per-turn flags
-        try:
-            setattr(actor, "_turn_dash_applied", False)
-            setattr(actor, "_turn_disengaged", False)
-            if getattr(actor, "_status_dodging", False):
-                setattr(actor, "_status_dodging", False)  # Dodge lasts until your next turn starts
-            if hasattr(actor, "_ready"):
-                delattr(actor, "_ready")
-        except Exception:
-            pass
+        setattr(actor, "_turn_dash_applied", False)
+        setattr(actor, "_turn_disengaged", False)
+        if getattr(actor, "_status_dodging", False):
+            setattr(actor, "_status_dodging", False)  # Dodge lasts until your next turn starts
+        if hasattr(actor, "_ready"):
+            delattr(actor, "_ready")
+
         if not _alive(actor):
             self._advance_turn_pointer(); self._end_if_finished(); return
 
@@ -463,42 +574,68 @@ class TBCombat:
                 elif typ == "dash":
                     if not getattr(actor, "_turn_dash_applied", False):
                         steps_left += max(0, int(getattr(actor, "speed", 4)))
-                        try: setattr(actor, "_turn_dash_applied", True)
-                        except Exception: pass
+                        setattr(actor, "_turn_dash_applied", True)
                         acted = True
                         continue
                 elif typ == "disengage":
-                    try: setattr(actor, "_turn_disengaged", True)
-                    except Exception: pass
+                    setattr(actor, "_turn_disengaged", True)
                     acted = True
                     continue
                 elif typ == "dodge":
-                    try: setattr(actor, "_status_dodging", True)
-                    except Exception: pass
+                    setattr(actor, "_status_dodging", True)
                     acted = True
                     continue
                 elif typ == "hide":
-                    try: setattr(actor, "_status_hidden", True)
-                    except Exception: pass
+                    setattr(actor, "_status_hidden", True)
                     acted = True
                     continue
                 elif typ == "ready":
-                    try: setattr(actor, "_ready", "attack_on_enter_reach")
-                    except Exception: pass
+                    setattr(actor, "_ready", "attack_on_enter_reach")
                     acted = True
                     continue
-                elif typ == "apply_condition":
+                elif typ == "heal":
+                    target = it.get("target", actor)
+                    dice = it.get("dice", "1d8")
+                    ability = it.get("ability", "WIS")
+                    if target is None: target = actor
+                    self._cast_heal(actor, target, dice=dice, ability=ability)
+                    acted = True
+                    continue
+                elif typ == "spell_attack":
                     target = it.get("target")
-                    cond = str(it.get("condition", "")).lower()
-                    ability = str(it.get("save", "CON")).upper()
+                    dice = it.get("dice", "1d8")
+                    ability = it.get("ability", "INT")
+                    nr = int(it.get("normal_range", 12))
+                    lr = int(it.get("long_range", 24))
+                    if target is not None and _alive(target):
+                        self._cast_spell_attack(actor, target, dice=dice, ability=ability, normal_range=nr, long_range=lr)
+                        attacked = True
+                        acted = True
+                        continue
+                elif typ == "spell_save":
+                    target = it.get("target")
+                    save = str(it.get("save", "DEX"))
                     dc = int(it.get("dc", 12))
-                    dur = int(it.get("duration", 1))
-                    if target and cond in (CONDITION_PRONE, CONDITION_RESTRAINED, CONDITION_STUNNED):
-                        # Target rolls save; on fail, apply
-                        res = self.saving_throw(target, ability, dc)
-                        if not res["success"]:
-                            add_condition(target, cond, dur)
-                            self._push({"type": "condition_applied", "source": _name(actor), "target": _name(target), "condition": cond, "duration": dur})
+                    dice = it.get("dice", "1d8")
+                    ability = it.get("ability", "INT")
+                    half_on_success = bool(it.get("half_on_success", False))
+                    apply_cond = it.get("apply_condition_on_fail")  # e.g., ("restrained", 1)
+                    if target is not None and _alive(target):
+                        self._cast_spell_save(actor, target, save=save, dc=dc, dice=dice, ability=ability, half_on_success=half_on_success, apply_condition_on_fail=apply_cond)
+                        attacked = True
+                        acted = True
+                        continue
+                elif typ == "spell_line":
+                    target_xy = it.get("target_xy")
+                    length = int(it.get("length", 8))
+                    dice = it.get("dice", "1d6")
+                    ability = it.get("ability", "INT")
+                    save = it.get("save")  # or None
+                    dc = int(it.get("dc", 12))
+                    half_on_success = bool(it.get("half_on_success", False))
+                    if isinstance(target_xy, (list, tuple)) and len(target_xy) == 2:
+                        self._cast_spell_line(actor, (int(target_xy[0]), int(target_xy[1])), length=length, dice=dice, ability=ability, save=save, dc=dc, half_on_success=half_on_success)
+                        attacked = True
                         acted = True
                         continue
                 elif typ == "attack" and not attacked:
@@ -517,7 +654,7 @@ class TBCombat:
                     break
             return acted or attacked
 
-        # Baseline if no controller returns intents
+        # Baseline if no controller returns intents (unchanged melee/ranged baseline)
         self._baseline_turn(actor)
         self._advance_turn_pointer()
         self._end_if_finished()
@@ -560,27 +697,23 @@ class TBCombat:
                 return idx
         return None
 
-    # -------------- attack --------------
+    # -------------- attack (martial) --------------
     def _compute_advantage(self, attacker, defender, *, is_ranged: bool) -> int:
         adv = 0
         if getattr(attacker, "advantage", False): adv += 1
         if getattr(attacker, "disadvantage", False): adv -= 1
-        # consume one-shots
         ao = max(0, int(getattr(attacker, "_adv_once", 0)))
         do = max(0, int(getattr(attacker, "_dis_once", 0)))
         if ao > 0:
             adv += 1; setattr(attacker, "_adv_once", ao - 1)
         if do > 0:
             adv -= 1; setattr(attacker, "_dis_once", do - 1)
-        # Defender conditions
         if has_condition(defender, CONDITION_RESTRAINED): adv += 1
         if has_condition(defender, CONDITION_STUNNED): adv += 1
         if has_condition(defender, CONDITION_PRONE):
-            if is_ranged: adv -= 1   # ranged vs prone: disadvantage
-            else:         adv += 1   # melee vs prone: advantage
-        # Attacker conditions
+            if is_ranged: adv -= 1
+            else:         adv += 1
         if has_condition(attacker, CONDITION_RESTRAINED): adv -= 1
-        # Hide/Dodge (Patch D)
         if getattr(defender, "_status_dodging", False): adv -= 1
         if is_ranged and getattr(defender, "_status_hidden", False): adv -= 1
         return 1 if adv > 0 else -1 if adv < 0 else 0
@@ -591,7 +724,6 @@ class TBCombat:
         if has_condition(attacker, CONDITION_STUNNED):
             return  # stunned cannot attack
 
-        # Attacking breaks Hide
         if getattr(attacker, "_status_hidden", False):
             setattr(attacker, "_status_hidden", False)
 
@@ -610,14 +742,12 @@ class TBCombat:
                 })
                 return
 
-        # Ranged context (Patch C)
         ctx_adv = 0
         if is_ranged:
             if nr > 0 and dist > nr:
                 ctx_adv -= 1
             if self._threatened_in_melee(attacker):
                 ctx_adv -= 1
-            # Attacker is prone and shooting: disadvantage (Patch E)
             if has_condition(attacker, CONDITION_PRONE):
                 ctx_adv -= 1
 
@@ -684,7 +814,7 @@ class TBCombat:
         return best
 
     def _baseline_turn(self, actor):
-        # If restrained: cannot move; if stunned: already returned in take_turn
+        # Minimal baseline remains martial/ranged; spells are controller-driven.
         enemy = self._choose_target(actor)
         if enemy is None:
             return
