@@ -1,209 +1,384 @@
 # ui/state_season_hub.py
 from __future__ import annotations
-
 import pygame
-from pygame import Rect
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+import random
+import traceback
 
-# ---- UI kit (fallbacks if missing) ----
 try:
-    from ui.uiutil import Theme, Button, draw_text, panel
-except Exception:
-    Theme = None
-    class Button:
-        def __init__(self, rect, label, cb, enabled=True):
-            self.rect, self.label, self.cb, self.enabled = rect, label, cb, enabled
-        def draw(self, screen):
-            pygame.draw.rect(screen, (60,60,70) if self.enabled else (40,40,48), self.rect, border_radius=8)
-            font = pygame.font.SysFont("arial", 18)
-            screen.blit(font.render(self.label, True, (255,255,255) if self.enabled else (170,170,170)),
-                        (self.rect.x+10, self.rect.y+6))
-        def handle(self, ev):
-            if self.enabled and ev.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(ev.pos):
-                self.cb()
-    def draw_text(surface, text, x, y, color=(230,230,235), size=20):
-        font = pygame.font.SysFont("arial", size)
-        surface.blit(font.render(str(text), True, color), (x, y))
-    def panel(surface, rect, color=(30,30,38)):
-        pygame.draw.rect(surface, color, rect, border_radius=10)
-
-# ---- Child states (optional) ----
-try:
-    from ui.state_match import MatchState
-except Exception:
-    MatchState = None
-try:
-    from ui.state_schedule import ScheduleState
-except Exception:
-    ScheduleState = None
-try:
-    from ui.state_table import TableState
-except Exception:
-    TableState = None
-try:
-    from ui.state_roster import RosterState
-except Exception:
-    RosterState = None
-try:
-    from ui.state_pre_match_oi import PreMatchOIState
-except Exception:
-    PreMatchOIState = None
-
-# ---- Career (type only) ----
-try:
-    from core.career import Career
+    from core.career import Career  # type: ignore
 except Exception:
     Career = None  # type: ignore
 
+# ---------- small shared Button (same shape as menu/team_select) ----------
+@dataclass
+class Button:
+    rect: pygame.Rect
+    text: str
+    action: callable
+    hover: bool = False
+    disabled: bool = False
 
+    def draw(self, surf: pygame.Surface, font: pygame.font.Font, selected: bool=False):
+        bg = (58, 60, 70) if not self.hover else (76, 78, 90)
+        if selected: bg = (88, 92, 110)
+        if self.disabled: bg = (48, 48, 54)
+        pygame.draw.rect(surf, bg, self.rect, border_radius=10)
+        pygame.draw.rect(surf, (24, 24, 28), self.rect, 2, border_radius=10)
+        color = (235, 235, 240) if not self.disabled else (155, 155, 160)
+        txt = font.render(self.text, True, color)
+        surf.blit(txt, (self.rect.x + 14, self.rect.y + (self.rect.h - txt.get_height()) // 2))
+
+    def handle(self, ev: pygame.event.Event):
+        if self.disabled: return
+        if ev.type == pygame.MOUSEMOTION:
+            self.hover = self.rect.collidepoint(ev.pos)
+        elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+            if self.rect.collidepoint(ev.pos):
+                self.action()
+
+# ---------- helpers ----------
+def _import_opt(fullname: str):
+    try:
+        module_name, class_name = fullname.rsplit(".", 1)
+        mod = __import__(module_name, fromlist=[class_name])
+        return getattr(mod, class_name, None)
+    except Exception:
+        return None
+
+def _team_name(car, tid: int) -> str:
+    if hasattr(car, "team_name") and callable(getattr(car, "team_name")):
+        try: return car.team_name(int(tid))  # type: ignore
+        except Exception: pass
+    # fallback: search list
+    try:
+        for t in getattr(car, "teams", []):
+            if int(t.get("tid", -1)) == int(tid):
+                return t.get("name", f"Team {tid}")
+    except Exception:
+        pass
+    return f"Team {tid}"
+
+def _avg_ovr(team: Dict[str, Any]) -> float:
+    fs = team.get("fighters", []) or []
+    if not fs: return 60.0
+    s = 0.0; n = 0
+    for p in fs:
+        try:
+            s += float(p.get("OVR", p.get("ovr", p.get("OVR_RATING", 60))))
+            n += 1
+        except Exception:
+            pass
+    return s / max(1, n)
+
+def _norm_fixture(f: Any) -> Dict[str, Any]:
+    """
+    Normalize a fixture to dict:
+      {home: int, away: int, played: bool, sh: Optional[int], sa: Optional[int]}
+    Works with tuples/lists or dicts from various shapes.
+    """
+    if isinstance(f, dict):
+        home = f.get("home_tid", f.get("home", f.get("h", f.get("home_id", 0))))
+        away = f.get("away_tid", f.get("away", f.get("a", f.get("away_id", 0))))
+        sh = f.get("score_home", f.get("sh", f.get("home_score")))
+        sa = f.get("score_away", f.get("sa", f.get("away_score")))
+        played = f.get("played", f.get("is_played", (sh is not None and sa is not None)))
+        return {"home": int(home), "away": int(away), "played": bool(played), "sh": sh, "sa": sa, "_raw": f}
+    if isinstance(f, (list, tuple)):
+        home = int(f[0]) if len(f) >= 1 else 0
+        away = int(f[1]) if len(f) >= 2 else 0
+        sh = f[2] if len(f) >= 3 else None
+        sa = f[3] if len(f) >= 4 else None
+        played = (sh is not None and sa is not None)
+        return {"home": home, "away": away, "played": bool(played), "sh": sh, "sa": sa, "_raw": f}
+    # unknown
+    return {"home": 0, "away": 0, "played": False, "sh": None, "sa": None, "_raw": f}
+
+def _fixtures_for_week(car, week_idx: int) -> List[Dict[str, Any]]:
+    weeks = getattr(car, "fixtures_by_week", None)
+    if weeks and 0 <= week_idx-1 < len(weeks):
+        return [_norm_fixture(x) for x in weeks[week_idx-1]]
+    # fallback: single list with week field
+    fixtures = getattr(car, "fixtures", [])
+    out: List[Dict[str, Any]] = []
+    for f in fixtures:
+        w = f.get("week") if isinstance(f, dict) else None
+        if w == week_idx:
+            out.append(_norm_fixture(f))
+    return out
+
+def _set_fixture_result(raw: Any, sh: int, sa: int):
+    """Write back scores & played flag onto various shapes."""
+    try:
+        if isinstance(raw, dict):
+            for k, v in (("score_home", sh), ("score_away", sa), ("played", True), ("is_played", True)):
+                if k in raw or True:
+                    raw[k] = v
+        elif isinstance(raw, list):
+            while len(raw) < 4: raw.append(None)
+            raw[2] = sh; raw[3] = sa
+        elif isinstance(raw, tuple):
+            # tuples are immutable — ignore; many schedulers use dict/list anyway
+            pass
+    except Exception:
+        pass
+
+def _recompute_standings(car):
+    for hook in ("_recompute_standings", "recompute_standings", "recalc_standings", "_recalc_tables"):
+        fn = getattr(car, hook, None)
+        if callable(fn):
+            try:
+                fn()
+                return
+            except Exception:
+                pass
+    # light fallback: points table in car.standings as dict
+    try:
+        if not hasattr(car, "standings"): return
+        # zero
+        for t in car.teams:
+            car.standings.setdefault(t["tid"], {"tid": t["tid"], "pts": 0, "w":0, "d":0, "l":0, "gf":0, "ga":0})
+            s = car.standings[t["tid"]]
+            s.update({"pts":0, "w":0, "d":0, "l":0, "gf":0, "ga":0})
+        # sum from fixtures
+        wmax = getattr(car, "week", 1)
+        for w in range(1, wmax+1):
+            for fx in _fixtures_for_week(car, w):
+                if not fx["played"]: continue
+                h, a, sh, sa = fx["home"], fx["away"], int(fx["sh"]), int(fx["sa"])
+                shs = car.standings[h]; sas = car.standings[a]
+                shs["gf"] += sh; shs["ga"] += sa
+                sas["gf"] += sa; sas["ga"] += sh
+                if sh > sa:
+                    shs["w"] += 1; sas["l"] += 1; shs["pts"] += 3
+                elif sh < sa:
+                    sas["w"] += 1; shs["l"] += 1; sas["pts"] += 3
+                else:
+                    shs["d"] += 1; sas["d"] += 1; shs["pts"] += 1; sas["pts"] += 1
+    except Exception:
+        pass
+
+# ---------- Season Hub ----------
 class SeasonHubState:
-    """
-    Season Hub:
-      - Header: Your Team, Week N
-      - This Week's Matchups (scroll list)
-      - Buttons: Play, Sim Week, Schedule, Table, Roster, Back
-    """
     def __init__(self, app, career):
         self.app = app
         self.career = career
 
-        self.rc_hdr   = Rect(20, 20, 860, 60)
-        self.rc_list  = Rect(20, 90, 620, 460)
-        self.rc_btns  = Rect(660, 90, 220, 180)
-        self.rc_back  = Rect(660, 280, 220, 270)
+        self.font  = pygame.font.SysFont(None, 22)
+        self.h1    = pygame.font.SysFont(None, 34)
+        self.h2    = pygame.font.SysFont(None, 20)
 
-        self.row_h = 26
-        self.scroll = 0
-        self._toast = ""
-        self._toast_t = 0.0
+        self.rect_header: Optional[pygame.Rect] = None
+        self.rect_left:   Optional[pygame.Rect] = None
+        self.rect_right:  Optional[pygame.Rect] = None
 
-        # Buttons
-        x, y = self.rc_btns.x + 10, self.rc_btns.y + 10
-        w, h, g = 200, 36, 10
-        self.btn_play = Button(Rect(x, y, w, h), "Play", self._play); y += h + g
-        self.btn_sim  = Button(Rect(x, y, w, h), "Sim Week", self._sim_week); y += h + g
-        self.btn_sched= Button(Rect(x, y, w, h), "Schedule", self._open_schedule); y += h + g
-        self.btn_table= Button(Rect(x, y, w, h), "Table", self._open_table); y += h + g
+        self.btns: List[Button] = []
+        self.week = int(getattr(self.career, "week", 1) or 1)
 
-        x, y = self.rc_back.x + 10, self.rc_back.y + 10
-        self.btn_roster= Button(Rect(x, y, w, h), "Roster", self._open_roster); y += h + g
-        self.btn_back  = Button(Rect(x, y, w, h), "Back", self._back)
+    # ----- lifecycle -----
+    def enter(self):
+        w, h = self.app.screen.get_size()
+        pad = 16
+        self.rect_header = pygame.Rect(pad, pad, w - pad*2, 48)
+        self.rect_left   = pygame.Rect(pad, self.rect_header.bottom + pad, int(w * 0.62) - pad, h - (self.rect_header.bottom + pad*2))
+        self.rect_right  = pygame.Rect(self.rect_left.right + pad, self.rect_left.y, w - (self.rect_left.right + pad*2), self.rect_left.h)
 
-        self._buttons = [self.btn_play, self.btn_sim, self.btn_sched, self.btn_table, self.btn_roster, self.btn_back]
+        # Buttons stack
+        bx = self.rect_right.x + 12
+        by = self.rect_right.y + 12
+        bw, bh, gap = self.rect_right.w - 24, 48, 12
 
-    # ---------------- events ----------------
-    def handle_event(self, ev):
-        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-            self._back(); return
-        if ev.type == pygame.MOUSEWHEEL and self.rc_list.collidepoint(pygame.mouse.get_pos()):
-            self.scroll = max(0, self.scroll - ev.y)
-        if ev.type == pygame.MOUSEBUTTONDOWN:
-            for b in self._buttons:
-                b.handle(ev)
+        def add(label, cb):
+            nonlocal by
+            b = Button(pygame.Rect(bx, by, bw, bh), label, cb)
+            self.btns.append(b); by += (bh + gap)
 
-    def update(self, dt):
-        if self._toast_t > 0:
-            self._toast_t -= dt
-            if self._toast_t <= 0:
-                self._toast = ""
+        add("Play", self._play)
+        add("Sim Week", self._sim_week)
+        add("Schedule", self._go_schedule)
+        add("Table", self._go_table)
+        add("Roster", self._go_roster)
+        add("Back", self._back)
 
-        # Enable/disable Play based on presence of user's unplayed fixture
-        self.btn_play.enabled = (self._find_user_fixture() is not None)
+    def handle(self, ev: pygame.event.Event):
+        if ev.type == pygame.KEYDOWN:
+            if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                self._back(); return
+            if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self._play(); return
+        for b in self.btns:
+            b.handle(ev)
 
-    def draw(self, screen):
-        screen.fill((12,12,16))
+    def update(self, dt: float):
+        # keep week mirror fresh if career advances externally
+        self.week = int(getattr(self.career, "week", self.week) or self.week)
 
-        # Header
-        panel(screen, self.rc_hdr)
-        tid = getattr(self.career, "user_tid", 0)
-        draw_text(screen, f"Your Team: {self.career.team_name(tid)}", self.rc_hdr.x + 10, self.rc_hdr.y + 10, size=22)
-        draw_text(screen, f"Week {getattr(self.career, 'week', 1)}", self.rc_hdr.x + 620, self.rc_hdr.y + 12, size=20)
+    # ----- drawing -----
+    def draw(self, screen: pygame.Surface):
+        w, h = screen.get_size()
+        screen.fill((16,16,20))
 
-        # Fixtures list
-        panel(screen, self.rc_list, color=(24,24,28))
-        draw_text(screen, "This Week's Matchups", self.rc_list.x + 10, self.rc_list.y + 10, size=18)
-        self._draw_fixtures(screen)
+        # header
+        hdr = self.rect_header
+        pygame.draw.rect(screen, (42,44,52), hdr, border_radius=12)
+        pygame.draw.rect(screen, (24,24,28), hdr, 2, border_radius=12)
+        user_tid = int(getattr(self.career, "user_tid", 0))
+        title = f"Your Team: {_team_name(self.career, user_tid)}"
+        t1 = self.h1.render(title, True, (235,235,240))
+        t2 = self.h1.render(f"Week {self.week}", True, (220,220,225))
+        screen.blit(t1, (hdr.x + 12, hdr.y + (hdr.h - t1.get_height()) // 2))
+        screen.blit(t2, (hdr.right - t2.get_width() - 12, hdr.y + (hdr.h - t2.get_height()) // 2))
 
-        # Buttons
-        panel(screen, self.rc_btns, color=(24,24,28))
-        for b in self._buttons:
-            b.draw(screen)
+        # left panel (matchups)
+        lp = self.rect_left
+        pygame.draw.rect(screen, (42,44,52), lp, border_radius=12)
+        pygame.draw.rect(screen, (24,24,28), lp, 2, border_radius=12)
+        sub = self.h2.render("This Week's Matchups", True, (215,215,220))
+        screen.blit(sub, (lp.x + 12, lp.y + 10))
 
-        if self._toast:
-            draw_text(screen, self._toast, self.rc_hdr.x + 480, self.rc_hdr.y + 12, (230,230,240), 18)
+        week_fixtures = _fixtures_for_week(self.career, self.week)
+        y = lp.y + 40
+        line_h = self.font.get_height() + 10
+        for fx in week_fixtures[:min(12, len(week_fixtures))]:
+            hname = _team_name(self.career, fx["home"])
+            aname = _team_name(self.career, fx["away"])
+            sep = " — " if fx["played"] else "  —  "
+            score = f"{fx['sh']} - {fx['sa']}" if fx["played"] and fx["sh"] is not None else ""
+            label = f"{hname}  vs  {aname}  {sep}  {score}"
+            surf = self.font.render(label, True, (230,230,235))
+            screen.blit(surf, (lp.x + 12, y))
+            y += line_h
 
-    # ---------------- helpers ----------------
-    def _draw_fixtures(self, screen):
-        area = Rect(self.rc_list.x + 8, self.rc_list.y + 36, self.rc_list.w - 16, self.rc_list.h - 44)
-        pygame.draw.rect(screen, (18,18,22), area, border_radius=6)
+        # right panel (buttons)
+        rp = self.rect_right
+        pygame.draw.rect(screen, (42,44,52), rp, border_radius=12)
+        pygame.draw.rect(screen, (24,24,28), rp, 2, border_radius=12)
+        for b in self.btns:
+            b.draw(screen, self.font)
 
-        wk = getattr(self.career, "week", 1)
-        fixtures = list(self.career.fixtures_for_week(wk))
-        start = self.scroll
-        max_rows = area.h // self.row_h
-        rows = fixtures[start:start+max_rows]
-
-        for i, fx in enumerate(rows):
-            y = area.y + i*self.row_h
-            hn = self.career.team_name(int(fx["home_id"]))
-            an = self.career.team_name(int(fx["away_id"]))
-            status = "FINAL" if fx.get("played") else "—"
-            draw_text(screen, f"{hn}  vs  {an}    {status}", area.x + 8, y + 4, size=18)
-
-    def _find_user_fixture(self) -> Optional[Dict[str, Any]]:
-        user_tid = getattr(self.career, "user_tid", None)
-        if user_tid is None:
-            return None
-        wk = getattr(self.career, "week", 1)
-        for fx in self.career.fixtures_for_week(wk):
-            if fx.get("played"):
-                continue
-            if str(fx.get("home_id")) == str(user_tid) or str(fx.get("away_id")) == str(user_tid):
-                return fx
-        return None
-
-    def _toast_set(self, text: str):
-        # Use app toast if available; else draw in header for ~2s.
-        cb = getattr(self.app, "set_toast", None)
-        if callable(cb):
-            cb(text)
-        else:
-            self._toast = text
-            self._toast_t = 2.0
-
-    # ---------------- actions ----------------
-    def _play(self):
-        fx = self._find_user_fixture()
-        if fx is None:
-            self._toast_set("No match to play this week.")
-            return
-        # Prefer Pre-Match OI panel; fallback to direct match
-        if PreMatchOIState is not None:
-            self.app.push_state(PreMatchOIState(self.app, self.career, fixture=fx))
-        elif MatchState is not None:
-            self.app.push_state(MatchState(self.app, self.career, fixture=fx))
-        else:
-            self._toast_set("Match screen not available.")
-
-    def _sim_week(self):
-        try:
-            self.career.simulate_week_ai()
-            self._toast_set("Week simulated.")
-        except Exception:
-            self._toast_set("Sim failed.")
-
-    def _open_schedule(self):
-        if ScheduleState is not None:
-            self.app.push_state(ScheduleState(self.app, self.career))
-
-    def _open_table(self):
-        if TableState is not None:
-            self.app.push_state(TableState(self.app, self.career))
-
-    def _open_roster(self):
-        if RosterState is not None:
-            tid = getattr(self.career, "user_tid", 0)
-            self.app.push_state(RosterState(self.app, self.career, tid=tid))
-
+    # ----- actions -----
     def _back(self):
         self.app.pop_state()
+
+    def _play(self):
+        """Open the user's fixture for the current week."""
+        user_tid = int(getattr(self.career, "user_tid", 0))
+        week_fixtures = _fixtures_for_week(self.career, self.week)
+        my = None
+        for fx in week_fixtures:
+            if int(fx["home"]) == user_tid or int(fx["away"]) == user_tid:
+                my = fx; break
+        if not my:
+            return  # no match this week?
+
+        home, away = int(my["home"]), int(my["away"])
+
+        # Try several MatchState signatures
+        MatchState = _import_opt("ui.state_match.MatchState")
+        if MatchState is None:
+            return
+        # best bet: (app, home_tid, away_tid, career)
+        for sig in (
+            (self.app, home, away, self.career),
+            (self.app, self.career, home, away),
+            (self.app, home, away),
+        ):
+            try:
+                st = MatchState(*sig)  # type: ignore
+                self.app.push_state(st)
+                return
+            except TypeError:
+                continue
+            except Exception:
+                traceback.print_exc()
+                return
+        # if all fail, give up silently
+
+    def _sim_week(self):
+        """Advance all AI fixtures (and yours) then move to next week."""
+        # Prefer career's native sim
+        for name in ("sim_week", "simulate_week", "simulate_current_week", "sim_round"):
+            fn = getattr(self.career, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                    # some impls also bump week; if not, do it below
+                    break
+                except Exception:
+                    traceback.print_exc()
+                    break
+        else:
+            # Lightweight local simulation
+            try:
+                rnd = random.Random(getattr(self.career, "seed", 1) + self.week * 777)
+                week_fixtures = _fixtures_for_week(self.career, self.week)
+                # quick average OVR lookup
+                ovr_by_tid = {int(t["tid"]): _avg_ovr(t) for t in getattr(self.career, "teams", [])}
+                for fx in week_fixtures:
+                    if fx["played"]:  # already done
+                        continue
+                    h, a = int(fx["home"]), int(fx["away"])
+                    hq = ovr_by_tid.get(h, 60.0)
+                    aq = ovr_by_tid.get(a, 60.0)
+                    # chance to score ~ Poisson-ish using quality
+                    hb = max(0.6, (hq - 40.0) / 25.0)
+                    ab = max(0.6, (aq - 40.0) / 25.0)
+                    sh = max(0, int(rnd.gauss(hb, 0.9)))
+                    sa = max(0, int(rnd.gauss(ab, 0.9)))
+                    # tiny home edge
+                    if rnd.random() < 0.15:
+                        sh += 1
+                    _set_fixture_result(fx.get("_raw"), sh, sa)
+                    fx["played"] = True; fx["sh"] = sh; fx["sa"] = sa
+                _recompute_standings(self.career)
+            except Exception:
+                traceback.print_exc()
+
+        # Advance week if possible
+        try:
+            total_weeks = len(getattr(self.career, "fixtures_by_week", [])) or getattr(self.career, "total_weeks", 0)
+            self.career.week = min(int(getattr(self.career, "week", 1)) + 1, total_weeks or 9999)
+            self.week = int(self.career.week)
+            _recompute_standings(self.career)
+        except Exception:
+            pass
+
+    def _go_schedule(self):
+        for fullname in ("ui.state_schedule.ScheduleState", "ui.state_schedule.Schedule"):
+            Cls = _import_opt(fullname)
+            if Cls is None: continue
+            for args in ((self.app, self.career), (self.app,)):
+                try:
+                    self.app.push_state(Cls(*args))  # type: ignore
+                    return
+                except TypeError:
+                    continue
+                except Exception:
+                    traceback.print_exc(); return
+
+    def _go_table(self):
+        for fullname in ("ui.state_table.TableState", "ui.state_table.Table"):
+            Cls = _import_opt(fullname)
+            if Cls is None: continue
+            for args in ((self.app, self.career), (self.app,)):
+                try:
+                    self.app.push_state(Cls(*args))  # type: ignore
+                    return
+                except TypeError:
+                    continue
+                except Exception:
+                    traceback.print_exc(); return
+
+    def _go_roster(self):
+        for fullname in ("ui.state_roster.RosterState", "ui.state_roster.Roster"):
+            Cls = _import_opt(fullname)
+            if Cls is None: continue
+            for args in ((self.app, self.career), (self.app,)):
+                try:
+                    self.app.push_state(Cls(*args))  # type: ignore
+                    return
+                except TypeError:
+                    continue
+                except Exception:
+                    traceback.print_exc(); return
