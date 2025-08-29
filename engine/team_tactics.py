@@ -14,29 +14,26 @@ class RoleSpec:
     # Behavior
     stance: str = "balanced"              # aggressive | balanced | defensive | hold
     desired_range: int = 1                # 1=melee, >=2 for reach/ranged
-    avoid_oa: bool = True                 # avoid provoking opportunity attacks if possible
+    avoid_oa: bool = True                 # try to route around OA zones
     focus: str = "closest"                # closest | lowest_hp | highest_ovr
+    roam: int = 3                         # tiles allowed from anchor
+    anchor: Optional[Tuple[int,int]] = None
 
-    # Positioning
-    roam: int = 99                        # max tiles to stray from anchor (Chebyshev)
-    anchor: Optional[Tuple[int, int]] = None  # (cx, cy) or None
-
-    # 🎯 Patch B: one-shot roll modifiers for the *next* attack this turn
+    # 🎯 Patch B: one-shot attack roll modifiers
     attack_advantage: bool = False
     attack_disadvantage: bool = False
 
 @dataclass
 class TeamTactics:
-    roles: Dict[Any, RoleSpec] = field(default_factory=dict)  # pid -> RoleSpec
     default: RoleSpec = field(default_factory=RoleSpec)
+    roles: Dict[Any, RoleSpec] = field(default_factory=dict)  # pid -> RoleSpec
 
 @dataclass
 class MatchTactics:
-    by_team: Dict[int, TeamTactics] = field(default_factory=dict)  # team_id -> TeamTactics
-
+    by_team: Dict[int, TeamTactics] = field(default_factory=dict)
 
 # -----------------------------------------
-#   Controller interface & implementation
+# Strategy interface
 # -----------------------------------------
 class BaseController:
     """Strategy interface. The combat engine will call decide(world, actor)."""
@@ -70,12 +67,12 @@ class TacticsController(BaseController):
         return (d, hp, -ovr)
 
     def _select_target(self, world, actor, spec: RoleSpec):
-        best = None
-        best_key = None
-        for e in world.iter_enemies(actor):
-            key = self._score_target(world, actor, e, spec)
-            if best is None or key < best_key:
-                best, best_key = e, key
+        best = None; best_score = (10**9, 10**9, 10**9)
+        for e in world.fighters:
+            if getattr(e, "alive", True) and getattr(e, "hp", 1) > 0 and getattr(e, "team_id", getattr(e, "tid", None)) != getattr(actor, "team_id", getattr(actor, "tid", None)):
+                score = self._score_target(world, actor, e, spec)
+                if score < best_score:
+                    best = e; best_score = score
         return best
 
     def _enforce_anchor(self, world, actor, spec: RoleSpec) -> Optional[Tuple[int, int]]:
@@ -106,16 +103,41 @@ class TacticsController(BaseController):
 
         dist = world.distance(actor, enemy)
         speed = world.speed(actor)
+
         intents: List[dict] = []
 
-        # Already in range: request any one-shot roll modifiers, then attack
-        if dist <= desired:
+        # Simple action-economy heuristics:
+        # - Defensive stance with low HP → Dodge
+        try:
+            hp = int(getattr(actor, "hp", 1)); mhp = int(getattr(actor, "max_hp", max(1, hp)))
+        except Exception:
+            hp, mhp = 1, 1
+        if str(getattr(spec, "stance", "balanced")).lower() == "defensive" and hp * 2 <= mhp:
+            intents.append({"type": "dodge"})
+
+        # - If playing as ranged (desired >= 2) and threatened in melee, Disengage first
+        if int(desired) >= 2:
+            try:
+                if world._threatened_in_melee(actor):
+                    intents.append({"type": "disengage"})
+            except Exception:
+                pass
+
+        # - If far from desired range, Dash once to close/open distance faster
+        if dist > speed and int(desired) >= 2:
+            intents.append({"type": "dash"})
+
+        # If already in desired range, attack now (with one-shot roll settings)
+        if world.distance(actor, enemy) <= desired:
             if getattr(spec, "attack_advantage", False):
                 try: world.grant_advantage(actor, 1)
                 except Exception: pass
             if getattr(spec, "attack_disadvantage", False):
                 try: world.grant_disadvantage(actor, 1)
                 except Exception: pass
+            # Ranged stance may choose to hide first, then shoot
+            if int(desired) >= 2:
+                intents.append({"type": "hide"})
             intents.append({"type": "attack", "target": enemy})
             return intents
 
@@ -127,6 +149,10 @@ class TacticsController(BaseController):
             if step is None:
                 break
             intents.append({"type": "move", "to": step})
+
+        # If we've reached desired range and are a ranged stance, consider Hiding before attacking
+        if world.distance(actor, enemy) <= desired and int(desired) >= 2:
+            intents.append({"type": "hide"})
 
         # After moving, apply one-shot roll modifiers if configured, then attack if in range
         if world.distance(actor, enemy) <= desired:
@@ -144,7 +170,7 @@ class TacticsController(BaseController):
 
 
 # -----------------------------------------
-#   Fixture helpers (UI <-> engine glue)
+# Fixture parsing helpers (unchanged API)
 # -----------------------------------------
 def _rolespec_from_dict(d: Dict[str, Any]) -> RoleSpec:
     rs = RoleSpec()
