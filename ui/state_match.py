@@ -3,24 +3,39 @@ from __future__ import annotations
 import pygame
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
-import math
 import random
 import traceback
 
-# ==========================
-# Grid / Board defaults (now 11x11)
-# TILE will be recomputed to fit screen in enter()
-# ==========================
+# --- pull the turn-based engine / factories ---
+try:
+    from engine import TBCombat, Team, fighter_from_dict, layout_teams_tiles
+except Exception as e:
+    TBCombat = None  # type: ignore
+    Team = None      # type: ignore
+    fighter_from_dict = None  # type: ignore
+    layout_teams_tiles = None  # type: ignore
+    _ENGINE_IMPORT_ERROR = e
+else:
+    _ENGINE_IMPORT_ERROR = None
+
+# ----------------- constants & styles -----------------
 GRID_COLS = 11
 GRID_ROWS = 11
-TILE      = 64  # initial; recalculated to fit
 
-BOARD_BG  = (34, 36, 44)
+PAD = 16
+HEADER_H = 48
+FOOTER_H = 60
+LOG_MIN_W = 360
+
+BG = (16, 16, 20)
+CARD = (42, 44, 52)
+BORDER = (24, 24, 28)
+TEXT = (235, 235, 240)
+TEXT_MID = (215, 215, 220)
+GRID_BG = (34, 36, 44)
 GRID_LINE = (26, 28, 34)
 
-# ==========================
-# Small UI Button
-# ==========================
+# ----------------- Button -----------------
 @dataclass
 class Button:
     rect: pygame.Rect
@@ -28,16 +43,14 @@ class Button:
     action: callable
     hover: bool = False
     disabled: bool = False
-
     def draw(self, surf: pygame.Surface, font: pygame.font.Font):
         bg = (58,60,70) if not self.hover else (76,78,90)
         if self.disabled: bg = (48,48,54)
         pygame.draw.rect(surf, bg, self.rect, border_radius=10)
-        pygame.draw.rect(surf, (24,24,28), self.rect, 2, border_radius=10)
-        color = (235,235,240) if not self.disabled else (160,160,165)
-        txt = font.render(self.text, True, color)
-        surf.blit(txt, (self.rect.x + 14, self.rect.y + (self.rect.h - txt.get_height()) // 2))
-
+        pygame.draw.rect(surf, BORDER, self.rect, 2, border_radius=10)
+        color = TEXT if not self.disabled else (165,165,170)
+        label = font.render(self.text, True, color)
+        surf.blit(label, (self.rect.x + 14, self.rect.y + (self.rect.h - label.get_height()) // 2))
     def handle(self, ev: pygame.event.Event):
         if self.disabled: return
         if ev.type == pygame.MOUSEMOTION:
@@ -46,9 +59,7 @@ class Button:
             if self.rect.collidepoint(ev.pos):
                 self.action()
 
-# ==========================
-# Utility
-# ==========================
+# ----------------- helpers -----------------
 def _team_name(career, tid: int) -> str:
     try:
         if hasattr(career, "team_name") and callable(career.team_name):
@@ -56,577 +67,469 @@ def _team_name(career, tid: int) -> str:
         for t in getattr(career, "teams", []):
             if int(t.get("tid", -1)) == int(tid):
                 return t.get("name", f"Team {tid}")
+        # alt structure (dict indexed by id)
+        teams = getattr(career, "teams", {})
+        if isinstance(teams, dict) and tid in teams:
+            return teams[tid].get("name", f"Team {tid}")
     except Exception:
         pass
     return f"Team {tid}"
 
-def _avg_ovr(team: Dict[str,Any]) -> float:
-    fs = team.get("fighters", []) or []
-    if not fs: return 60.0
-    s = 0.0; n = 0
-    for p in fs:
-        try: s += float(p.get("OVR", p.get("ovr", p.get("OVR_RATING", 60)))); n += 1
-        except Exception: pass
-    return s / max(1, n)
-
-def _fixtures_for_week(car, week_idx: int) -> List[Any]:
-    weeks = getattr(car, "fixtures_by_week", None)
-    if weeks and 0 <= week_idx-1 < len(weeks):
-        return weeks[week_idx-1]
-    fixtures = getattr(car, "fixtures", [])
-    out: List[Any] = []
-    for f in fixtures:
-        w = f.get("week") if isinstance(f, dict) else None
-        if w == week_idx:
-            out.append(f)
-    return out
-
-def _set_fixture_result(raw: Any, sh: int, sa: int):
+def _find_fixture_object(career, week: int, home_tid: int, away_tid: int):
+    """Return the raw fixture object in career storage if possible."""
     try:
-        if isinstance(raw, dict):
-            raw["score_home"] = sh
-            raw["score_away"] = sa
-            raw["played"] = True
-            raw["is_played"] = True
-        elif isinstance(raw, list):
-            while len(raw) < 4: raw.append(None)
-            raw[2] = sh; raw[3] = sa
+        # format A: fixtures_by_week: List[List[dict]]
+        weeks = getattr(career, "fixtures_by_week", None)
+        if weeks and 0 <= week-1 < len(weeks):
+            for f in weeks[week-1]:
+                if isinstance(f, dict):
+                    h = int(f.get("home_id", f.get("home_tid", f.get("A", -1))))
+                    a = int(f.get("away_id", f.get("away_tid", f.get("B", -1))))
+                    if h == home_tid and a == away_tid:
+                        return f
+        # format B: dict keyed by "S{season}W{week}"
+        if hasattr(career, "fixtures") and isinstance(career.fixtures, dict):
+            cur_season = getattr(getattr(career, "date", {}), "get", lambda *_: None)("season") if hasattr(career, "date") else None
+            if cur_season is None and isinstance(career.date, dict):
+                cur_season = career.date.get("season")
+            key = f"S{cur_season}W{week}"
+            for f in career.fixtures.get(key, []):
+                if isinstance(f, dict) and int(f.get("home", f.get("home_id", -1))) == home_tid and int(f.get("away", f.get("away_id", -1))) == away_tid:
+                    return f
+        # format C: flat list of dicts with 'week'
+        for f in getattr(career, "fixtures", []):
+            if not isinstance(f, dict): continue
+            if int(f.get("week", -1)) != week: continue
+            h = int(f.get("home_id", f.get("home_tid", f.get("A", -1))))
+            a = int(f.get("away_id", f.get("away_tid", f.get("B", -1))))
+            if h == home_tid and a == away_tid:
+                return f
+    except Exception:
+        traceback.print_exc()
+    return None
+
+def _record_result_best_effort(career, week: int, home_tid: int, away_tid: int, winner: Optional[str], sh: int, sa: int):
+    """Try several career write paths; don’t crash if structure differs."""
+    # new-style API
+    try:
+        if hasattr(career, "record_result") and callable(career.record_result):
+            season = career.date["season"] if isinstance(career.date, dict) else getattr(career, "season", 1)
+            career.record_result(season, week, home_tid, away_tid, {"winner": winner or "draw", "home_hp": sh, "away_hp": sa})
+            return
+    except Exception:
+        pass
+    # legacy inline edit
+    raw = _find_fixture_object(career, week, home_tid, away_tid)
+    if raw is None: return
+    try:
+        raw["played"] = True; raw["is_played"] = True
+        raw["score_home"] = sh; raw["score_away"] = sa
+        if winner:
+            raw["winner"] = winner
     except Exception:
         pass
 
-def _recompute_standings(car):
-    for hook in ("_recompute_standings", "recompute_standings", "recalc_standings", "_recalc_tables"):
-        fn = getattr(car, hook, None)
-        if callable(fn):
-            try:
-                fn(); return
-            except Exception:
-                pass
+def _fighters_for_team(career, tid: int) -> List[Dict[str,Any]]:
+    # career.teams could be list[dict] or dict[int->dict]
+    ts = getattr(career, "teams", {})
+    if isinstance(ts, dict):
+        t = ts.get(tid, {})
+        return list(t.get("fighters", []))
+    for t in ts or []:
+        if int(t.get("tid", -1)) == tid:
+            return list(t.get("fighters", []))
+    return []
+
+def _top5(lst: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
     try:
-        if not hasattr(car, "standings"): car.standings = {}
-        for t in car.teams:
-            tid = int(t["tid"])
-            car.standings.setdefault(tid, {"tid": tid, "pts":0, "w":0, "d":0, "l":0, "gf":0, "ga":0, "gd":0, "name":t["name"]})
-            s = car.standings[tid]
-            s.update({"pts":0, "w":0, "d":0, "l":0, "gf":0, "ga":0, "gd":0, "name":t["name"]})
-        wmax = getattr(car, "week", 1)
-        weeks = getattr(car, "fixtures_by_week", [])
-        total_weeks = len(weeks) if weeks else wmax
-        for w in range(1, min(wmax, total_weeks)+1):
-            fxs = _fixtures_for_week(car, w)
-            for f in fxs:
-                if not isinstance(f, dict): continue
-                played = f.get("played", f.get("is_played", False))
-                sh = f.get("score_home"); sa = f.get("score_away")
-                if not played or sh is None or sa is None: continue
-                h = int(f.get("home_id", f.get("home_tid", f.get("A", 0))))
-                a = int(f.get("away_id", f.get("away_tid", f.get("B", 0))))
-                shs = car.standings[h]; sas = car.standings[a]
-                shs["gf"] += int(sh); shs["ga"] += int(sa)
-                sas["gf"] += int(sa); sas["ga"] += int(sh)
-                if sh > sa:
-                    shs["w"] += 1; sas["l"] += 1; shs["pts"] += 3
-                elif sh < sa:
-                    sas["w"] += 1; shs["l"] += 1; sas["pts"] += 3
-                else:
-                    shs["d"] += 1; sas["d"] += 1; shs["pts"] += 1; sas["pts"] += 1
-        table = []
-        for tid, s in car.standings.items():
-            s["gd"] = s["gf"] - s["ga"]
-            table.append(s)
-        table.sort(key=lambda r: (r["pts"], r["gd"], r["gf"]), reverse=True)
-        car.table_sorted = table
+        return sorted(lst, key=lambda p: int(p.get("ovr", p.get("OVR", 60))), reverse=True)[:5]
     except Exception:
-        pass
+        return lst[:5]
 
-# ==========================
-# Units
-# ==========================
-@dataclass
-class Unit:
-    pid: int
-    team: str         # "home" or "away"
-    name: str
-    ovr: int
-    hp: int
-    max_hp: int
-    ac: int
-    atk_mod: int
-    dmg_mod: int
-    cx: int
-    cy: int
-    alive: bool = True
-
-# ==========================
-# Match State
-# ==========================
+# ----------------- Match State -----------------
 class MatchState:
     """
-    Watchable grid match (11x11 auto-fit):
-      - 5 vs 5 units.
-      - Move toward nearest enemy; melee when adjacent.
-      - Score = KOs (written back to fixtures).
-    Supports preset lineup via fixture["preset_lineup"] from the tactics screen.
-    Constructor shapes supported:
-      (app, career, fixture)
-      (app, fixture, career)
-      (app, fixture)
-      (app, home_tid, away_tid, career)
-      (app, home_tid, away_tid)
+    Turn-based viewer using engine.TBCombat on an 11×11 board.
+
+    Controls (bottom bar):
+      • Back  • Play/Pause  • Next Turn  • Next Round
+
+    Right side: scrollable turn log.
+    Tactics preset: honors fixture["preset_lineup"] with 'side' ('home'/'away') and list of {pid,cx,cy}.
     """
     def __init__(self, *args, **kwargs):
-        # Parse constructor permutations
+        if _ENGINE_IMPORT_ERROR is not None:
+            raise RuntimeError(f"engine import failed: {_ENGINE_IMPORT_ERROR}")
+
+        # Accept permutations:
+        # (app, career, fixture) | (app, fixture, career) | (app, fixture)
+        # (app, home_tid, away_tid, career)               | (app, home_tid, away_tid)
         self.app = None
         self.career = None
         self.fixture: Dict[str,Any] = {}
-
         if len(args) >= 3 and hasattr(args[0], "screen"):
-            # (app, career, fixture) OR (app, fixture, career)
             self.app = args[0]
             if isinstance(args[1], dict) and not isinstance(args[2], dict):
                 self.fixture = dict(args[1]); self.career = args[2]
             elif not isinstance(args[1], dict) and isinstance(args[2], dict):
                 self.career = args[1]; self.fixture = dict(args[2])
             else:
-                # (app, fixture) only
                 self.fixture = dict(args[1])
         elif len(args) >= 4 and hasattr(args[0], "screen"):
-            # (app, home_tid, away_tid, career)
-            self.app = args[0]; home = int(args[1]); away = int(args[2]); self.career = args[3]
-            self.fixture = {"home_id": home, "away_id": away, "home_tid": home, "away_tid": away, "A": home, "B": away,
-                            "week": getattr(self.career, "week", 1), "played": False, "score_home": None, "score_away": None}
+            self.app = args[0]; home = int(args[1]); away = int(args[2]); self.career = args[3] if len(args) >= 4 else None
+            self.fixture = {"home_id": home, "away_id": away, "week": getattr(self.career, "week", 1)}
         elif len(args) >= 3 and hasattr(args[0], "screen"):
-            # (app, home_tid, away_tid)
             self.app = args[0]; home = int(args[1]); away = int(args[2])
-            self.fixture = {"home_id": home, "away_id": away, "home_tid": home, "away_tid": away, "A": home, "B": away,
-                            "week": 1, "played": False, "score_home": None, "score_away": None}
+            self.fixture = {"home_id": home, "away_id": away, "week": 1}
         else:
             raise TypeError("Unsupported MatchState constructor signature")
 
         if self.career is None:
-            self.career = type("MiniCar", (), {})()
+            self.career = type("MiniCareer", (), {})()
             self.career.teams = []
-            self.career.week  = self.fixture.get("week", 1)
+            self.career.date = {"week": self.fixture.get("week", 1), "season": 1}
 
-        # Parse home/away ids
+        # resolve ids/names/week
         self.home_tid = int(self.fixture.get("home_id", self.fixture.get("home_tid", self.fixture.get("A", 0))))
         self.away_tid = int(self.fixture.get("away_id", self.fixture.get("away_tid", self.fixture.get("B", 0))))
         self.week     = int(self.fixture.get("week", getattr(self.career, "week", 1)))
+        self.home_name = _team_name(self.career, self.home_tid)
+        self.away_name = _team_name(self.career, self.away_tid)
 
-        # Fonts
+        # fonts/UI
         self.font  = pygame.font.SysFont(None, 22)
         self.h1    = pygame.font.SysFont(None, 34)
         self.h2    = pygame.font.SysFont(None, 20)
 
-        # Layout rects
+        # layout rects
         self.rect_header: Optional[pygame.Rect] = None
         self.rect_board:  Optional[pygame.Rect] = None
-        self.rect_side:   Optional[pygame.Rect] = None
+        self.rect_log:    Optional[pygame.Rect] = None
+        self.rect_footer: Optional[pygame.Rect] = None
+        self.tile = 48
 
-        # Buttons
+        # buttons
         self.btns: List[Button] = []
         self.running = False
-        self.fast = False
-        self.finished = False
+        self.auto_timer = 0.0
+        self._auto_interval = 0.35
 
-        # Board & units
-        self.grid_cols = GRID_COLS
-        self.grid_rows = GRID_ROWS
-        self.tile = TILE  # will be recomputed in enter()
+        # log
+        self.lines: List[str] = []
+        self._event_idx = 0
+        self.log_scroll = 0  # pixels
+        self._line_h = self.font.get_height() + 4
 
-        self.units: List[Unit] = []
-        self.home_kos = 0
-        self.away_kos = 0
+        # combat
+        self.combat: Optional[TBCombat] = None
+        self._result_recorded = False
 
-        # Initiative pacing
-        self._accum = 0.0
-        self._step_interval = 0.4
-
-        # Preset lineup if provided by tactics
-        self._preset_from_fixture: Optional[Dict[str,Any]] = self.fixture.get("preset_lineup") if isinstance(self.fixture, dict) else None
-
-    # ------------- lifecycle -------------
+    # -------------- lifecycle --------------
     def enter(self):
+        self._layout()
+        self._build_combat()
+        self._push_log(f"— Match Start: {self.home_name} vs {self.away_name} (Week {self.week}) —")
+
+    def _layout(self):
         w, h = self.app.screen.get_size()
-        pad = 16
+        # compute tile to fit 11×11 + right log + footer + header
+        avail_w = w - PAD*3 - LOG_MIN_W
+        avail_h = h - PAD*3 - HEADER_H - FOOTER_H
+        self.tile = max(30, min(avail_w // GRID_COLS, avail_h // GRID_ROWS))
+        board_w = GRID_COLS * self.tile
+        board_h = GRID_ROWS * self.tile
 
-        # Reserve right panel min width; header height
-        header_h = 48
-        side_min_w = 360
-
-        # Compute tile that fits 11x11 on left
-        avail_w = w - pad*3 - side_min_w
-        avail_h = h - pad*3 - header_h
-        self.tile = max(36, min(avail_w // self.grid_cols, avail_h // self.grid_rows))
-        board_w = self.grid_cols * self.tile
-        board_h = self.grid_rows * self.tile
-
-        self.rect_header = pygame.Rect(pad, pad, w - pad*2, header_h)
-        bx = pad + 4
-        by = self.rect_header.bottom + pad
-        self.rect_board = pygame.Rect(bx, by, board_w, board_h)
-        self.rect_side  = pygame.Rect(self.rect_board.right + pad, by, w - (self.rect_board.right + pad*2), board_h)
-        if self.rect_side.w < side_min_w:
-            # If the board ate too much width, recompute tile smaller
-            avail_w = w - pad*3 - side_min_w
-            self.tile = max(32, min(avail_w // self.grid_cols, avail_h // self.grid_rows))
-            board_w = self.grid_cols * self.tile
-            board_h = self.grid_rows * self.tile
+        self.rect_header = pygame.Rect(PAD, PAD, w - PAD*2, HEADER_H)
+        by = self.rect_header.bottom + PAD
+        self.rect_board = pygame.Rect(PAD + 4, by, board_w, board_h)
+        self.rect_log   = pygame.Rect(self.rect_board.right + PAD, by, w - (self.rect_board.right + PAD*2), board_h)
+        if self.rect_log.w < LOG_MIN_W:
+            # shrink tile if needed
+            avail_w = w - PAD*3 - LOG_MIN_W
+            self.tile = max(28, min(avail_w // GRID_COLS, avail_h // GRID_ROWS))
+            board_w = GRID_COLS * self.tile
+            board_h = GRID_ROWS * self.tile
             self.rect_board.size = (board_w, board_h)
-            self.rect_side.x = self.rect_board.right + pad
-            self.rect_side.w = side_min_w
+            self.rect_log.x = self.rect_board.right + PAD
+            self.rect_log.w = LOG_MIN_W
 
-        # Buttons in side panel
-        sx, sy = self.rect_side.x + 12, self.rect_side.y + 12
-        bw, bh, gap = self.rect_side.w - 24, 44, 10
+        self.rect_footer = pygame.Rect(PAD, self.rect_board.bottom + PAD, w - PAD*2, FOOTER_H)
+
+        # footer buttons
+        self.btns.clear()
+        bw, bh, gap = 150, 44, 10
+        x = self.rect_footer.x + 10
         def add(label, cb):
-            nonlocal sy
-            b = Button(pygame.Rect(sx, sy, bw, bh), label, cb)
-            self.btns.append(b); sy += (bh + gap)
-        add("Start / Pause", self._toggle_start_pause)
-        add("Fast (toggle)", self._toggle_fast)
-        add("Skip (Instant)", self._skip_to_end)
+            nonlocal x
+            r = pygame.Rect(x, self.rect_footer.y + (self.rect_footer.h - bh)//2, bw, bh)
+            self.btns.append(Button(r, label, cb)); x += bw + gap
+        add("Back", self._back_to_hub)
+        add("Play / Pause", self._toggle_play)
+        add("Next Turn", self._next_turn)
+        add("Next Round", self._next_round)
 
-        # Team names
-        self.home_name = _team_name(self.career, self.home_tid)
-        self.away_name = _team_name(self.career, self.away_tid)
+    def _build_combat(self):
+        # gather teams (top-5 each), convert to engine fighters
+        home_roster = _top5(_fighters_for_team(self.career, self.home_tid))
+        away_roster = _top5(_fighters_for_team(self.career, self.away_tid))
 
-        # Build units (5 per side)
-        home_list = self._team_fighters(self.home_tid)
-        away_list = self._team_fighters(self.away_tid)
+        # convert dict -> engine Fighter
+        f_home = [fighter_from_dict({**fd, "team_id": 0}) for fd in home_roster]
+        f_away = [fighter_from_dict({**fd, "team_id": 1}) for fd in away_roster]
+        fighters = f_home + f_away
 
-        # Choose five (by OVR top 5 if available)
-        def top5(lst):
+        # attach pid/ovr if present so XP award / logs can reference
+        pid_map = {}
+        for src, dst in zip(home_roster + away_roster, fighters):
             try:
-                return sorted(lst, key=lambda p: int(p.get("OVR", p.get("ovr", 60))), reverse=True)[:5]
+                setattr(dst, "pid", src.get("pid"))
+                setattr(dst, "ovr", src.get("ovr", src.get("OVR", 60)))
+                pid_map[src.get("pid")] = dst
             except Exception:
-                return lst[:5]
-        sel_home = top5(home_list)
-        sel_away = top5(away_list)
+                pass
 
-        # Convert to Units with default placements (home left, away right)
-        self.units = []
-        home_cols = [1,1,1,0,0] if self.grid_cols >= 2 else [0]*5
-        home_rows = self._spread_rows(len(sel_home))
-        away_cols = [self.grid_cols-2, self.grid_cols-2, self.grid_cols-2, self.grid_cols-1, self.grid_cols-1] if self.grid_cols >= 2 else [self.grid_cols-1]*5
-        away_rows = self._spread_rows(len(sel_away))
+        # default layout: left/right lines
+        layout_teams_tiles(fighters, GRID_COLS, GRID_ROWS)
 
-        for i, p in enumerate(sel_home):
-            u = self._make_unit(p, team="home",
-                                cx=home_cols[i % len(home_cols)],
-                                cy=home_rows[i % len(home_rows)])
-            self.units.append(u)
-        for i, p in enumerate(sel_away):
-            u = self._make_unit(p, team="away",
-                                cx=away_cols[i % len(away_cols)],
-                                cy=away_rows[i % len(away_rows)])
-            self.units.append(u)
-
-        # Apply preset lineup from tactics if present (overrides positions for user's side)
-        if self._preset_from_fixture:
+        # apply preset lineup (from tactics), overriding tiles for user's side only
+        preset = self.fixture.get("preset_lineup")
+        if isinstance(preset, dict):
             try:
-                self._apply_preset_lineup(self._preset_from_fixture.get("side","home"),
-                                          self._preset_from_fixture.get("slots", []))
+                side = preset.get("side", "home")
+                slots = preset.get("slots", [])
+                tid = self.home_tid if side == "home" else self.away_tid
+                for s in slots:
+                    pid = s.get("pid"); cx = int(s.get("cx", 0)); cy = int(s.get("cy", 0))
+                    f = pid_map.get(pid)
+                    if f and ((side == "home" and f.team_id == 0) or (side == "away" and f.team_id == 1)):
+                        f.tx, f.ty = cx, cy
             except Exception:
                 traceback.print_exc()
 
+        # seed (stable per match if possible)
+        try:
+            if hasattr(self.career, "match_seed"):
+                season = self.career.date["season"]
+                seed = self.career.match_seed(season, self.week, self.home_tid, self.away_tid)
+            else:
+                seed = random.randint(0, 10_000_000)
+        except Exception:
+            seed = random.randint(0, 10_000_000)
+
+        # teams & combat
+        tA = Team(0, self.home_name, (120,180,255))
+        tB = Team(1, self.away_name, (255,140,140))
+        self.combat = TBCombat(tA, tB, fighters, GRID_COLS, GRID_ROWS, seed=seed)
+
+        # prime initial events in log
+        self._flush_events_to_log()
+
+    # -------------- controls --------------
+    def _toggle_play(self):
+        if self.combat and self.combat.winner is None:
+            self.running = not self.running
+
+    def _next_turn(self):
+        if not self.combat or self.combat.winner is not None: return
+        self._step_one_turn()
+
+    def _next_round(self):
+        if not self.combat or self.combat.winner is not None: return
+        target_round = self.combat.round
+        # advance until round increments (or match ends)
+        guard = 0
+        while self.combat.winner is None and self.combat.round == target_round and guard < 200:
+            self._step_one_turn()
+            guard += 1
+
+    def _back_to_hub(self):
+        # Pop this state; if the next is tactics, pop it too (return to Season Hub)
+        try:
+            self.app.pop_state()
+            stack = getattr(self.app, "states", getattr(self.app, "stack", None))
+            if isinstance(stack, list) and stack:
+                st = stack[-1]
+                nm = type(st).__name__.lower()
+                md = getattr(type(st), "__module__", "").lower()
+                if "tactics" in nm or "tactics" in md:
+                    self.app.pop_state()
+        except Exception:
+            pass
+
+    # -------------- event loop --------------
     def handle(self, ev: pygame.event.Event):
+        if ev.type == pygame.VIDEORESIZE:
+            self._layout()
+
         if ev.type == pygame.KEYDOWN:
             if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
                 self._back_to_hub()
+            elif ev.key in (pygame.K_SPACE, pygame.K_p):
+                self._toggle_play()
             elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                self._toggle_start_pause()
-            elif ev.key == pygame.K_f:
-                self._toggle_fast()
-            elif ev.key == pygame.K_s:
-                self._skip_to_end()
+                self._next_turn()
+            elif ev.key == pygame.K_r:
+                self._next_round()
+
+        # log scrolling (mouse wheel over log box)
+        if ev.type == pygame.MOUSEWHEEL and self.rect_log and self.rect_log.collidepoint(pygame.mouse.get_pos()):
+            content_h = max(0, len(self.lines) * self._line_h)
+            vis_h = self.rect_log.h - 24
+            max_scroll = max(0, content_h - vis_h)
+            self.log_scroll -= ev.y * 22
+            self.log_scroll = max(0, min(self.log_scroll, max_scroll))
 
         for b in self.btns:
             b.handle(ev)
 
     def update(self, dt: float):
-        if self.finished or not self.running:
-            return
-        speed = 3.0 if self.fast else 1.0
-        self._accum += dt * speed
-        while self._accum >= self._step_interval:
-            self._accum -= self._step_interval
-            self._step_once()
-            if self._check_finish():
-                self._finalize_result()
-                break
+        # auto-play
+        if self.running and self.combat and self.combat.winner is None:
+            self.auto_timer -= dt
+            if self.auto_timer <= 0:
+                self._step_one_turn()
+                self.auto_timer = self._auto_interval
+
+        # record scheduled result if applicable (best-effort)
+        if self.combat and self.combat.winner is not None and not self._result_recorded:
+            # compute KO scores (how many enemies are down)
+            home_kos = len([f for f in self.combat.fighters if f.team_id == 1 and not f.alive])
+            away_kos = len([f for f in self.combat.fighters if f.team_id == 0 and not f.alive])
+            if self.combat.winner == 0:
+                winner = "home"
+            elif self.combat.winner == 1:
+                winner = "away"
+            else:
+                winner = "draw"
+            _record_result_best_effort(self.career, self.week, self.home_tid, self.away_tid, winner, home_kos, away_kos)
+            self._result_recorded = True
 
     def draw(self, screen: pygame.Surface):
-        screen.fill((16,16,20))
+        screen.fill(BG)
 
         # header
-        pygame.draw.rect(screen, (42,44,52), self.rect_header, border_radius=12)
-        pygame.draw.rect(screen, (24,24,28), self.rect_header, 2, border_radius=12)
-        t1 = self.h1.render(f"{self.home_name} vs {self.away_name}", True, (235,235,240))
-        t2 = self.h1.render(f"Week {self.week}", True, (220,220,225))
+        pygame.draw.rect(screen, CARD, self.rect_header, border_radius=12)
+        pygame.draw.rect(screen, BORDER, self.rect_header, 2, border_radius=12)
+        t1 = self.h1.render(f"{self.home_name} vs {self.away_name}", True, TEXT)
+        t2 = self.h1.render(f"Week {self.week}", True, TEXT_MID)
         screen.blit(t1, (self.rect_header.x + 12, self.rect_header.y + (self.rect_header.h - t1.get_height())//2))
         screen.blit(t2, (self.rect_header.right - t2.get_width() - 12, self.rect_header.y + (self.rect_header.h - t2.get_height())//2))
 
-        # board
-        pygame.draw.rect(screen, (42,44,52), self.rect_board, border_radius=10)
-        pygame.draw.rect(screen, (24,24,28), self.rect_board, 2, border_radius=10)
-        for c in range(self.grid_cols):
-            for r in range(self.grid_rows):
-                rect = self._cell_rect(c,r)
-                pygame.draw.rect(screen, BOARD_BG, rect)
-                pygame.draw.rect(screen, GRID_LINE, rect, 1)
+        # board frame
+        pygame.draw.rect(screen, CARD, self.rect_board, border_radius=10)
+        pygame.draw.rect(screen, BORDER, self.rect_board, 2, border_radius=10)
+
+        # grid
+        for c in range(GRID_COLS):
+            for r in range(GRID_ROWS):
+                cell = pygame.Rect(self.rect_board.x + c*self.tile, self.rect_board.y + r*self.tile, self.tile, self.tile)
+                pygame.draw.rect(screen, GRID_BG, cell)
+                pygame.draw.rect(screen, GRID_LINE, cell, 1)
 
         # units
-        for u in self.units:
-            if not u.alive: continue
-            rect = self._cell_rect(u.cx, u.cy)
-            self._draw_unit(screen, rect, u)
+        if self.combat:
+            for f in self.combat.fighters:
+                if not getattr(f, "alive", True): continue
+                rect = pygame.Rect(self.rect_board.x + f.tx*self.tile, self.rect_board.y + f.ty*self.tile, self.tile, self.tile)
+                col = (120,180,255) if f.team_id == 0 else (255,140,140)
+                pygame.draw.rect(screen, col, rect.inflate(-8, -8), border_radius=6)
+                pygame.draw.rect(screen, BORDER, rect.inflate(-8, -8), 2, border_radius=6)
 
-        # side panel
-        pygame.draw.rect(screen, (42,44,52), self.rect_side, border_radius=10)
-        pygame.draw.rect(screen, (24,24,28), self.rect_side, 2, border_radius=10)
-        x = self.rect_side.x + 12
-        y = self.rect_side.y + 12
-        lh = self.font.get_height() + 8
+                # HP bar
+                hp = getattr(f, "hp", 1); mx = getattr(f, "max_hp", max(1, hp))
+                frac = max(0.0, min(1.0, hp / mx))
+                bw = rect.w - 10; bh = 6; bx = rect.x + 5; by = rect.bottom - bh - 4
+                pygame.draw.rect(screen, (60,62,70), pygame.Rect(bx, by, bw, bh), border_radius=3)
+                c = (90,220,140) if frac>0.5 else (240,210,120) if frac>0.25 else (240,120,120)
+                pygame.draw.rect(screen, c, pygame.Rect(bx+1, by+1, int((bw-2)*frac), bh-2), border_radius=3)
 
-        # buttons area already occupies top—just render status under them
-        y += (44+10)*3 + 8
-        score_text = self.h2.render("Score (KOs)", True, (215,215,220))
-        screen.blit(score_text, (x, y)); y += lh
-        s_line = self.font.render(f"{self.home_name}: {self.home_kos}     {self.away_name}: {self.away_kos}", True, (230,230,235))
-        screen.blit(s_line, (x, y)); y += lh
+                nm = self.font.render(getattr(f, "name", "F"), True, TEXT)
+                screen.blit(nm, (rect.centerx - nm.get_width()//2, rect.y + 4))
 
-        y += 8
-        st = "FINISHED" if self.finished else ("RUNNING" if self.running else "PAUSED")
-        st_s = self.font.render(f"Status: {st}   Speed: {'FAST' if self.fast else 'NORMAL'}", True, (230,230,235))
-        screen.blit(st_s, (x, y)); y += lh
+        # right log panel
+        pygame.draw.rect(screen, CARD, self.rect_log, border_radius=10)
+        pygame.draw.rect(screen, BORDER, self.rect_log, 2, border_radius=10)
+        title = self.h2.render("Turn Log", True, TEXT_MID)
+        screen.blit(title, (self.rect_log.x + 10, self.rect_log.y + 8))
+        inner = self.rect_log.inflate(-12, -30)
+        inner.y = self.rect_log.y + 26
 
-        if self.finished:
-            y += 10
-            done = self.h2.render("Match complete. Press Backspace/Esc to return.", True, (210,210,215))
-            screen.blit(done, (x, y))
+        # clip & scroll
+        clip = screen.get_clip()
+        screen.set_clip(inner)
+        y = inner.y - int(self.log_scroll)
+        for line in self.lines:
+            txt = self.font.render(line, True, TEXT)
+            screen.blit(txt, (inner.x, y))
+            y += self._line_h
+        screen.set_clip(clip)
 
+        # scrollbar (simple)
+        content_h = max(1, len(self.lines) * self._line_h)
+        vis_h = inner.h
+        if content_h > vis_h:
+            bar_h = max(24, int(vis_h * (vis_h / content_h)))
+            max_scroll = content_h - vis_h
+            frac = (self.log_scroll / max_scroll) if max_scroll > 0 else 0.0
+            bar_y = inner.y + int((vis_h - bar_h) * frac)
+            sb_rect = pygame.Rect(self.rect_log.right - 10, bar_y, 6, bar_h)
+            pygame.draw.rect(screen, (80,82,90), sb_rect, border_radius=3)
+
+        # footer bar & buttons
+        pygame.draw.rect(screen, CARD, self.rect_footer, border_radius=10)
+        pygame.draw.rect(screen, BORDER, self.rect_footer, 2, border_radius=10)
         for b in self.btns:
             b.draw(screen, self.font)
 
-    # ------------- controls -------------
-    def _toggle_start_pause(self):
-        if self.finished: return
-        self.running = not self.running
+        # if finished, hint
+        if self.combat and self.combat.winner is not None:
+            msg = self.h2.render("Match complete — press Back to return.", True, TEXT_MID)
+            screen.blit(msg, (self.rect_footer.right - msg.get_width() - 12, self.rect_footer.y + (self.rect_footer.h - msg.get_height())//2))
 
-    def _toggle_fast(self):
-        if self.finished: return
-        self.fast = not self.fast
+    # -------------- internal --------------
+    def _push_log(self, s: str):
+        self.lines.append(s)
 
-    def _skip_to_end(self):
-        if self.finished:
-            self._back_to_hub()
-            return
-        guard = 0
-        while not self.finished and guard < 2000:
-            self._step_once()
-            if self._check_finish():
-                self._finalize_result()
-                break
-            guard += 1
+        # autoscroll to bottom if we were near bottom
+        inner_h = (self.rect_log.h - 24) if self.rect_log else 0
+        content_h = len(self.lines) * self._line_h
+        at_bottom = (self.log_scroll + inner_h + 2*self._line_h) >= (content_h - 1)
+        if at_bottom:
+            self.log_scroll = max(0, content_h - inner_h)
 
-    def _back_to_hub(self):
-        """Pop this state; if the next is the tactics screen, pop it too so we land on Season Hub."""
+    def _flush_events_to_log(self):
+        if not self.combat: return
+        evs = self.combat.events
+        for i in range(self._event_idx, len(evs)):
+            e = evs[i]
+            k = getattr(e, "kind", None) or getattr(e, "t", None)
+            p = getattr(e, "payload", {})
+            if k == "init":          self._push_log(f"Init {p.get('name','?')} = {p.get('init','?')}")
+            elif k == "round_start": self._push_log(f"— Round {p.get('round','?')} —")
+            elif k == "turn_start":  self._push_log(f"{p.get('actor','?')}'s turn")
+            elif k == "move_step":   self._push_log(f"  moves to {p.get('to',(0,0))}")
+            elif k == "attack":
+                nat = p.get("nat", 0); ac = p.get("target_ac", 0); crit = p.get("critical", False); hit = p.get("hit", False)
+                line = f"  attacks {p.get('defender','?')} (d20={nat} vs AC {ac})"
+                if crit: line += " — CRIT!"
+                if not hit: line += " — MISS"
+                self._push_log(line)
+            elif k == "damage":
+                self._push_log(f"    → {p.get('defender','?')} takes {p.get('amount',0)} (HP {p.get('hp_after',0)})")
+            elif k == "down":        self._push_log(f"    ✖ {p.get('name','?')} is down")
+            elif k == "round_end":   self._push_log(f"— End Round {p.get('round','?')} —")
+            elif k == "end":
+                w = p.get("winner"); r = p.get("reason","")
+                if w: self._push_log(f"Match ends — Winner: {w} ({r})")
+                else: self._push_log(f"Match ends — {r}")
+        self._event_idx = len(evs)
+
+    def _step_one_turn(self):
         try:
-            self.app.pop_state()  # pop Match
-            # Peek and pop tactics if present
-            top = getattr(self.app, "states", getattr(self.app, "stack", None))
-            if isinstance(top, list) and top:
-                st = top[-1]
-                clsname = type(st).__name__.lower()
-                modname = getattr(type(st), "__module__", "").lower()
-                if "tactics" in clsname or "tactics" in modname:
-                    self.app.pop_state()
-        except Exception:
-            # best-effort; at least remove ourselves
-            pass
-
-    # ------------- unit helpers -------------
-    def _team_fighters(self, tid: int) -> List[Dict[str,Any]]:
-        for t in getattr(self.career, "teams", []):
-            if int(t.get("tid", -1)) == int(tid):
-                return t.get("fighters", [])
-        return []
-
-    def _make_unit(self, p: Dict[str,Any], team: str, cx: int, cy: int) -> Unit:
-        def G(k,d=None): return p.get(k, p.get(k.upper(), d))
-        name = (G("name") or (f"{G('first','') } {G('last','')}".strip())) or "Fighter"
-        hp   = int(G("hp", G("max_hp", 10)))
-        max_hp = int(G("max_hp", hp))
-        # AC fallback: 10 + ((DEX-10)//2). Keep armor bonus placeholder 0 for now.
-        DEX  = int(G("dex", G("DEX", 10)))
-        ac   = int(G("ac", 10 + ((DEX - 10)//2)))
-        STR  = int(G("str", G("STR", 10)))
-        ovr  = int(G("ovr", G("OVR", 60)))
-        atk_mod = max((STR-10)//2, (DEX-10)//2) + (ovr-60)//20
-        dmg_mod = max((STR-10)//2, 0)
-        return Unit(pid=int(G("pid", -1)), team=team, name=name, ovr=ovr,
-                    hp=hp, max_hp=max_hp, ac=ac, atk_mod=atk_mod, dmg_mod=dmg_mod,
-                    cx=int(cx), cy=int(cy), alive=True)
-
-    def _cell_rect(self, cx: int, cy: int) -> pygame.Rect:
-        return pygame.Rect(self.rect_board.x + cx*self.tile,
-                           self.rect_board.y + cy*self.tile, self.tile, self.tile)
-
-    def _spread_rows(self, n: int) -> List[int]:
-        center = self.grid_rows // 2
-        order = [center]
-        for i in range(1, self.grid_rows):
-            if center - i >= 0: order.append(center - i)
-            if center + i < self.grid_rows: order.append(center + i)
-        return order[:max(1,n)]
-
-    def clear_side_units(self, side: str):
-        for u in self.units:
-            if u.team == side:
-                u.alive = False
-
-    def spawn_unit(self, side: str, fighter: Dict[str,Any], cx: int, cy: int):
-        for u in self.units:
-            if u.alive and u.cx == cx and u.cy == cy:
-                u.alive = False
-        self.units.append(self._make_unit(fighter, side, cx, cy))
-
-    def _apply_preset_lineup(self, side: str, slots: List[Dict[str,Any]]):
-        team_tid = self.home_tid if side == "home" else self.away_tid
-        roster = self._team_fighters(team_tid)
-        pid_to_fighter = { int(p.get("pid",-1)): p for p in roster }
-        self.clear_side_units(side)
-        for slot in slots:
-            pid = int(slot.get("pid", -1))
-            cx  = int(slot.get("cx", 0))
-            cy  = int(slot.get("cy", 0))
-            f = pid_to_fighter.get(pid)
-            if f is None: 
-                continue
-            self.spawn_unit(side, f, cx, cy)
-
-    # ------------- sim -------------
-    def _units_alive(self, side: Optional[str]=None) -> List[Unit]:
-        return [u for u in self.units if u.alive and (side is None or u.team == side)]
-
-    def _nearest_enemy(self, u: Unit) -> Optional[Unit]:
-        enemies = self._units_alive("away" if u.team == "home" else "home")
-        if not enemies: return None
-        best = None; best_d = 1e9
-        for e in enemies:
-            d = abs(e.cx - u.cx) + abs(e.cy - u.cy)
-            if d < best_d:
-                best = e; best_d = d
-        return best
-
-    def _step_once(self):
-        order = self._units_alive("home") + self._units_alive("away")
-        rnd = random.Random(12345)
-        for u in order:
-            if not u.alive: continue
-            tgt = self._nearest_enemy(u)
-            if tgt is None:
-                continue
-            if abs(tgt.cx - u.cx) + abs(tgt.cy - u.cy) <= 1:
-                self._attack(u, tgt, rnd)
-            else:
-                dx = 1 if tgt.cx > u.cx else -1 if tgt.cx < u.cx else 0
-                dy = 1 if tgt.cy > u.cy else -1 if tgt.cy < u.cy else 0
-                step = (u.cx + (dx if dx != 0 else 0), u.cy + (dy if dx == 0 else 0))
-                if not self._can_move_to(*step):
-                    alt = (u.cx, u.cy + (dy if dy != 0 else 0))
-                    if self._can_move_to(*alt):
-                        step = alt
-                    else:
-                        alt2 = (u.cx + (dx if dx != 0 else 0), u.cy)
-                        if self._can_move_to(*alt2):
-                            step = alt2
-                        else:
-                            step = (u.cx, u.cy)
-                u.cx, u.cy = step
-
-    def _can_move_to(self, cx: int, cy: int) -> bool:
-        if cx < 0 or cy < 0 or cx >= self.grid_cols or cy >= self.grid_rows:
-            return False
-        for x in self.units:
-            if x.alive and x.cx == cx and x.cy == cy:
-                return False
-        return True
-
-    def _attack(self, a: Unit, d: Unit, rnd: random.Random):
-        roll = rnd.randint(1, 20)
-        hit = (roll + a.atk_mod) >= d.ac
-        if hit:
-            dmg = max(1, rnd.randint(1, 8) + a.dmg_mod)
-            d.hp -= dmg
-            if d.hp <= 0:
-                d.alive = False
-                if d.team == "home": self.away_kos += 1
-                else: self.home_kos += 1
-
-    def _check_finish(self) -> bool:
-        if not self._units_alive("home") or not self._units_alive("away"):
-            return True
-        return False
-
-    def _finalize_result(self):
-        self.finished = True
-        self.running = False
-        sh, sa = self.home_kos, self.away_kos
-
-        # Write back to fixture store
-        try:
-            weeks = getattr(self.career, "fixtures_by_week", None)
-            raw = None
-            if weeks and 0 <= self.week-1 < len(weeks):
-                for f in weeks[self.week-1]:
-                    if isinstance(f, dict):
-                        h = int(f.get("home_id", f.get("home_tid", f.get("A", -1))))
-                        a = int(f.get("away_id", f.get("away_tid", f.get("B", -1))))
-                        if h == self.home_tid and a == self.away_tid:
-                            raw = f; break
-                    elif isinstance(f, (list, tuple)):
-                        h = int(f[0]) if len(f)>=1 else -1
-                        a = int(f[1]) if len(f)>=2 else -1
-                        if h == self.home_tid and a == self.away_tid:
-                            raw = f; break
-            if raw is None:
-                for f in getattr(self.career, "fixtures", []):
-                    if not isinstance(f, dict): continue
-                    if int(f.get("week", -1)) != self.week: continue
-                    h = int(f.get("home_id", f.get("home_tid", f.get("A", -1))))
-                    a = int(f.get("away_id", f.get("away_tid", f.get("B", -1))))
-                    if h == self.home_tid and a == self.away_tid:
-                        raw = f; break
-            _set_fixture_result(raw, sh, sa)
+            before = len(self.combat.events)
+            self.combat.take_turn()
+            # flush new events
+            if len(self.combat.events) > before:
+                self._flush_events_to_log()
         except Exception:
             traceback.print_exc()
-
-        _recompute_standings(self.career)
-
-    # ------------- drawing helpers -------------
-    def _draw_unit(self, surf: pygame.Surface, rect: pygame.Rect, u: Unit):
-        bg = (80, 128, 100) if u.team == "home" else (120, 92, 120)
-        pygame.draw.rect(surf, bg, rect, border_radius=6)
-        pygame.draw.rect(surf, (22,24,28), rect, 2, border_radius=6)
-
-        nm = self._short(_safe(u.name), 12)
-        l1 = self.font.render(nm, True, (240,240,245))
-        l2 = self.font.render(f"{u.ovr}", True, (230,230,235))
-        surf.blit(l1, (rect.x + 6, rect.y + 4))
-        surf.blit(l2, (rect.right - l2.get_width() - 6, rect.y + 4))
-
-        bar_w = rect.w - 12
-        hp_ratio = max(0.0, min(1.0, u.hp / max(1, u.max_hp)))
-        bar_bg = pygame.Rect(rect.x + 6, rect.bottom - 12, bar_w, 6)
-        bar_fg = pygame.Rect(rect.x + 6, rect.bottom - 12, int(bar_w * hp_ratio), 6)
-        pygame.draw.rect(surf, (40,40,46), bar_bg, border_radius=3)
-        pygame.draw.rect(surf, (70,200,90) if u.team=="home" else (200,90,200), bar_fg, border_radius=3)
-
-    def _short(self, s: str, n: int) -> str:
-        return s if len(s) <= n else s[:n-1] + "…"
-
-def _safe(x: Any) -> str:
-    try: return str(x)
-    except Exception: return "?"
