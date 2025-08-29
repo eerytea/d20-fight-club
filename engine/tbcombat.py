@@ -3,31 +3,42 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import random
-import math
 
-# Public surface used by UI/other modules
 __all__ = ["TBCombat", "Team"]
 
-# (Optional) imported type for type hints only; no hard dependency at import time
+# --- Optional type for controllers (not required at import time) ---
 try:
     from engine.team_tactics import BaseController  # for typing
 except Exception:
     class BaseController:  # fallback stub
         def decide(self, world, actor): return []
 
-# --- Simple Team container (kept minimal; UI imports it from engine) ---
+# --- Team container ---
 @dataclass
 class Team:
     tid: int
     name: str
     color: Tuple[int, int, int] = (200, 200, 200)
 
-# --- Utility: ability modifier ---
+# --- Ability mods ---
 def _mod(score: int) -> int:
     try:
         return (int(score) - 10) // 2
     except Exception:
         return 0
+
+def _dex_mod(f) -> int:
+    return _mod(getattr(f, "dex", getattr(f, "DEX", 10)))
+
+def _str_mod(f) -> int:
+    return _mod(getattr(f, "str", getattr(f, "STR", 10)))
+
+def _ability_mod(f, ability: str) -> int:
+    a = ability.upper()
+    if a == "DEX": return _dex_mod(f)
+    if a == "STR": return _str_mod(f)
+    if a == "FINESSE": return max(_dex_mod(f), _str_mod(f))  # 🎯 Patch B
+    return 0
 
 # --- Dice helpers ---
 def _parse_dice(spec: Any) -> Tuple[int, int]:
@@ -63,11 +74,11 @@ def _roll_d20(rng: random.Random, adv: int = 0) -> Tuple[int, int]:
     b = rng.randint(1, 20)
     return (a, max(a, b)) if adv > 0 else (a, min(a, b))
 
-# --- Grid helpers ---
+# --- Grid & distance ---
 def _chebyshev(a: Tuple[int,int], b: Tuple[int,int]) -> int:
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
-# --- Fighter helpers ---
+# --- Helpers ---
 def _alive(f) -> bool:
     return bool(getattr(f, "alive", True)) and getattr(f, "hp", 1) > 0
 
@@ -92,12 +103,6 @@ def _name(f) -> str:
 def _team_id(f) -> int:
     return int(getattr(f, "team_id", getattr(f, "tid", 0)))
 
-def _dex_mod(f) -> int:
-    return _mod(getattr(f, "dex", getattr(f, "DEX", 10)))
-
-def _str_mod(f) -> int:
-    return _mod(getattr(f, "str", getattr(f, "STR", 10)))
-
 def _ac(f) -> int:
     if hasattr(f, "ac"):
         try: return int(getattr(f, "ac"))
@@ -107,53 +112,66 @@ def _ac(f) -> int:
     return 10 + _mod(dex) + int(armor_bonus)
 
 def _weapon_profile(f) -> Tuple[int, int, str, int]:
+    """
+    Returns (num_dice, die_sides, ability_used, reach)
+    ability_used in {"STR","DEX","FINESSE"}
+    """
     w = getattr(f, "weapon", None)
     if w is None:
         return (1, 4, "STR", 1)
+
+    # dict style: {"dice":"1d8","reach":2,"ability":"STR","finesse":True}
     if isinstance(w, dict):
         num, sides = _parse_dice(w.get("dice", w.get("formula", "1d4")))
         reach = int(w.get("reach", 1))
         ability = str(w.get("ability", w.get("mod", "STR"))).upper()
-        if ability not in ("STR", "DEX"):
+        finesse = bool(w.get("finesse", False))
+        if finesse:
+            ability = "FINESSE"
+        if ability not in ("STR","DEX","FINESSE"):
             ability = "STR"
         return (num, sides, ability, max(1, reach))
+
+    # str style: "1d6 rapier", "1d8 (finesse) reach=2"
     if isinstance(w, str):
-        base = w; reach = 1
-        if "reach" in w:
+        wl = w.lower()
+        reach = 1
+        if "reach" in wl:
             try:
-                part = w.split("reach", 1)[1]
+                part = wl.split("reach", 1)[1]
                 digits = "".join(ch for ch in part if ch.isdigit())
-                if digits:
-                    reach = int(digits)
-            except Exception:
-                pass
-            base = w.split("reach", 1)[0]
-        num, sides = _parse_dice(base.strip())
-        ability = "DEX" if any(k in w.lower() for k in ("dagger", "rapier", "finesse")) else "STR"
+                if digits: reach = int(digits)
+            except Exception: pass
+        num, sides = _parse_dice(wl.split("reach",1)[0].strip())
+        finesse_keys = ("finesse","rapier","dagger","shortsword","scimitar","whip")
+        if any(k in wl for k in finesse_keys):
+            ability = "FINESSE"
+        elif "dex" in wl:
+            ability = "DEX"
+        else:
+            ability = "STR"
         return (num, sides, ability, max(1, reach))
+
+    # int -> 1dX
     if isinstance(w, int):
         num, sides = _parse_dice(w)
         return (num, sides, "STR", 1)
-    return (1, 4, "STR", 1)
 
-def _ability_mod(f, ability: str) -> int:
-    return _dex_mod(f) if ability == "DEX" else _str_mod(f)
+    return (1, 4, "STR", 1)
 
 # --- TBCombat core ---
 class TBCombat:
     """
     Turn-based combat on a rectangular grid.
 
-    Features:
-      - Initiative once at start (d20 + DEX mod), fixed across rounds.
-      - Per-turn speed (default 4); multi-step movement until in reach.
-      - Melee attacks with weapon profiles (XdY + mod), reach, crits on nat 20.
-      - Advantage/disadvantage supported at roll site (flags on fighters).
-      - Opportunity Attacks: leaving an enemy's reach provokes one reaction per enemy per round.
-      - Optional Controllers (per-team) to drive behavior/policy.
-      - Event stream: 'round_start', 'turn_start', 'move_step', 'blocked', 'attack', 'damage', 'down', 'end'.
+    - Initiative once at start (d20 + DEX mod), fixed across rounds.
+    - Per-turn speed (default 4); multi-step movement until in reach.
+    - Melee attacks with weapon profiles (XdY + mod), reach, crits on nat 20.
+    - Advantage/disadvantage with persistent booleans OR one-shot stacks (Patch B).
+    - Opportunity Attacks: leaving an enemy's reach provokes one reaction per enemy per round.
+    - Optional Controllers (per-team) to drive behavior/policy.
+    - Event stream: 'round_start','turn_start','move_step','blocked','attack','damage','down','end'.
     """
-
     def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], cols: int, rows: int, seed: Optional[int] = None):
         self.teams = [teamA, teamB]
         self.cols = int(cols)
@@ -172,6 +190,13 @@ class TBCombat:
             if not hasattr(f, "speed"):
                 try: setattr(f, "speed", 4)
                 except Exception: pass
+            # Patch B: one-shot adv/dis stacks
+            if not hasattr(f, "_adv_once"):
+                try: setattr(f, "_adv_once", 0)
+                except Exception: pass
+            if not hasattr(f, "_dis_once"):
+                try: setattr(f, "_dis_once", 0)
+                except Exception: pass
 
         # battle state
         self.events: List[Any] = []
@@ -189,9 +214,8 @@ class TBCombat:
         self._push({"type": "round_start", "round": self.round})
         self._reset_reactions_for_round()
 
-    # -------- Public hooks for controllers/UI --------
+    # -------- Public hooks (controllers/UI) --------
     def set_controllers(self, controllers: Dict[int, BaseController]):
-        """Attach per-team controllers: {0: controller_for_home, 1: controller_for_away}."""
         self.controllers = controllers or {}
 
     def speed(self, actor) -> int:
@@ -213,8 +237,17 @@ class TBCombat:
             if _alive(g) and _team_id(g) != tid:
                 yield g
 
+    # 🎯 Patch B: one-shot advantage/disadvantage for next attack
+    def grant_advantage(self, f, stacks: int = 1):
+        try: setattr(f, "_adv_once", max(0, int(getattr(f, "_adv_once", 0))) + int(stacks))
+        except Exception: pass
+
+    def grant_disadvantage(self, f, stacks: int = 1):
+        try: setattr(f, "_dis_once", max(0, int(getattr(f, "_dis_once", 0))) + int(stacks))
+        except Exception: pass
+
+    # Planner helpers
     def path_step(self, actor, target, *, avoid_oa: bool = True) -> Optional[Tuple[int, int]]:
-        """Return a single best next step toward target or None if blocked."""
         ax, ay = self._pos(actor)
         tx, ty = self._pos(target)
         options: List[Tuple[int,int]] = []
@@ -230,14 +263,13 @@ class TBCombat:
         best: Optional[Tuple[int,int]] = None
         best_d = 10**9
 
-        # Two passes: first pass forbids OA if avoid_oa; second pass allows if nothing else works.
-        for pass_i in (0, 1):
+        for pass_i in (0, 1):  # first try to avoid OA, then allow if blocked
             best = None; best_d = 10**9
             for vx, vy in options:
                 nx, ny = ax + vx, ay + vy
                 if not self._in_bounds(nx, ny): continue
                 if self._occupied(nx, ny): continue
-                if avoid_oa and pass_i == 0 and self._would_provoke_oa(actor, (ax, ay), (nx, ny)):
+                if avoid_oa and pass_i == 0 and self._would_provoke_oa(actor, (ax, ay), (nx, ny)):  # noqa
                     continue
                 d = _chebyshev((nx, ny), (tx, ty))
                 if d < best_d:
@@ -271,15 +303,12 @@ class TBCombat:
 
         self._push({"type": "turn_start", "actor": _name(actor), "actor_id": getattr(actor, "pid", None)})
 
-        # If a controller is registered for this team, let it drive.
         ctrl = self.controllers.get(_team_id(actor))
         if ctrl:
             acted = self._execute_controller_turn(ctrl, actor)
             if not acted:
-                # fallback baseline if controller produced nothing actionable
                 self._baseline_turn(actor)
         else:
-            # baseline behavior
             self._baseline_turn(actor)
 
         self._advance_turn_pointer()
@@ -323,7 +352,7 @@ class TBCombat:
                 return idx
         return None
 
-    # -------------- grid & occupancy --------------
+    # -------------- positions & occupancy --------------
     def _pos(self, f) -> Tuple[int,int]:
         return int(getattr(f, "x", getattr(f, "tx", 0))), int(getattr(f, "y", getattr(f, "ty", 0)))
 
@@ -413,13 +442,29 @@ class TBCombat:
         return False
 
     # -------------- Attacking --------------
-    def _attack(self, attacker, defender, *, is_reaction: bool = False):
-        if not (_alive(attacker) and _alive(defender)):
-            return
+    def _compute_advantage(self, attacker, defender) -> int:
+        """Return -1/0/+1 and consume one-shot stacks if present."""
         adv = 0
         if getattr(attacker, "advantage", False): adv += 1
         if getattr(attacker, "disadvantage", False): adv -= 1
+        # consume one-shot stacks (Patch B)
+        ao = max(0, int(getattr(attacker, "_adv_once", 0)))
+        do = max(0, int(getattr(attacker, "_dis_once", 0)))
+        if ao > 0:
+            adv += 1
+            try: setattr(attacker, "_adv_once", ao - 1)
+            except Exception: pass
+        if do > 0:
+            adv -= 1
+            try: setattr(attacker, "_dis_once", do - 1)
+            except Exception: pass
+        return 1 if adv > 0 else -1 if adv < 0 else 0
 
+    def _attack(self, attacker, defender, *, is_reaction: bool = False):
+        if not (_alive(attacker) and _alive(defender)):
+            return
+
+        adv = self._compute_advantage(attacker, defender)
         nat, eff = _roll_d20(self.rng, adv=adv)
         num, sides, ability, reach = _weapon_profile(attacker)
         atk_mod = _ability_mod(attacker, ability)
@@ -462,7 +507,6 @@ class TBCombat:
 
     # -------------- Controller execution --------------
     def _execute_controller_turn(self, ctrl: BaseController, actor) -> bool:
-        """Run controller intents, respecting speed and rules; return True if anything happened."""
         intents = ctrl.decide(self, actor) or []
         if not intents:
             return False
@@ -479,13 +523,11 @@ class TBCombat:
                     if self._move_one_step_to(actor, nx, ny):
                         steps_left -= 1
                         acted = True
-                        # if entering reach of any enemy target soon, controller may also queue attack
                         continue
             elif typ == "attack" and not attacked:
                 target = it.get("target")
                 if target is not None and _alive(target):
-                    # Only allow if in reach
-                    if self._chebyshev_to(actor, target) <= self.reach(actor):
+                    if _chebyshev(self._pos(actor), self._pos(target)) <= self.reach(actor):
                         self._attack(actor, target)
                         attacked = True
                         acted = True
@@ -495,29 +537,25 @@ class TBCombat:
 
         return acted or attacked
 
-    def _chebyshev_to(self, a, b) -> int:
-        return _chebyshev(self._pos(a), self._pos(b))
-
-    # -------------- Baseline AI (fallback) --------------
+    # -------------- Baseline AI --------------
     def _baseline_turn(self, actor):
         enemy = self._choose_target(actor)
         if enemy is None:
             return
-        if self._chebyshev_to(actor, enemy) <= self.reach(actor):
+        if _chebyshev(self._pos(actor), self._pos(enemy)) <= self.reach(actor):
             self._attack(actor, enemy)
             return
 
-        # Move up to speed steps toward enemy; attack if within reach after moving
         steps = max(0, self.speed(actor))
         for _ in range(steps):
-            if self._chebyshev_to(actor, enemy) <= self.reach(actor):
+            if _chebyshev(self._pos(actor), self._pos(enemy)) <= self.reach(actor):
                 break
             moved = self._step_towards(actor, enemy)
             if not moved:
                 break
             if not _alive(enemy):
                 break
-        if _alive(actor) and _alive(enemy) and self._chebyshev_to(actor, enemy) <= self.reach(actor):
+        if _alive(actor) and _alive(enemy) and _chebyshev(self._pos(actor), self._pos(enemy)) <= self.reach(actor):
             self._attack(actor, enemy)
 
     def _choose_target(self, actor) -> Optional[Any]:
@@ -536,7 +574,7 @@ class TBCombat:
                     best = g
         return best
 
-    # -------------- End conditions & events --------------
+    # -------------- End & events --------------
     def _end_if_finished(self):
         alive0 = any(_alive(f) and _team_id(f) == 0 for f in self.fighters)
         alive1 = any(_alive(f) and _team_id(f) == 1 for f in self.fighters)
