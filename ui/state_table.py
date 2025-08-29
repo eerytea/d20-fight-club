@@ -1,104 +1,77 @@
 # ui/state_table.py
 from __future__ import annotations
 import pygame
-from pygame import Rect
+from typing import Any, Dict, List
 
-# Try to use shared UI helpers if available; otherwise provide tiny fallbacks
-try:
-    from ui.uiutil import Button, draw_text, panel
-except Exception:
-    class Button:
-        def __init__(self, rect: Rect, label: str, cb, enabled: bool = True):
-            self.rect = rect
-            self.label = label
-            self.cb = cb
-            self.enabled = enabled
-        def draw(self, s):
-            pygame.draw.rect(s, (60, 60, 75) if self.enabled else (40, 40, 50), self.rect, border_radius=8)
-            f = pygame.font.SysFont("arial", 18)
-            s.blit(f.render(self.label, True, (255, 255, 255)), (self.rect.x + 10, self.rect.y + 8))
-        def handle(self, e):
-            if e.type == pygame.MOUSEBUTTONDOWN and self.enabled and self.rect.collidepoint(e.pos):
-                self.cb()
+def _team_name(car, tid):
+    if hasattr(car, "team_name") and callable(car.team_name):
+        try: return car.team_name(int(tid))
+        except Exception: pass
+    for t in getattr(car, "teams", []):
+        if int(t.get("tid",-1)) == int(tid): return t.get("name", f"Team {tid}")
+    return f"Team {tid}"
 
-    def draw_text(s, text, x, y, color=(230, 230, 235), size=18):
-        f = pygame.font.SysFont("arial", size)
-        s.blit(f.render(str(text), True, color), (x, y))
-
-    def panel(surf, rect, color=(28, 28, 34)):
-        pygame.draw.rect(surf, color, rect, border_radius=12)
-
+def _build_table(car) -> List[Dict[str, Any]]:
+    # Prefer precomputed table
+    rows = getattr(car, "table_sorted", None)
+    if rows: return rows
+    # else derive a minimal one from car.standings
+    st = getattr(car, "standings", None)
+    if st:
+        rows = list(st.values())
+        rows.sort(key=lambda r: (r.get("pts",0), r.get("gd",0), r.get("gf",0)), reverse=True)
+        return rows
+    # ultimate fallback: empty
+    return []
 
 class TableState:
-    """
-    Minimal, dependency-light standings screen.
-    Expects a `career` object with .table_rows_sorted()
-    """
     def __init__(self, app, career):
         self.app = app
-        self.career = career
-        self.rc_hdr = Rect(20, 20, 860, 50)
-        self.rc_list = Rect(20, 80, 860, 460)
-        self.rc_btns = Rect(20, 550, 860, 50)
-        self.scroll = 0
-        self.row_h = 26
+        self.car = career
+        self.font  = pygame.font.SysFont(None, 22)
+        self.h1    = pygame.font.SysFont(None, 34)
 
-        x = self.rc_btns.x
-        self.btn_back = Button(Rect(x, self.rc_btns.y + 8, 140, 34), "Back", self._back)
-        self._buttons = [self.btn_back]
+    def enter(self):
+        w,h = self.app.screen.get_size()
+        pad = 16
+        self.rect_header = pygame.Rect(pad,pad,w-pad*2,48)
+        self.rect_body   = pygame.Rect(pad, self.rect_header.bottom+pad, w-pad*2, h-(self.rect_header.bottom+pad*2))
+        bw,bh = 120,36
+        self.btn_back = pygame.Rect(self.rect_header.right-bw-12, self.rect_header.y+6, bw, bh)
 
-    def handle(self, e):
-        if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
-            self._back(); return
-        if e.type == pygame.MOUSEWHEEL and self.rc_list.collidepoint(pygame.mouse.get_pos()):
-            self.scroll = max(0, self.scroll - e.y)
-        if e.type == pygame.MOUSEBUTTONDOWN:
-            for b in self._buttons:
-                b.handle(e)
+    def handle(self, ev):
+        if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+            self.app.pop_state(); return
+        if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+            if self.btn_back.collidepoint(ev.pos): self.app.pop_state()
 
-    def update(self, dt):
-        pass
+    def update(self, dt): pass
 
     def draw(self, screen):
-        screen.fill((12, 12, 16))
-        panel(screen, self.rc_hdr)
-        draw_text(screen, "League Table", self.rc_hdr.x + 12, self.rc_hdr.y + 12, size=22)
-        panel(screen, self.rc_list, color=(24, 24, 30))
+        screen.fill((16,16,20))
+        pygame.draw.rect(screen,(42,44,52),self.rect_header,border_radius=12)
+        pygame.draw.rect(screen,(24,24,28),self.rect_header,2,border_radius=12)
+        t = self.h1.render("Table", True, (235,235,240))
+        screen.blit(t,(self.rect_header.x+12, self.rect_header.y + (self.rect_header.h - t.get_height())//2))
+        # back button
+        pygame.draw.rect(screen,(58,60,70),self.btn_back,border_radius=10)
+        pygame.draw.rect(screen,(24,24,28),self.btn_back,2,border_radius=10)
+        tb = self.font.render("Back", True, (235,235,240))
+        screen.blit(tb,(self.btn_back.x+14, self.btn_back.y + (self.btn_back.h - tb.get_height())//2))
 
-        # Headers
-        cols = [("Pos", 50), ("Team", 260), ("P", 60), ("W", 60), ("D", 60), ("L", 60), ("K", 60), ("KD", 70), ("PTS", 80)]
-        x = self.rc_list.x + 10
-        y = self.rc_list.y + 10
-        cx = x
-        for title, w in cols:
-            draw_text(screen, title, cx, y, (220, 220, 230), 18); cx += w
-        y += 26
-
-        # Rows
-        try:
-            rows = self.career.table_rows_sorted()
-        except Exception:
-            rows = []
-
-        area_h = self.rc_list.h - 40
-        max_rows = area_h // self.row_h
-        start = self.scroll
-
-        for i, r in enumerate(rows[start:start + max_rows], start=1 + start):
-            cx = x
-            vals = [
-                i,
-                r.get("name", ""),
-                r.get("P", 0), r.get("W", 0), r.get("D", 0), r.get("L", 0),
-                r.get("K", 0), r.get("KD", 0), r.get("PTS", 0)
-            ]
-            for (_, w), val in zip(cols, vals):
-                draw_text(screen, str(val), cx, y, (230, 230, 235), 18)
-                cx += w
-            y += self.row_h
-
-        for b in self._buttons:
-            b.draw(screen)
-
-    def _back(self):
-        self.app.pop_state()
+        # body
+        pygame.draw.rect(screen,(42,44,52),self.rect_body,border_radius=12)
+        pygame.draw.rect(screen,(24,24,28),self.rect_body,2,border_radius=12)
+        rows = _build_table(self.car)
+        x = self.rect_body.x + 14
+        y = self.rect_body.y + 12
+        line_h = self.font.get_height() + 8
+        header = self.font.render("Pos  Team                                Pts  W  D  L  GF  GA  GD", True, (210,210,215))
+        screen.blit(header, (x, y)); y += line_h
+        for i, r in enumerate(rows, start=1):
+            name = r.get("name", _team_name(self.car, r.get("tid", i)))
+            pts = r.get("pts",0); w=r.get("w",0); d=r.get("d",0); l=r.get("l",0)
+            gf = r.get("gf",0); ga=r.get("ga",0); gd=r.get("gd", gf-ga)
+            label = f"{i:>2}.  {name:34.34}  {pts:>3}  {w:>2} {d:>2} {l:>2}  {gf:>2}  {ga:>2}  {gd:>3}"
+            surf = self.font.render(label, True, (230,230,235))
+            screen.blit(surf, (x, y)); y += line_h
