@@ -17,10 +17,11 @@ except Exception as e:
 else:
     _ENGINE_IMPORT_ERROR = None
 
+# 🔶 grid size centralized
+from engine.constants import GRID_COLS, GRID_ROWS
+
 # ----------------- constants & styles -----------------
-GRID_COLS = 16
-GRID_ROWS = 16
-MIN_TILE  = 12           # allows 30x30 to fit; raise if you want larger minimum cells
+MIN_TILE  = 12           # allows 16x16 to fit; bump if you want larger minimum cells
 
 PAD = 16
 HEADER_H = 36           # tiny header that sits ONLY above the log column
@@ -184,7 +185,8 @@ def _elide(text: str, font: pygame.font.Font, max_w: int) -> str:
 # ----------------- Match State -----------------
 class MatchState:
     """
-    30×30 combat viewer. Compact header sits ONLY above the log column.
+    16×16 combat viewer (size comes from engine.constants).
+    Compact header sits ONLY above the log column.
     Buttons live under the log; board expands to fill remaining space.
     """
     def __init__(self, *args, **kwargs):
@@ -547,7 +549,7 @@ class MatchState:
     def _format_event_line(self, k: str, p: Dict[str, Any]) -> Optional[str]:
         name   = self._pretty_name(str(p.get("name", p.get("actor", ""))))
         target = self._pretty_name(str(p.get("target", p.get("defender", ""))))
-        to     = p.get("to"); at = p.get("at"); dmg = p.get("dmg", p.get("amount"))
+        to     = p.get("to"); at = p.get("at")
         if k in ("round","round_start"):   return f"— Round {p.get('round','?')} —"
         if k in ("move","move_step"):      return f"{name} moved to {tuple(to or p.get('to',(0,0)))}"
         if k == "blocked":                  return f"{name} blocked at {tuple(at) if isinstance(at,(list,tuple)) else at}"
