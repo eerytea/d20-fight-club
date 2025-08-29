@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from typing import Dict, Any
 from core.constants import RACES, DEFAULT_RACE_WEIGHTS, DEV_TRAITS
-from core.ratings import compute_ovr, simulate_to_level, CLASS_FIT_WEIGHTS
+from core.ratings import compute_ovr, simulate_to_level, CLASS_FIT_WEIGHTS, calc_ac
 
 _rng = random.Random()
 
@@ -66,8 +66,8 @@ def generate_fighter(team: Dict[str,Any] | None = None, seed: int | None = None)
     dev_trait = _assign_dev_trait()
 
     lvl = 1
-    hp  = 10 + (base["CON"] - 10)//2
-    ac  = 12 + max(0, (base["DEX"] - 10)//2)
+    # armor bonus placeholder until gear system
+    armor_bonus = 0
 
     f: Dict[str,Any] = {
         "name": "Rookie",
@@ -75,13 +75,19 @@ def generate_fighter(team: Dict[str,Any] | None = None, seed: int | None = None)
         "race": race,
         "class": cls,
         "level": lvl,
-        "hp": hp, "max_hp": hp, "ac": ac, "base_ac": 12,
+        "hp": 10 + (base["CON"] - 10)//2,  # simple base until class HD scaling on level_up
+        "max_hp": 0,   # set after hp below
+        "armor_bonus": armor_bonus,
         **base,
         "team_id": (team or {}).get("tid"),
         "dev_trait": dev_trait,                 # invisible tag
         "xp": 0,
         "xp_rate": DEV_TRAITS[dev_trait],       # multiplier for future XP grants
     }
+
+    # AC (and normalize hp/max_hp)
+    f["ac"] = calc_ac(f)
+    f["max_hp"] = f["hp"]
 
     # Initial OVR at level 1
     f["OVR"] = compute_ovr(f)
