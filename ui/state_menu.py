@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pygame
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Any
+from typing import Callable, List, Optional
 
 def _import_opt(fullname: str):
     try:
@@ -17,22 +17,25 @@ class Button:
     rect: pygame.Rect
     label: str
     action: Callable[[], None]
-    enabled: bool = True
+    disabled: bool = False
     hover: bool = False
 
     def draw(self, screen):
         if pygame is None: return
-        bg = (60, 60, 72) if self.enabled else (40, 40, 48)
-        if self.hover and self.enabled: bg = (80, 80, 95)
+        bg = (60, 60, 72)
+        if self.hover and not self.disabled:
+            bg = (80, 80, 95)
+        if self.disabled:
+            bg = (40, 40, 48)
         pygame.draw.rect(screen, bg, self.rect, border_radius=8)
         pygame.draw.rect(screen, (24, 24, 28), self.rect, 2, border_radius=8)
         font = pygame.font.SysFont(None, 24)
-        txt = font.render(self.label, True, (235, 235, 240))
+        color = (235, 235, 240) if not self.disabled else (160, 160, 165)
+        txt = font.render(self.label, True, color)
         screen.blit(txt, (self.rect.x + 14, self.rect.y + (self.rect.h - txt.get_height()) // 2))
 
     def handle(self, ev):
-        if pygame is None: return
-        if not self.enabled: return
+        if pygame is None or self.disabled: return
         if ev.type == pygame.MOUSEMOTION:
             self.hover = self.rect.collidepoint(ev.pos)
         elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
@@ -85,7 +88,7 @@ class MenuState:
         if MatchState is None:
             self._toast("Match screen not implemented.")
             return
-        # Always wrap in a tiny Career-like object so MatchState receives what it expects
+        # Wrap two quick teams in a tiny Career-like object so MatchState gets what it expects.
         def _mk(name, tid, size=4):
             return {"tid": tid, "name": name,
                     "fighters": [{"pid": i, "name": f"{name[:1]}{i}", "team_id": tid,
@@ -94,7 +97,6 @@ class MenuState:
                                   "CON": 10, "INT": 8, "WIS": 8, "CHA": 8} for i in range(size)]}
         home = _mk("Home", 0); away = _mk("Away", 1)
 
-        # Minimal career stub with team_name method
         mini = type("MiniCareer", (), {})()
         mini.teams = [home, away]; mini.week = 1; mini.user_tid = None; mini.seed = 1337
         def _tn(tid):
