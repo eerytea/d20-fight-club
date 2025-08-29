@@ -34,10 +34,10 @@ def _str_mod(f) -> int:
     return _mod(getattr(f, "str", getattr(f, "STR", 10)))
 
 def _ability_mod(f, ability: str) -> int:
-    a = ability.upper()
+    a = (ability or "").upper()
     if a == "DEX": return _dex_mod(f)
     if a == "STR": return _str_mod(f)
-    if a == "FINESSE": return max(_dex_mod(f), _str_mod(f))  # 🎯 Patch B
+    if a == "FINESSE": return max(_dex_mod(f), _str_mod(f))  # Patch B
     return 0
 
 # --- Dice helpers ---
@@ -111,8 +111,10 @@ def _ac(f) -> int:
     armor_bonus = getattr(f, "armor_bonus", 0)
     return 10 + _mod(dex) + int(armor_bonus)
 
+# --- Weapon traits ---
 def _weapon_profile(f) -> Tuple[int, int, str, int]:
     """
+    Base profile for damage and (melee) reach:
     Returns (num_dice, die_sides, ability_used, reach)
     ability_used in {"STR","DEX","FINESSE"}
     """
@@ -120,7 +122,7 @@ def _weapon_profile(f) -> Tuple[int, int, str, int]:
     if w is None:
         return (1, 4, "STR", 1)
 
-    # dict style: {"dice":"1d8","reach":2,"ability":"STR","finesse":True}
+    # dict style: {"dice":"1d8","reach":2,"ability":"STR","finesse":True, "ranged":True, "range":(12,24)}
     if isinstance(w, dict):
         num, sides = _parse_dice(w.get("dice", w.get("formula", "1d4")))
         reach = int(w.get("reach", 1))
@@ -132,7 +134,7 @@ def _weapon_profile(f) -> Tuple[int, int, str, int]:
             ability = "STR"
         return (num, sides, ability, max(1, reach))
 
-    # str style: "1d6 rapier", "1d8 (finesse) reach=2"
+    # str style: "1d6 rapier", "1d8 (finesse) reach=2", "1d8 longbow reach=1"
     if isinstance(w, str):
         wl = w.lower()
         reach = 1
@@ -159,6 +161,53 @@ def _weapon_profile(f) -> Tuple[int, int, str, int]:
 
     return (1, 4, "STR", 1)
 
+def _ranged_info(f) -> Tuple[bool, int, int, str]:
+    """
+    Patch C: ranged weapons support.
+    Returns: (is_ranged, normal_range, long_range, ability_used_for_ranged)
+      - distances in tiles using Chebyshev metric
+      - ability default DEX (unless explicit or thrown/javelin => STR)
+    """
+    w = getattr(f, "weapon", None)
+    if w is None:
+        return (False, 0, 0, "DEX")
+    # dict
+    if isinstance(w, dict):
+        is_rng = bool(w.get("ranged", False)) or ("range" in w)
+        ability = str(w.get("ability", w.get("mod", "DEX"))).upper()
+        if bool(w.get("finesse", False)):
+            ability = "FINESSE"
+        nr, lr = 0, 0
+        rng = w.get("range", None)
+        if isinstance(rng, str) and "/" in rng:
+            try:
+                a, b = rng.split("/", 1)
+                nr, lr = int(a), int(b)
+            except Exception:
+                nr, lr = 8, 16
+        elif isinstance(rng, (tuple, list)) and len(rng) == 2:
+            nr, lr = int(rng[0]), int(rng[1])
+        elif isinstance(rng, int):
+            nr, lr = int(rng), int(rng)*2
+        elif is_rng:
+            nr, lr = 8, 16
+        return (is_rng, max(0, nr), max(0, lr), ability)
+
+    # string
+    if isinstance(w, str):
+        wl = w.lower()
+        # bows/crossbows default to 12/24 tiles
+        if any(k in wl for k in ("bow","crossbow","sling","arrow","bolt")):
+            return (True, 12, 24, "DEX")
+        # thrown defaults (javelin/throw) to 6/12 and STR
+        if any(k in wl for k in ("javelin","throw","thrown")):
+            return (True, 6, 12, "STR")
+        # otherwise not ranged
+        return (False, 0, 0, "DEX")
+
+    # int or other
+    return (False, 0, 0, "DEX")
+
 # --- TBCombat core ---
 class TBCombat:
     """
@@ -166,8 +215,11 @@ class TBCombat:
 
     - Initiative once at start (d20 + DEX mod), fixed across rounds.
     - Per-turn speed (default 4); multi-step movement until in reach.
-    - Melee attacks with weapon profiles (XdY + mod), reach, crits on nat 20.
-    - Advantage/disadvantage with persistent booleans OR one-shot stacks (Patch B).
+    - Melee and Ranged attacks:
+        * Melee: must be within reach
+        * Ranged: can attack up to long range; disadvantage beyond normal range
+                  and when threatened in melee (adjacent enemy).
+    - Advantage/disadvantage: persistent booleans OR one-shot stacks.
     - Opportunity Attacks: leaving an enemy's reach provokes one reaction per enemy per round.
     - Optional Controllers (per-team) to drive behavior/policy.
     - Event stream: 'round_start','turn_start','move_step','blocked','attack','damage','down','end'.
@@ -190,7 +242,6 @@ class TBCombat:
             if not hasattr(f, "speed"):
                 try: setattr(f, "speed", 4)
                 except Exception: pass
-            # Patch B: one-shot adv/dis stacks
             if not hasattr(f, "_adv_once"):
                 try: setattr(f, "_adv_once", 0)
                 except Exception: pass
@@ -208,7 +259,7 @@ class TBCombat:
         self._initiative: List[int] = []
         self._roll_initiative()
 
-        # optional AI controllers per team_id
+        # optional controllers
         self.controllers: Dict[int, BaseController] = {}
 
         self._push({"type": "round_start", "round": self.round})
@@ -237,7 +288,6 @@ class TBCombat:
             if _alive(g) and _team_id(g) != tid:
                 yield g
 
-    # 🎯 Patch B: one-shot advantage/disadvantage for next attack
     def grant_advantage(self, f, stacks: int = 1):
         try: setattr(f, "_adv_once", max(0, int(getattr(f, "_adv_once", 0))) + int(stacks))
         except Exception: pass
@@ -246,7 +296,6 @@ class TBCombat:
         try: setattr(f, "_dis_once", max(0, int(getattr(f, "_dis_once", 0))) + int(stacks))
         except Exception: pass
 
-    # Planner helpers
     def path_step(self, actor, target, *, avoid_oa: bool = True) -> Optional[Tuple[int, int]]:
         ax, ay = self._pos(actor)
         tx, ty = self._pos(target)
@@ -269,7 +318,7 @@ class TBCombat:
                 nx, ny = ax + vx, ay + vy
                 if not self._in_bounds(nx, ny): continue
                 if self._occupied(nx, ny): continue
-                if avoid_oa and pass_i == 0 and self._would_provoke_oa(actor, (ax, ay), (nx, ny)):  # noqa
+                if avoid_oa and pass_i == 0 and self._would_provoke_oa(actor, (ax, ay), (nx, ny)):
                     continue
                 d = _chebyshev((nx, ny), (tx, ty))
                 if d < best_d:
@@ -393,6 +442,17 @@ class TBCombat:
                 return True
         return False
 
+    def _threatened_in_melee(self, actor) -> bool:
+        """Within 1 tile of any living enemy (used for ranged disadvantage)."""
+        ax, ay = self._pos(actor)
+        for e in self.fighters:
+            if not _alive(e): continue
+            if _team_id(e) == _team_id(actor): continue
+            ex, ey = self._pos(e)
+            if _chebyshev((ax, ay), (ex, ey)) <= 1:
+                return True
+        return False
+
     def _move_one_step_to(self, actor, nx: int, ny: int) -> bool:
         ax, ay = self._pos(actor)
         if not self._in_bounds(nx, ny): return False
@@ -447,7 +507,7 @@ class TBCombat:
         adv = 0
         if getattr(attacker, "advantage", False): adv += 1
         if getattr(attacker, "disadvantage", False): adv -= 1
-        # consume one-shot stacks (Patch B)
+        # consume one-shot stacks
         ao = max(0, int(getattr(attacker, "_adv_once", 0)))
         do = max(0, int(getattr(attacker, "_dis_once", 0)))
         if ao > 0:
@@ -464,14 +524,46 @@ class TBCombat:
         if not (_alive(attacker) and _alive(defender)):
             return
 
-        adv = self._compute_advantage(attacker, defender)
-        nat, eff = _roll_d20(self.rng, adv=adv)
-        num, sides, ability, reach = _weapon_profile(attacker)
+        # weapon / ranged traits
+        num, sides, ability_melee, reach = _weapon_profile(attacker)
+        is_ranged, nr, lr, ability_ranged = _ranged_info(attacker)
+        ability = ability_ranged if is_ranged else ability_melee
         atk_mod = _ability_mod(attacker, ability)
+
+        # range rules for ranged weapons
+        dist = _chebyshev(self._pos(attacker), self._pos(defender))
+        if is_ranged:
+            if lr <= 0 or dist > lr:
+                # out of range
+                self._push({
+                    "type": "attack", "actor": _name(attacker), "target": _name(defender),
+                    "hit": False, "reason": "out_of_range", "ranged": True,
+                    "opportunity": bool(is_reaction),
+                })
+                return
+
+        # compute advantage (consume one-shots), then apply ranged context modifiers
+        adv = self._compute_advantage(attacker, defender)
+        ctx_adv = 0
+        if is_ranged:
+            if dist > 0 and nr > 0 and dist > nr:
+                ctx_adv -= 1  # long range
+            if self._threatened_in_melee(attacker):
+                ctx_adv -= 1  # melee-threat
+        adv = max(-1, min(1, adv + ctx_adv))
+
+        nat, eff = _roll_d20(self.rng, adv=adv)
         ac = _ac(defender)
         crit = (nat == 20)
-        hit = (eff + atk_mod >= ac) or crit
 
+        hit = False
+        if is_ranged:
+            hit = (eff + atk_mod >= ac) or crit
+        else:
+            # melee must be in reach
+            hit = ((dist <= reach) and ((eff + atk_mod >= ac) or crit))
+
+        # attack event
         self._push({
             "type": "attack",
             "actor": _name(attacker),
@@ -483,6 +575,9 @@ class TBCombat:
             "hit": hit,
             "critical": crit,
             "opportunity": bool(is_reaction),
+            "ranged": bool(is_ranged),
+            "advantage": True if adv > 0 else False,
+            "disadvantage": True if adv < 0 else False,
         })
 
         if hit:
@@ -527,7 +622,12 @@ class TBCombat:
             elif typ == "attack" and not attacked:
                 target = it.get("target")
                 if target is not None and _alive(target):
-                    if _chebyshev(self._pos(actor), self._pos(target)) <= self.reach(actor):
+                    # allow ranged at distance; melee requires reach
+                    dist = _chebyshev(self._pos(actor), self._pos(target))
+                    _, _, _, reach = _weapon_profile(actor)
+                    is_ranged, _, lr, _ = _ranged_info(actor)
+                    can_attack = (is_ranged and dist <= max(1, lr)) or (dist <= reach)
+                    if can_attack:
                         self._attack(actor, target)
                         attacked = True
                         acted = True
@@ -537,25 +637,45 @@ class TBCombat:
 
         return acted or attacked
 
-    # -------------- Baseline AI --------------
+    # -------------- Baseline AI (melee & ranged) --------------
     def _baseline_turn(self, actor):
         enemy = self._choose_target(actor)
         if enemy is None:
             return
-        if _chebyshev(self._pos(actor), self._pos(enemy)) <= self.reach(actor):
-            self._attack(actor, enemy)
+        dist = _chebyshev(self._pos(actor), self._pos(enemy))
+        _, _, _, reach = _weapon_profile(actor)
+        is_ranged, nr, lr, _ = _ranged_info(actor)
+
+        if is_ranged:
+            if dist <= max(1, lr):  # in long range: shoot
+                self._attack(actor, enemy)
+                return
+            # else step until within long range, then shoot
+            steps = max(0, self.speed(actor))
+            for _ in range(steps):
+                if _chebyshev(self._pos(actor), self._pos(enemy)) <= max(1, lr):
+                    break
+                moved = self._step_towards(actor, enemy)
+                if not moved: break
+                if not _alive(enemy): break
+            if _alive(actor) and _alive(enemy) and _chebyshev(self._pos(actor), self._pos(enemy)) <= max(1, lr):
+                self._attack(actor, enemy)
             return
 
+        # melee logic (unchanged)
+        if dist <= reach:
+            self._attack(actor, enemy)
+            return
         steps = max(0, self.speed(actor))
         for _ in range(steps):
-            if _chebyshev(self._pos(actor), self._pos(enemy)) <= self.reach(actor):
+            if _chebyshev(self._pos(actor), self._pos(enemy)) <= reach:
                 break
             moved = self._step_towards(actor, enemy)
             if not moved:
                 break
             if not _alive(enemy):
                 break
-        if _alive(actor) and _alive(enemy) and _chebyshev(self._pos(actor), self._pos(enemy)) <= self.reach(actor):
+        if _alive(actor) and _alive(enemy) and _chebyshev(self._pos(actor), self._pos(enemy)) <= reach:
             self._attack(actor, enemy)
 
     def _choose_target(self, actor) -> Optional[Any]:
