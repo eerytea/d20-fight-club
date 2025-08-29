@@ -2,12 +2,10 @@
 from __future__ import annotations
 import pygame
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
-import math
-import random
-import traceback
+from typing import Any, Dict, List, Optional, Tuple
+import math, random, traceback
 
-# --- pull the turn-based engine / factories ---
+# --- engine hooks ---
 try:
     from engine import TBCombat, Team, fighter_from_dict, layout_teams_tiles
 except Exception as e:
@@ -24,12 +22,12 @@ GRID_COLS = 11
 GRID_ROWS = 11
 
 PAD = 16
-HEADER_H = 40           # smaller header
-FOOTER_VPAD = 8         # vertical padding inside footer
-FOOTER_GAP = 8          # gap between button rows/cols
+HEADER_H = 36           # tiny header that sits ONLY above the log column
+FOOTER_VPAD = 8
+FOOTER_GAP = 8
 
-LOG_MIN_W = 260         # smaller log
-LOG_RATIO = 0.28        # ~28% of screen width for the log pane
+LOG_MIN_W = 260
+LOG_RATIO = 0.28        # ~28% of screen width for the log column
 
 BG = (16, 16, 20)
 CARD = (42, 44, 52)
@@ -167,23 +165,32 @@ def _short_name(name: str) -> str:
         return parts[0][:1].upper() + "."
     return f"{parts[0][0].upper()}. {parts[-1].title()}"
 
+def _elide(text: str, font: pygame.font.Font, max_w: int) -> str:
+    if font.size(text)[0] <= max_w: return text
+    ell = "…"
+    if font.size(ell)[0] > max_w: return ""
+    lo, hi = 0, len(text)
+    res = ""
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = text[:mid] + ell
+        if font.size(candidate)[0] <= max_w:
+            res = candidate; lo = mid + 1
+        else:
+            hi = mid - 1
+    return res
+
 # ----------------- Match State -----------------
 class MatchState:
     """
-    Turn-based viewer using engine.TBCombat on an 11×11 board.
-
-    Controls (bottom bar):
-      • Back  • Play/Pause  • Next Turn  • Next Round
-
-    Right side: scrollable turn log (with the controls tucked underneath).
-
-    Tactics preset: honors fixture["preset_lineup"] with 'side' ('home'/'away') and list of {pid,cx,cy}.
+    11×11 combat viewer. Compact header sits ONLY above the log column.
+    Buttons live under the log; board expands to fill remaining space.
     """
     def __init__(self, *args, **kwargs):
         if _ENGINE_IMPORT_ERROR is not None:
             raise RuntimeError(f"engine import failed: {_ENGINE_IMPORT_ERROR}")
 
-        # Accept permutations:
+        # Accepted signatures:
         # (app, career, fixture) | (app, fixture, career) | (app, fixture)
         # (app, home_tid, away_tid, career)               | (app, home_tid, away_tid)
         self.app = None
@@ -211,7 +218,6 @@ class MatchState:
             self.career.teams = []
             self.career.date = {"week": self.fixture.get("week", 1), "season": 1}
 
-        # resolve ids/names/week
         self.home_tid = int(self.fixture.get("home_id", self.fixture.get("home_tid", self.fixture.get("A", 0))))
         self.away_tid = int(self.fixture.get("away_id", self.fixture.get("away_tid", self.fixture.get("B", 0))))
         self.week     = int(self.fixture.get("week", getattr(self.career, "week", 1)))
@@ -220,18 +226,18 @@ class MatchState:
 
         # fonts/UI
         self.font  = pygame.font.SysFont(None, 20)
-        self.h1    = pygame.font.SysFont(None, 30)
-        self.h2    = pygame.font.SysFont(None, 18)
+        self.h1    = pygame.font.SysFont(None, 22)   # for header left
+        self.h2    = pygame.font.SysFont(None, 18)   # for header right + labels
         self._font_cache: Dict[int, pygame.font.Font] = {}
 
         # layout rects
-        self.rect_header: Optional[pygame.Rect] = None
+        self.rect_header: Optional[pygame.Rect] = None  # sits above log only
         self.rect_board:  Optional[pygame.Rect] = None
         self.rect_log:    Optional[pygame.Rect] = None
         self.rect_footer: Optional[pygame.Rect] = None
         self.tile = 48
 
-        # buttons
+        # buttons & loop
         self.btns: List[Button] = []
         self.running = False
         self.auto_timer = 0.0
@@ -240,7 +246,7 @@ class MatchState:
         # log
         self.lines: List[str] = []
         self._event_idx = 0
-        self.log_scroll = 0  # pixels
+        self.log_scroll = 0
         self._line_h = self.font.get_height() + 4
 
         # combat
@@ -251,71 +257,47 @@ class MatchState:
     def enter(self):
         self._layout()
         self._build_combat()
-        self._push_log(f"— Match Start: {self.home_name}")
+        self._push_log(f"— Match Start: {self.home_name} vs {self.away_name}")
 
-    def _compute_footer_layout(self, log_w: int) -> Tuple[int, List[pygame.Rect]]:
-        """
-        Returns (footer_height, button_rects) for the area under the log.
-        Buttons are smaller and will wrap automatically into 1–2 rows.
-        """
-        labels = ["Back", "Play / Pause", "Next Turn", "Next Round"]
-        # Small buttons
-        bw, bh = 118, 36
-        # How many columns can we fit?
+    def _compute_footer_layout(self, log_w: int) -> Tuple[int, int, int]:
+        """Return (footer_height, button_w, button_h) under log; buttons auto-wrap."""
+        bw, bh = 118, 36  # compact controls
         cols = max(1, (log_w - 2*FOOTER_VPAD + FOOTER_GAP) // (bw + FOOTER_GAP))
-        rows = int(math.ceil(len(labels) / cols))
+        rows = math.ceil(4 / cols)
         footer_h = FOOTER_VPAD*2 + rows*bh + (rows-1)*FOOTER_GAP
-
-        # Build rects left-aligned inside footer area of width log_w
-        rects: List[pygame.Rect] = []
-        x0 = FOOTER_VPAD
-        y0 = FOOTER_VPAD
-        i = 0
-        for r in range(rows):
-            x = x0
-            for c in range(cols):
-                if i >= len(labels): break
-                rects.append(pygame.Rect(0, 0, bw, bh))  # positions filled later
-                x += bw + FOOTER_GAP
-                i += 1
-        return footer_h, rects
+        return footer_h, bw, bh
 
     def _layout(self):
         w, h = self.app.screen.get_size()
-
-        # compute log width first (fixed percentage with a minimum)
         log_w = max(LOG_MIN_W, int(w * LOG_RATIO))
 
-        # footer layout depends on log width (wrap buttons if needed)
-        footer_h, btn_rects = self._compute_footer_layout(log_w)
+        # footer based on log width
+        footer_h, bw, bh = self._compute_footer_layout(log_w)
 
-        # board gets the rest of the width, full height below header
-        avail_w = w - PAD*3 - log_w
-        avail_h = h - PAD*2 - HEADER_H   # board can use almost all height now
-        self.tile = max(30, min(avail_w // GRID_COLS, avail_h // GRID_ROWS))
-        board_w = GRID_COLS * self.tile
-        board_h = GRID_ROWS * self.tile
-
-        self.rect_header = pygame.Rect(PAD, PAD, w - PAD*2, HEADER_H)
-        by = self.rect_header.bottom + PAD
-
-        # place board on the left, using all available height
-        self.rect_board = pygame.Rect(PAD + 4, by, board_w, board_h)
-
-        # log at right, consuming height minus footer under it
-        log_h = max(120, board_h - footer_h - PAD)
-        self.rect_log   = pygame.Rect(w - PAD - log_w, by, log_w, log_h)
-
-        # footer lives directly under the log
+        # RIGHT COLUMN (header + log + footer)
+        # header sits at top right
+        self.rect_header = pygame.Rect(w - PAD - log_w, PAD, log_w, HEADER_H)
+        # log below header
+        right_col_h = h - PAD*2
+        log_h = max(120, right_col_h - HEADER_H - footer_h - PAD)
+        self.rect_log = pygame.Rect(self.rect_header.x, self.rect_header.bottom + PAD, log_w, log_h)
+        # footer under log
         self.rect_footer = pygame.Rect(self.rect_log.x, self.rect_log.bottom + PAD, log_w, footer_h)
 
-        # Create buttons positioned within footer (wrapping)
+        # LEFT AREA (board) uses all remaining space top-to-bottom
+        board_w_avail = w - PAD*3 - log_w
+        board_h_avail = h - PAD*2
+        self.tile = max(30, min(board_w_avail // GRID_COLS, board_h_avail // GRID_ROWS))
+        board_w = GRID_COLS * self.tile
+        board_h = GRID_ROWS * self.tile
+        self.rect_board = pygame.Rect(PAD + 4, PAD, board_w, board_h)
+
+        # build buttons inside footer (wrap)
         self.btns.clear()
         labels = [("Back", self._back_to_hub),
                   ("Play / Pause", self._toggle_play),
                   ("Next Turn", self._next_turn),
                   ("Next Round", self._next_round)]
-        bw, bh = btn_rects[0].w, btn_rects[0].h
         cols = max(1, (self.rect_footer.w - 2*FOOTER_VPAD + FOOTER_GAP) // (bw + FOOTER_GAP))
         x = self.rect_footer.x + FOOTER_VPAD
         y = self.rect_footer.y + FOOTER_VPAD
@@ -325,7 +307,6 @@ class MatchState:
             self.btns.append(Button(r, text, fn))
             col_i += 1
             if col_i >= cols:
-                # next row
                 col_i = 0
                 x = self.rect_footer.x + FOOTER_VPAD
                 y += bh + FOOTER_GAP
@@ -333,15 +314,14 @@ class MatchState:
                 x += bw + FOOTER_GAP
 
     def _build_combat(self):
-        # gather teams (top-5 each), convert to engine fighters
+        # teams -> top5 -> engine fighters
         home_roster = _top5(_fighters_for_team(self.career, self.home_tid))
         away_roster = _top5(_fighters_for_team(self.career, self.away_tid))
-
         f_home = [fighter_from_dict({**fd, "team_id": 0}) for fd in home_roster]
         f_away = [fighter_from_dict({**fd, "team_id": 1}) for fd in away_roster]
         fighters = f_home + f_away
 
-        # attach pid/ovr for logs/XP
+        # coords and pid/ovr
         pid_map = {}
         for src, dst in zip(home_roster + away_roster, fighters):
             try:
@@ -351,15 +331,12 @@ class MatchState:
             except Exception:
                 pass
 
-        # default layout
         layout_teams_tiles(fighters, GRID_COLS, GRID_ROWS)
-        # ensure both spawn and live coords are set
         for f in fighters:
             cx = getattr(f, "tx", getattr(f, "x", 0))
             cy = getattr(f, "ty", getattr(f, "y", 0))
             _set_coord(f, cx, cy)
 
-        # apply preset lineup (from tactics) overriding user's side
         preset = self.fixture.get("preset_lineup")
         if isinstance(preset, dict):
             try:
@@ -374,7 +351,6 @@ class MatchState:
             except Exception:
                 traceback.print_exc()
 
-        # seed (stable per match if possible)
         try:
             if hasattr(self.career, "match_seed"):
                 season = self.career.date["season"]
@@ -384,12 +360,9 @@ class MatchState:
         except Exception:
             seed = random.randint(0, 10_000_000)
 
-        # teams & combat
         tA = Team(0, self.home_name, HOME_COL)
         tB = Team(1, self.away_name, AWAY_COL)
         self.combat = TBCombat(tA, tB, fighters, GRID_COLS, GRID_ROWS, seed=seed)
-
-        # prime initial events in log
         self._flush_events_to_log()
 
     # -------------- controls --------------
@@ -398,16 +371,15 @@ class MatchState:
             self.running = not self.running
 
     def _next_turn(self):
-        if not self.combat or self.combat.winner is not None: return
-        self._step_one_turn()
+        if self.combat and self.combat.winner is None:
+            self._step_one_turn()
 
     def _next_round(self):
         if not self.combat or self.combat.winner is not None: return
         target_round = self.combat.round
         guard = 0
         while self.combat.winner is None and self.combat.round == target_round and guard < 200:
-            self._step_one_turn()
-            guard += 1
+            self._step_one_turn(); guard += 1
 
     def _back_to_hub(self):
         try:
@@ -426,43 +398,26 @@ class MatchState:
     def handle(self, ev: pygame.event.Event):
         if ev.type == pygame.VIDEORESIZE:
             self._layout()
-
         if ev.type == pygame.KEYDOWN:
-            if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
-                self._back_to_hub()
-            elif ev.key in (pygame.K_SPACE, pygame.K_p):
-                self._toggle_play()
-            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                self._next_turn()
-            elif ev.key == pygame.K_r:
-                self._next_round()
-
-        # log scrolling (mouse wheel over log box)
+            if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE): self._back_to_hub()
+            elif ev.key in (pygame.K_SPACE, pygame.K_p): self._toggle_play()
+            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER): self._next_turn()
+            elif ev.key == pygame.K_r: self._next_round()
         if ev.type == pygame.MOUSEWHEEL and self.rect_log and self.rect_log.collidepoint(pygame.mouse.get_pos()):
             content_h = max(0, len(self.lines) * self._line_h)
             vis_h = self.rect_log.h - 24
             max_scroll = max(0, content_h - vis_h)
             self.log_scroll -= ev.y * 22
             self.log_scroll = max(0, min(self.log_scroll, max_scroll))
-
-        for b in self.btns:
-            b.handle(ev)
+        for b in self.btns: b.handle(ev)
 
     def update(self, dt: float):
-        # autoplay
         if self.running and self.combat and self.combat.winner is None:
             self.auto_timer -= dt
             if self.auto_timer <= 0:
-                self._step_one_turn()
-                self.auto_timer = self._auto_interval
-
-        # ALWAYS flush any new engine events each frame (covers init/round/meta)
+                self._step_one_turn(); self.auto_timer = self._auto_interval
         self._flush_events_to_log()
-
-        # Safety: force-finish if a side has no living fighters (in case engine didn't)
         self._safety_end_check()
-
-        # write scheduled result once when finished
         if self.combat and self.combat.winner is not None and not self._result_recorded:
             home_kos = len([f for f in self.combat.fighters if getattr(f, "team_id", 0) == 1 and not getattr(f, "alive", True)])
             away_kos = len([f for f in self.combat.fighters if getattr(f, "team_id", 0) == 0 and not getattr(f, "alive", True)])
@@ -475,17 +430,19 @@ class MatchState:
     def draw(self, screen: pygame.Surface):
         screen.fill(BG)
 
-        # header (smaller) — left: match name, right: week
+        # compact header above log (match name elided on left, Week on right)
         pygame.draw.rect(screen, CARD, self.rect_header, border_radius=10)
         pygame.draw.rect(screen, BORDER, self.rect_header, 2, border_radius=10)
-        name_lbl = self.h1.render(f"{self.home_name} vs {self.away_name}", True, TEXT)
+        name = f"{self.home_name} vs {self.away_name}"
+        max_name_w = self.rect_header.w - 12 - 100  # leave room for week
+        name_lbl = self.h1.render(_elide(name, self.h1, max_name_w), True, TEXT)
         week_lbl = self.h2.render(f"Week {self.week}", True, TEXT_MID)
-        screen.blit(name_lbl, (self.rect_header.x + 12,
+        screen.blit(name_lbl, (self.rect_header.x + 8,
                                self.rect_header.y + (self.rect_header.h - name_lbl.get_height())//2))
-        screen.blit(week_lbl, (self.rect_header.right - week_lbl.get_width() - 12,
+        screen.blit(week_lbl, (self.rect_header.right - week_lbl.get_width() - 8,
                                self.rect_header.y + (self.rect_header.h - week_lbl.get_height())//2))
 
-        # board frame
+        # board frame (fills left column top-to-bottom)
         pygame.draw.rect(screen, CARD, self.rect_board, border_radius=10)
         pygame.draw.rect(screen, BORDER, self.rect_board, 2, border_radius=10)
 
@@ -496,20 +453,19 @@ class MatchState:
                 pygame.draw.rect(screen, GRID_BG, cell)
                 pygame.draw.rect(screen, GRID_LINE, cell, 1)
 
-        # units (as dots) + hp bar + short name (scaled)
+        # units (dots) with HP bars and short names
         if self.combat:
             for f in self.combat.fighters:
                 if not getattr(f, "alive", True): continue
                 cx, cy = _get_coord(f, 0)
                 rect = pygame.Rect(self.rect_board.x + cx*self.tile, self.rect_board.y + cy*self.tile, self.tile, self.tile)
                 # dot
-                r = int(min(rect.w, rect.h) * 0.34)
-                center = (rect.centerx, rect.centery - int(self.tile*0.08))  # lift to make room for HP bar
+                rr = int(min(rect.w, rect.h) * 0.34)
+                center = (rect.centerx, rect.centery - int(self.tile*0.08))
                 col = HOME_COL if getattr(f, "team_id", 0) == 0 else AWAY_COL
-                pygame.draw.circle(screen, col, center, r)
-                pygame.draw.circle(screen, DOT_OUTLINE, center, r, 2)
-
-                # HP bar (inside cell, bottom)
+                pygame.draw.circle(screen, col, center, rr)
+                pygame.draw.circle(screen, DOT_OUTLINE, center, rr, 2)
+                # HP bar
                 hp = getattr(f, "hp", 1); mx = getattr(f, "max_hp", max(1, hp))
                 frac = max(0.0, min(1.0, hp / mx))
                 bar_margin = 5
@@ -519,80 +475,63 @@ class MatchState:
                 pygame.draw.rect(screen, (60,62,70), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
                 c = (90,220,140) if frac>0.5 else (240,210,120) if frac>0.25 else (240,120,120)
                 pygame.draw.rect(screen, c, pygame.Rect(bx+1, by+1, max(0, int((bar_w-2)*frac)), bar_h-2), border_radius=3)
-
-                # Short name scaled to fit bar width
+                # name
                 name_raw = getattr(f, "name", "") or ""
                 first = getattr(f, "first", getattr(f, "first_name", None)) or ""
                 last  = getattr(f, "last", getattr(f, "last_name", None)) or ""
-                if first or last:
-                    name_raw = (first + " " + last).strip()
+                if first or last: name_raw = (first + " " + last).strip()
                 label = _short_name(name_raw)
-                # binary search a font size that fits the bar width
                 target_w = bar_w - 6
-                min_s, max_s = 10, max(12, int(self.tile * 0.35))
-                best_surf = None
-                while min_s <= max_s:
-                    mid = (min_s + max_s) // 2
-                    fnt = self._font_cache.get(mid)
-                    if not fnt:
-                        fnt = pygame.font.SysFont(None, mid); self._font_cache[mid] = fnt
+                lo, hi = 10, max(12, int(self.tile * 0.35))
+                best = None
+                while lo <= hi:
+                    mid = (lo + hi)//2
+                    fnt = self._font_cache.get(mid) or pygame.font.SysFont(None, mid)
+                    self._font_cache[mid] = fnt
                     srf = fnt.render(label, True, TEXT)
-                    if srf.get_width() <= target_w:
-                        best_surf = srf
-                        min_s = mid + 1
-                    else:
-                        max_s = mid - 1
-                if best_surf is None:
-                    best_surf = self.font.render(label, True, TEXT)
-                screen.blit(best_surf, (bx + (bar_w - best_surf.get_width())//2, by - best_surf.get_height()))
+                    if srf.get_width() <= target_w: best = srf; lo = mid + 1
+                    else: hi = mid - 1
+                if best is None: best = self.font.render(label, True, TEXT)
+                screen.blit(best, (bx + (bar_w - best.get_width())//2, by - best.get_height()))
 
-        # right log panel
+        # log panel
         pygame.draw.rect(screen, CARD, self.rect_log, border_radius=10)
         pygame.draw.rect(screen, BORDER, self.rect_log, 2, border_radius=10)
         title = self.h2.render("Turn Log", True, TEXT_MID)
         screen.blit(title, (self.rect_log.x + 10, self.rect_log.y + 8))
         inner = self.rect_log.inflate(-12, -30); inner.y = self.rect_log.y + 26
-
-        clip = screen.get_clip()
-        screen.set_clip(inner)
+        clip = screen.get_clip(); screen.set_clip(inner)
         y = inner.y - int(self.log_scroll)
         for line in self.lines:
             txt = self.font.render(line, True, TEXT)
-            screen.blit(txt, (inner.x, y))
-            y += self._line_h
+            screen.blit(txt, (inner.x, y)); y += self._line_h
         screen.set_clip(clip)
-
         # scrollbar
-        content_h = max(1, len(self.lines) * self._line_h)
-        vis_h = inner.h
+        content_h = max(1, len(self.lines) * self._line_h); vis_h = inner.h
         if content_h > vis_h:
             bar_h = max(24, int(vis_h * (vis_h / content_h)))
             max_scroll = content_h - vis_h
             frac = (self.log_scroll / max_scroll) if max_scroll > 0 else 0.0
             bar_y = inner.y + int((vis_h - bar_h) * frac)
-            sb_rect = pygame.Rect(self.rect_log.right - 10, bar_y, 6, bar_h)
-            pygame.draw.rect(screen, (80,82,90), sb_rect, border_radius=3)
+            pygame.draw.rect(screen, (80,82,90), pygame.Rect(self.rect_log.right - 10, bar_y, 6, bar_h), border_radius=3)
 
-        # footer under the log
+        # footer under log
         pygame.draw.rect(screen, CARD, self.rect_footer, border_radius=10)
         pygame.draw.rect(screen, BORDER, self.rect_footer, 2, border_radius=10)
-        for b in self.btns:
-            b.draw(screen, self.font)
+        for b in self.btns: b.draw(screen, self.font)
 
-        # Finished hint near footer
         if self.combat and self.combat.winner is not None:
             msg = self.h2.render("Match complete — press Back to return.", True, TEXT_MID)
             screen.blit(msg, (self.rect_footer.x + (self.rect_footer.w - msg.get_width())//2,
                               self.rect_footer.y - msg.get_height() - 6))
 
-    # -------------- internal --------------
+    # -------------- logging & engine glue --------------
     def _push_log(self, s: str):
         self.lines.append(s)
         inner_h = (self.rect_log.h - 24) if self.rect_log else 0
         content_h = len(self.lines) * self._line_h
         at_bottom = (self.log_scroll + inner_h + 2*self._line_h) >= (content_h - 1)
-        if at_bottom:
-            self.log_scroll = max(0, content_h - inner_h)
+        if at_bottom: self.log_scroll = max(0, content_h - inner_h)
 
     def _event_kind(self, e) -> str:
         if hasattr(e, "kind"): return str(getattr(e, "kind"))
@@ -608,52 +547,24 @@ class MatchState:
         return (raw or "").replace("_", " ").strip()
 
     def _format_event_line(self, k: str, p: Dict[str, Any]) -> Optional[str]:
-        # Normalize common fields
         name   = self._pretty_name(str(p.get("name", p.get("actor", ""))))
         target = self._pretty_name(str(p.get("target", p.get("defender", ""))))
-        to     = p.get("to")
-        at     = p.get("at")
-        dmg    = p.get("dmg", p.get("amount"))
-
-        # Legacy/simple kinds -> single-line “Player action”
-        if k == "round":
-            return f"— Round {p.get('round','?')} —"
-        if k == "move":
-            return f"{name} moved to {tuple(to) if isinstance(to, (list,tuple)) else to}"
-        if k == "blocked":
-            return f"{name} blocked at {tuple(at) if isinstance(at, (list,tuple)) else at}"
-        if k == "miss":
+        to     = p.get("to"); at = p.get("at"); dmg = p.get("dmg", p.get("amount"))
+        if k in ("round","round_start"):   return f"— Round {p.get('round','?')} —"
+        if k in ("move","move_step"):      return f"{name} moved to {tuple(to or p.get('to',(0,0)))}"
+        if k == "blocked":                  return f"{name} blocked at {tuple(at) if isinstance(at,(list,tuple)) else at}"
+        if k in ("miss",):                  return f"{name} missed {target}"
+        if k in ("hit","attack"):
+            if p.get("hit", p.get("success", False)): return f"{name} hit {target}" + (" (CRIT)" if p.get("critical") else "")
             return f"{name} missed {target}"
-        if k == "hit":
-            return f"{name} hit {target} ({int(dmg)} dmg)" if dmg is not None else f"{name} hit {target}"
-        if k == "down":
-            return f"{name} is down"
-
-        # Engine object events
-        if k == "round_start":
-            return f"— Round {p.get('round','?')} —"
-        if k == "turn_start":
-            return f"{name}'s turn"
-        if k == "move_step":
-            return f"{name} moved to {tuple(p.get('to',(0,0)))}"
-        if k == "attack":
-            hit = bool(p.get("hit", p.get("success", False)))
-            if hit:
-                base = f"{name} hit {target}"
-                if p.get("critical", False): base += " (CRIT)"
-                return base
-            else:
-                return f"{name} missed {target}"
-        if k == "damage":
-            return f"{target or p.get('defender','?')} takes {int(p.get('amount',0))} dmg"
-        if k == "round_end":
-            return f"— End Round {p.get('round','?')} —"
+        if k == "damage":                   return f"{target or p.get('defender','?')} takes {int(p.get('amount',0))} dmg"
+        if k == "down":                     return f"{name} is down"
+        if k in ("round_end",):             return f"— End Round {p.get('round','?')} —"
         if k == "end":
             w = p.get("winner")
             if w == 0 or w == "home": return "Match ends — Winner: home"
             if w == 1 or w == "away": return "Match ends — Winner: away"
             return "Match ends"
-
         return None
 
     def _flush_events_to_log(self):
@@ -661,38 +572,27 @@ class MatchState:
         evs = self.combat.events
         for i in range(self._event_idx, len(evs)):
             e = evs[i]
-            if isinstance(e, str):
-                self._push_log(e); continue
-            k = self._event_kind(e)
-            p = self._event_payload(e)
+            if isinstance(e, str): self._push_log(e); continue
+            k = self._event_kind(e); p = self._event_payload(e)
             line = self._format_event_line(k, p)
-            if line is None:
-                line = str(p.get("text", f"{k}: {p}"))
-            self._push_log(line)
+            self._push_log(line if line is not None else str(p))
         self._event_idx = len(evs)
 
     def _step_one_turn(self):
         try:
             before = len(self.combat.events)
             self.combat.take_turn()
-            if len(self.combat.events) > before:
-                self._flush_events_to_log()
+            if len(self.combat.events) > before: self._flush_events_to_log()
             self._safety_end_check()
-        except Exception:
-            traceback.print_exc()
+        except Exception: traceback.print_exc()
 
     def _safety_end_check(self):
-        """Ensure we end if a full side is down."""
-        if not self.combat or self.combat.winner is not None:
-            return
+        if not self.combat or self.combat.winner is not None: return
         alive0 = any(getattr(f, "alive", True) and getattr(f, "team_id", 0) == 0 for f in self.combat.fighters)
         alive1 = any(getattr(f, "alive", True) and getattr(f, "team_id", 0) == 1 for f in self.combat.fighters)
         if not alive0 and alive1:
-            self.combat.winner = 1
-            self._push_log("Match ends — Winner: away (all home down)")
+            self.combat.winner = 1; self._push_log("Match ends — Winner: away (all home down)")
         elif not alive1 and alive0:
-            self.combat.winner = 0
-            self._push_log("Match ends — Winner: home (all away down)")
+            self.combat.winner = 0; self._push_log("Match ends — Winner: home (all away down)")
         elif not alive0 and not alive1:
-            self.combat.winner = None
-            self._push_log("Match ends — Double KO")
+            self.combat.winner = None; self._push_log("Match ends — Double KO")
