@@ -17,19 +17,19 @@ except Exception as e:
 else:
     _ENGINE_IMPORT_ERROR = None
 
-# 🔶 grid size centralized
+# unified grid size
 from engine.constants import GRID_COLS, GRID_ROWS
 
 # ----------------- constants & styles -----------------
-MIN_TILE  = 12           # allows 16x16 to fit; bump if you want larger minimum cells
+MIN_TILE  = 12  # ensures 16x16 fits
 
 PAD = 16
-HEADER_H = 36           # tiny header that sits ONLY above the log column
+HEADER_H = 36     # header sits ONLY above the log column
 FOOTER_VPAD = 8
 FOOTER_GAP = 8
 
 LOG_MIN_W = 260
-LOG_RATIO = 0.28        # ~28% of screen width for the log column
+LOG_RATIO = 0.28  # ~28% width for log column
 
 BG = (16, 16, 20)
 CARD = (42, 44, 52)
@@ -171,8 +171,7 @@ def _elide(text: str, font: pygame.font.Font, max_w: int) -> str:
     if font.size(text)[0] <= max_w: return text
     ell = "…"
     if font.size(ell)[0] > max_w: return ""
-    lo, hi = 0, len(text)
-    res = ""
+    lo, hi = 0, len(text); res = ""
     while lo <= hi:
         mid = (lo + hi) // 2
         candidate = text[:mid] + ell
@@ -193,7 +192,7 @@ class MatchState:
         if _ENGINE_IMPORT_ERROR is not None:
             raise RuntimeError(f"engine import failed: {_ENGINE_IMPORT_ERROR}")
 
-        # Accepted signatures:
+        # signatures:
         # (app, career, fixture) | (app, fixture, career) | (app, fixture)
         # (app, home_tid, away_tid, career)               | (app, home_tid, away_tid)
         self.app = None
@@ -229,8 +228,8 @@ class MatchState:
 
         # fonts/UI
         self.font  = pygame.font.SysFont(None, 20)
-        self.h1    = pygame.font.SysFont(None, 22)   # for header left
-        self.h2    = pygame.font.SysFont(None, 18)   # for header right + labels
+        self.h1    = pygame.font.SysFont(None, 22)   # header left
+        self.h2    = pygame.font.SysFont(None, 18)   # header right + labels
         self._font_cache: Dict[int, pygame.font.Font] = {}
 
         # layout rects
@@ -238,7 +237,7 @@ class MatchState:
         self.rect_board:  Optional[pygame.Rect] = None
         self.rect_log:    Optional[pygame.Rect] = None
         self.rect_footer: Optional[pygame.Rect] = None
-        self.tile = 14  # default; recalculated in _layout
+        self.tile = 14  # recalculated in _layout
 
         # buttons & loop
         self.btns: List[Button] = []
@@ -284,7 +283,7 @@ class MatchState:
         self.rect_log = pygame.Rect(self.rect_header.x, self.rect_header.bottom + PAD, log_w, log_h)
         self.rect_footer = pygame.Rect(self.rect_log.x, self.rect_log.bottom + PAD, log_w, footer_h)
 
-        # LEFT AREA (board) uses all remaining space top-to-bottom
+        # LEFT AREA (board) uses remaining space
         board_w_avail = w - PAD*3 - log_w
         board_h_avail = h - PAD*2
         self.tile = max(MIN_TILE, min(board_w_avail // GRID_COLS, board_h_avail // GRID_ROWS))
@@ -430,11 +429,11 @@ class MatchState:
     def draw(self, screen: pygame.Surface):
         screen.fill(BG)
 
-        # compact header above log (match name elided on left, Week on right)
+        # compact header above log (match name on left, Week on right)
         pygame.draw.rect(screen, CARD, self.rect_header, border_radius=10)
         pygame.draw.rect(screen, BORDER, self.rect_header, 2, border_radius=10)
         name = f"{self.home_name} vs {self.away_name}"
-        max_name_w = self.rect_header.w - 12 - 100  # leave room for week
+        max_name_w = self.rect_header.w - 12 - 100
         name_lbl = self.h1.render(_elide(name, self.h1, max_name_w), True, TEXT)
         week_lbl = self.h2.render(f"Week {self.week}", True, TEXT_MID)
         screen.blit(name_lbl, (self.rect_header.x + 8,
@@ -442,7 +441,7 @@ class MatchState:
         screen.blit(week_lbl, (self.rect_header.right - week_lbl.get_width() - 8,
                                self.rect_header.y + (self.rect_header.h - week_lbl.get_height())//2))
 
-        # board frame (fills left column top-to-bottom)
+        # board frame
         pygame.draw.rect(screen, CARD, self.rect_board, border_radius=10)
         pygame.draw.rect(screen, BORDER, self.rect_board, 2, border_radius=10)
 
@@ -555,7 +554,17 @@ class MatchState:
         if k == "blocked":                  return f"{name} blocked at {tuple(at) if isinstance(at,(list,tuple)) else at}"
         if k in ("miss",):                  return f"{name} missed {target}"
         if k in ("hit","attack"):
-            if p.get("hit", p.get("success", False)): return f"{name} hit {target}" + (" (CRIT)" if p.get("critical") else "")
+            if p.get("hit", p.get("success", False)):
+                extra = ""
+                if p.get("critical"): extra += " (CRIT)"
+                if p.get("opportunity"): extra += " (OA)"
+                if p.get("ranged"): extra += " (RNG)"
+                if p.get("disadvantage"): extra += " (DIS)"
+                if p.get("advantage"): extra += " (ADV)"
+                return f"{name} hit {target}{extra}"
+            # show if out-of-range or just miss
+            if p.get("reason") == "out_of_range":
+                return f"{name} couldn't reach {target} (out of range)"
             return f"{name} missed {target}"
         if k == "damage":                   return f"{target or p.get('defender','?')} takes {int(p.get('amount',0))} dmg"
         if k == "down":                     return f"{name} is down"
