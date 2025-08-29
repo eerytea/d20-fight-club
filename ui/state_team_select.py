@@ -114,13 +114,40 @@ class TeamSelectState:
         return world
 
     def _new_fighter(self, tid: int, num: int, country: str, rng: random.Random) -> Dict[str, Any]:
+        """
+        Robust adapter around core.creator.generate_fighter with unknown signature.
+        Tries, in order:
+          1) generate_fighter(seed=int)
+          2) generate_fighter(int)
+          3) generate_fighter(rng=rng)
+          4) generate_fighter(random=rng)
+          5) generate_fighter()
+        Falls back to our simple generator if all fail.
+        """
         if generate_fighter:
-            p = generate_fighter(seed=rng.randint(0, 10_000_000))
-            p["num"] = p.get("num", num)
-            p["team_id"] = tid
-            p["origin"] = p.get("origin", country)
-            p["OVR"] = p.get("OVR", p.get("ovr", 60))
-            return p
+            calls = [
+                lambda: generate_fighter(seed=rng.randint(0, 10_000_000)),
+                lambda: generate_fighter(rng.randint(0, 10_000_000)),
+                lambda: generate_fighter(rng=rng),
+                lambda: generate_fighter(random=rng),
+                lambda: generate_fighter(),
+            ]
+            for fn in calls:
+                try:
+                    p = fn()
+                    if isinstance(p, dict):
+                        # normalize & fill gaps
+                        p.setdefault("num", num)
+                        p.setdefault("team_id", tid)
+                        p.setdefault("origin", country)
+                        p.setdefault("OVR", p.get("ovr", p.get("OVR_RATING", 60)))
+                        return p
+                except TypeError:
+                    continue
+                except Exception:
+                    # Unexpected failure: break to fallback
+                    break
+
         # fallback simple generator
         name = f"F{tid}-{num:02d}"
         STR = 10 + rng.randint(-1, 3)
