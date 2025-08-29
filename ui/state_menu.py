@@ -72,15 +72,19 @@ class MenuState:
 
     # ---------------- actions ----------------
     def on_new_season(self):
-        # Import directly so any exceptions print to console (instead of being swallowed).
+        # Import robustly so any exceptions print to console (instead of being swallowed).
+        import importlib, traceback
         try:
-            from ui.state_team_select import TeamSelectState
+            mod = importlib.import_module("ui.state_team_select")
+            cls = getattr(mod, "TeamSelectState", None) or getattr(mod, "TeamSelect", None)
+            if cls is None:
+                print("state_team_select loaded but no TeamSelectState/TeamSelect found. dir(mod):", dir(mod))
+                self._toast("Team Select screen missing.")
+                return
+            self.app.push_state(cls(self.app))
         except Exception:
-            import traceback
             traceback.print_exc()
             self._toast("Team Select screen missing.")
-            return
-        self.app.push_state(TeamSelectState(self.app))
 
     def on_exhibition(self):
         try:
