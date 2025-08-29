@@ -18,8 +18,8 @@ else:
     _ENGINE_IMPORT_ERROR = None
 
 # ----------------- constants & styles -----------------
-GRID_COLS = 30
-GRID_ROWS = 30
+GRID_COLS = 20
+GRID_ROWS = 20
 MIN_TILE  = 12           # allows 30x30 to fit; raise if you want larger minimum cells
 
 PAD = 16
