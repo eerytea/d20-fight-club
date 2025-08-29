@@ -1,99 +1,55 @@
 # ui/app.py
-from __future__ import annotations
-
-import os
-from typing import Optional, List
-
 import pygame
 
-
 class App:
-    def __init__(self, width: int = 1024, height: int = 576, title: str = "App"):
-        # Headless-safe for CI/tests
-        if os.environ.get("SDL_VIDEODRIVER") == "dummy":
-            pass
+    def __init__(self, width=1280, height=720, title="D20 FC"):
         pygame.init()
+        self.flags = pygame.RESIZABLE | pygame.SCALED | pygame.DOUBLEBUF
         pygame.display.set_caption(title)
-
-        # Create window and keep width/height attributes for states that use them
-        self.screen = pygame.display.set_mode((width, height))
-        self.width, self.height = self.screen.get_size()
-
+        self.screen = pygame.display.set_mode((width, height), self.flags)
         self.clock = pygame.time.Clock()
+        self.states = []
         self.running = True
 
-        self._stack: List["BaseState"] = []
-
-    # --- State stack ---------------------------------------------------------
-    @property
-    def state(self) -> Optional["BaseState"]:
-        return self._stack[-1] if self._stack else None
-
-    def push_state(self, st: "BaseState") -> None:
-        st.app = self
-        self._stack.append(st)
+    def push_state(self, st):
+        self.states.append(st)
         if hasattr(st, "enter"):
             st.enter()
 
-    def pop_state(self) -> None:
-        if self._stack:
-            st = self._stack.pop()
-            if hasattr(st, "exit"):
-                st.exit()
+    def pop_state(self):
+        if not self.states:
+            return
+        st = self.states.pop()
+        if hasattr(st, "exit"):
+            st.exit()
 
-    # --- Main loop -----------------------------------------------------------
-    def run(self) -> None:
-        while self.running:
+    def run(self):
+        while self.running and self.states:
             dt = self.clock.tick(60) / 1000.0
-            st = self.state
-
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                elif event.type == pygame.VIDEORESIZE:
-                    # If you later make the window resizable, keep size attrs in sync
-                    self.screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
-                    self.width, self.height = self.screen.get_size()
-                elif st is not None and hasattr(st, "handle"):
+                    continue
+                if event.type == pygame.VIDEORESIZE:
+                    # Recreate the window at the new size so the OS maximize works
+                    self.screen = pygame.display.set_mode((event.w, event.h), self.flags)
+                    # Let the current state recompute its layout
+                    st = self.states[-1]
+                    if hasattr(st, "handle"):
+                        st.handle(event)
+                    continue
+                # Pass everything else to the current state
+                st = self.states[-1]
+                if hasattr(st, "handle"):
                     st.handle(event)
 
-            if st is not None and hasattr(st, "update"):
+            # Update & draw current state
+            st = self.states[-1]
+            if hasattr(st, "update"):
                 st.update(dt)
-
-            # Paint
-            if st is not None and hasattr(st, "draw"):
+            if hasattr(st, "draw"):
                 st.draw(self.screen)
-            else:
-                self.screen.fill((16, 20, 24))
-
-            # Keep attributes in sync even without resize events (belt & suspenders)
-            self.width, self.height = self.screen.get_size()
 
             pygame.display.flip()
 
-    # Convenience
-    def quit(self) -> None:
-        self.running = False
-
-
-class BaseState:
-    """
-    Optional base class for states; concrete states can ignore and simply
-    define handle/update/draw as needed. The App sets `state.app = app`.
-    """
-    app: App
-
-    def enter(self) -> None:  # optional
-        pass
-
-    def exit(self) -> None:  # optional
-        pass
-
-    def handle(self, event) -> None:  # optional
-        pass
-
-    def update(self, dt: float) -> None:  # optional
-        pass
-
-    def draw(self, surf) -> None:  # required-ish
-        raise NotImplementedError
+        pygame.quit()
