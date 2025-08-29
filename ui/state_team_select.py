@@ -59,6 +59,7 @@ _FALLBACK_RACES = [
 ]
 _STD_ARRAY = [15,14,13,12,10,8]
 _ABILITY_KEYS = ["STR","DEX","CON","INT","WIS","CHA"]
+_ALL_CLASSES = ["fighter","barbarian","ranger","rogue","wizard","sorcerer","paladin","bard","cleric","druid","monk","warlock"]
 
 def _fallback_name(r: random.Random) -> str:
     first = ["Kael","Ryn","Mira","Thorn","Lysa","Doran","Nyra","Kellan","Sera","Jorin",
@@ -67,13 +68,33 @@ def _fallback_name(r: random.Random) -> str:
              "Thorne","Ridge","Hawk","Frost","Dusk","Iron","Raven","Drake","Storm","Oath"]
     return f"{r.choice(first)} {r.choice(last)}"
 
-def _fallback_fighter(team_tid: int, jersey: int, country: str, r: random.Random) -> Dict[str,Any]:
+def _pick_class_from_abilities(abilities: Dict[str,int], r: random.Random) -> str:
+    # Choose a class group based on top ability; random within group for variety.
+    items = sorted(abilities.items(), key=lambda kv: kv[1], reverse=True)
+    top = items[0][0] if items else "STR"
+    top = top.upper()
+    if top == "STR":
+        return r.choice(["fighter","barbarian","paladin"])
+    if top == "DEX":
+        return r.choice(["rogue","ranger","monk"])
+    if top == "INT":
+        return r.choice(["wizard","warlock"])
+    if top == "WIS":
+        return r.choice(["cleric","druid","ranger"])
+    if top == "CHA":
+        return r.choice(["bard","sorcerer","paladin","warlock"])
+    # CON or fallback:
+    return r.choice(_ALL_CLASSES)
+
+def _fallback_fighter(team_tid: int, idx: int, country: str, r: random.Random) -> Dict[str,Any]:
     # Abilities from standard array
     vals = _STD_ARRAY[:]; r.shuffle(vals)
     keys = _ABILITY_KEYS[:]; r.shuffle(keys)
     abilities = dict(zip(keys, vals))
     # Race variety
     race = r.choice(_FALLBACK_RACES)
+    # Class from abilities (instead of always 'fighter')
+    klass = _pick_class_from_abilities(abilities, r)
     # AC = 10 + floor((DEX-10)/2) + armor_bonus
     dex = abilities.get("DEX", 10)
     ac = 10 + (dex - 10)//2 + 0
@@ -81,12 +102,12 @@ def _fallback_fighter(team_tid: int, jersey: int, country: str, r: random.Random
     # Age 18-38
     age = r.randint(18, 38)
     return {
-        "pid": jersey-1,               # internal id; fine to keep
-        "age": age,                    # << age replaces jersey number
+        "pid": idx,                  # internal id
+        "age": age,
         "name": _fallback_name(r),
         "race": race,
         "origin": country,
-        "class": "fighter",
+        "class": klass,
         "level": 1,
         "hp": hp, "max_hp": hp, "ac": ac, "alive": True,
         "armor_bonus": 0,
@@ -99,6 +120,9 @@ def _fallback_fighter(team_tid: int, jersey: int, country: str, r: random.Random
         "weapon": {"name": "Sword"},
         "team_id": team_tid,
     }
+
+def _pretty(text: Any) -> str:
+    return str(text).replace("_", " ").title()
 
 class TeamSelectState:
     """
@@ -153,39 +177,44 @@ class TeamSelectState:
         for i in range(20):
             tname = f"{country} {_rand_name(rng)}"
             color = _rand_color(rng)
-            fighters = [self._mk_fighter(i, (j % 99)+1, country, rng) for j in range(team_size)]
+            fighters = [self._mk_fighter(i, j, country, rng) for j in range(team_size)]
             teams.append({"tid": i, "name": tname, "color": color, "fighters": fighters})
         return {"name": name, "teams": teams}
 
-    def _mk_fighter(self, team_tid: int, jersey: int, country: str, rng: random.Random) -> Dict[str, Any]:
+    def _mk_fighter(self, team_tid: int, idx: int, country: str, rng: random.Random) -> Dict[str, Any]:
         # Try generator (old signature)
         if generate_fighter is not None:
             try:
                 f = generate_fighter(level=1, rng=rng, town=country, neg_trait_prob=0.15)  # old API
-                f["team_id"] = team_tid; f["pid"] = jersey - 1
+                f["team_id"] = team_tid; f["pid"] = idx
                 f["max_hp"] = f.get("max_hp", f.get("hp", 10)); f["alive"] = True
                 f.setdefault("origin", country)
-                f.pop("num", None)  # remove jersey number if provided
+                f.pop("num", None)  # drop jersey number if provided
                 if "age" not in f:
                     f["age"] = rng.randint(18, 38)
+                # ensure class exists
+                f.setdefault("class", _pick_class_from_abilities(
+                    {k: f.get(k, f.get(k.lower(), 10)) for k in _ABILITY_KEYS}, rng))
                 return f
             except TypeError:
                 # Try newer API
                 try:
                     f = generate_fighter(team={"tid": team_tid}, seed=rng.randint(0, 10_000_000))  # new API
-                    f["team_id"] = team_tid; f["pid"] = jersey - 1
+                    f["team_id"] = team_tid; f["pid"] = idx
                     f["max_hp"] = f.get("max_hp", f.get("hp", 10)); f["alive"] = True
                     f.setdefault("origin", country)
                     f.pop("num", None)
                     if "age" not in f:
                         f["age"] = rng.randint(18, 38)
+                    f.setdefault("class", _pick_class_from_abilities(
+                        {k: f.get(k, f.get(k.lower(), 10)) for k in _ABILITY_KEYS}, rng))
                     return f
                 except Exception:
                     traceback.print_exc()
             except Exception:
                 traceback.print_exc()
         # Fallback
-        return _fallback_fighter(team_tid, jersey, country, rng)
+        return _fallback_fighter(team_tid, idx, country, rng)
 
     # ---- life-cycle ----
     def enter(self):
@@ -457,7 +486,8 @@ class TeamSelectState:
         race = self._pretty_race(G("race","-"))
         origin = G("origin", self._country().get("name","-"))
         pot = int(G("potential",70))
-        cls = G("class","Fighter")
+        cls_raw = G("class","Fighter")
+        cls_disp = _pretty(cls_raw)
         hp = int(G("hp",10)); max_hp = int(G("max_hp", hp)); ac = int(G("ac",12))
         STR = int(G("str",G("STR",10))); DEX = int(G("dex",G("DEX",10))); CON = int(G("con",G("CON",10)))
         INT = int(G("int",G("INT",10))); WIS = int(G("wis",G("WIS",10))); CHA = int(G("cha",G("CHA",10)))
@@ -482,7 +512,7 @@ class TeamSelectState:
         # Compact top lines (AGE replaces jersey number)
         line(f"{name}    AGE: {age}    LVL: {level}")
         line(f"{race}    {origin}    OVR: {ovr}    POT: {pot}")
-        line(f"{cls}    HP: {hp}/{max_hp}    AC: {ac}")
+        line(f"{cls_disp}    HP: {hp}/{max_hp}    AC: {ac}")
 
         # Attributes grid
         y += 4
@@ -552,14 +582,28 @@ class TeamSelectState:
                 cp = dict(p); cp["team_id"] = i; fighters.append(cp)
             remapped.append({"tid": i, "name": t["name"], "color": t.get("color",(120,120,120)), "fighters": fighters})
 
-        user_tid = self.team_idx if self.team_idx is not None else 0
+        user_tid = int(self.team_idx if self.team_idx is not None else 0)
+
         if Career is not None:
-            names = [t["name"] for t in remapped]
-            car = Career.new(seed=self.seed, n_teams=len(remapped), team_size=len(remapped[0]["fighters"]) if remapped else 12,
-                             names=names, fighters=remapped, user_tid=int(user_tid))
+            # Call Career.new without unsupported kwargs (e.g., 'names')
+            try:
+                car = Career.new(seed=self.seed,
+                                 n_teams=len(remapped),
+                                 team_size=(len(remapped[0]["fighters"]) if remapped else 12),
+                                 fighters=remapped,
+                                 user_tid=user_tid)
+            except TypeError:
+                # Fallback: try positional common order
+                try:
+                    car = Career.new(self.seed, len(remapped),
+                                     len(remapped[0]["fighters"]) if remapped else 12,
+                                     remapped, user_tid)
+                except Exception:
+                    traceback.print_exc()
+                    return
         else:
             car = type("MiniCareer", (), {})()
-            car.teams = remapped; car.week = 1; car.user_tid = int(user_tid); car.seed = self.seed
+            car.teams = remapped; car.week = 1; car.user_tid = user_tid; car.seed = self.seed
             def _tn(tid):
                 for t in remapped:
                     if int(t.get("tid",-1)) == int(tid): return t.get("name", f"Team {tid}")
@@ -579,10 +623,10 @@ class TeamSelectState:
                     new_list = []
                     for j in range(size):
                         try:
-                            p = self._mk_fighter(tid, (j % 99)+1, country, r)
+                            p = self._mk_fighter(tid, j, country, r)
                         except Exception:
                             traceback.print_exc()
-                            p = _fallback_fighter(tid, (j % 99)+1, country, r)
+                            p = _fallback_fighter(tid, j, country, r)
                         new_list.append(p)
                     t["fighters"] = new_list
         self.player_idx = 0; self.scroll_players = self.scroll_stats = 0
