@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pygame
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 import random
 import traceback
 
@@ -34,6 +34,10 @@ TEXT = (235, 235, 240)
 TEXT_MID = (215, 215, 220)
 GRID_BG = (34, 36, 44)
 GRID_LINE = (26, 28, 34)
+
+HOME_COL = (120, 180, 255)
+AWAY_COL = (255, 140, 140)
+DOT_OUTLINE = (22, 24, 28)
 
 # ----------------- Button -----------------
 @dataclass
@@ -150,6 +154,14 @@ def _set_coord(f, cx: int, cy: int):
     try: setattr(f, "x", int(cx)); setattr(f, "y", int(cy))
     except Exception: pass
 
+def _short_name(name: str) -> str:
+    name = (name or "").replace("_", " ").strip()
+    parts = [p for p in name.split() if p]
+    if not parts: return "?"
+    if len(parts) == 1:
+        return parts[0][:1] + "."
+    return f"{parts[0][0].upper()}. {parts[-1].title()}"
+
 # ----------------- Match State -----------------
 class MatchState:
     """
@@ -204,6 +216,7 @@ class MatchState:
         self.font  = pygame.font.SysFont(None, 22)
         self.h1    = pygame.font.SysFont(None, 34)
         self.h2    = pygame.font.SysFont(None, 20)
+        self._font_cache: Dict[int, pygame.font.Font] = {}
 
         # layout rects
         self.rect_header: Optional[pygame.Rect] = None
@@ -323,8 +336,8 @@ class MatchState:
             seed = random.randint(0, 10_000_000)
 
         # teams & combat
-        tA = Team(0, self.home_name, (120,180,255))
-        tB = Team(1, self.away_name, (255,140,140))
+        tA = Team(0, self.home_name, HOME_COL)
+        tB = Team(1, self.away_name, AWAY_COL)
         self.combat = TBCombat(tA, tB, fighters, GRID_COLS, GRID_ROWS, seed=seed)
 
         # prime initial events in log
@@ -394,8 +407,11 @@ class MatchState:
                 self._step_one_turn()
                 self.auto_timer = self._auto_interval
 
-        # ALWAYS flush any new engine events each frame (fix for missing logs)
+        # ALWAYS flush any new engine events each frame (covers init/round/meta)
         self._flush_events_to_log()
+
+        # Safety: force-finish if a side has no living fighters (in case engine didn't)
+        self._safety_end_check()
 
         # write scheduled result once when finished
         if self.combat and self.combat.winner is not None and not self._result_recorded:
@@ -429,24 +445,58 @@ class MatchState:
                 pygame.draw.rect(screen, GRID_BG, cell)
                 pygame.draw.rect(screen, GRID_LINE, cell, 1)
 
-        # units
+        # units (as dots) + hp bar + short name (scaled)
         if self.combat:
             for f in self.combat.fighters:
                 if not getattr(f, "alive", True): continue
                 cx, cy = _get_coord(f, 0)
                 rect = pygame.Rect(self.rect_board.x + cx*self.tile, self.rect_board.y + cy*self.tile, self.tile, self.tile)
-                col = (120,180,255) if getattr(f, "team_id", 0) == 0 else (255,140,140)
-                pygame.draw.rect(screen, col, rect.inflate(-8, -8), border_radius=6)
-                pygame.draw.rect(screen, BORDER, rect.inflate(-8, -8), 2, border_radius=6)
-                # HP bar
+                # dot
+                r = int(min(rect.w, rect.h) * 0.32)
+                center = (rect.centerx, rect.centery - int(self.tile*0.08))  # slight lift to make room for HP bar
+                col = HOME_COL if getattr(f, "team_id", 0) == 0 else AWAY_COL
+                pygame.draw.circle(screen, col, center, r)
+                pygame.draw.circle(screen, DOT_OUTLINE, center, r, 2)
+
+                # HP bar (inside cell, bottom)
                 hp = getattr(f, "hp", 1); mx = getattr(f, "max_hp", max(1, hp))
                 frac = max(0.0, min(1.0, hp / mx))
-                bw = rect.w - 10; bh = 6; bx = rect.x + 5; by = rect.bottom - bh - 4
-                pygame.draw.rect(screen, (60,62,70), pygame.Rect(bx, by, bw, bh), border_radius=3)
+                bar_margin = 5
+                bar_h = max(5, int(self.tile * 0.12))
+                bar_w = rect.w - bar_margin*2
+                bx = rect.x + bar_margin; by = rect.bottom - bar_margin - bar_h
+                pygame.draw.rect(screen, (60,62,70), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
                 c = (90,220,140) if frac>0.5 else (240,210,120) if frac>0.25 else (240,120,120)
-                pygame.draw.rect(screen, c, pygame.Rect(bx+1, by+1, int((bw-2)*frac), bh-2), border_radius=3)
-                nm = self.font.render(getattr(f, "name", "F"), True, TEXT)
-                screen.blit(nm, (rect.centerx - nm.get_width()//2, rect.y + 4))
+                pygame.draw.rect(screen, c, pygame.Rect(bx+1, by+1, max(0, int((bar_w-2)*frac)), bar_h-2), border_radius=3)
+
+                # Short name scaled to fit bar width
+                name_raw = getattr(f, "name", "") or ""
+                # Try first/last attributes if provided
+                first = getattr(f, "first", getattr(f, "first_name", None)) or ""
+                last  = getattr(f, "last", getattr(f, "last_name", None)) or ""
+                if first or last:
+                    name_raw = (first + " " + last).strip()
+                label = _short_name(name_raw)
+                # binary search a font size that fits the bar width
+                target_w = bar_w - 6
+                min_s, max_s = 10, max(12, int(self.tile * 0.35))
+                size = max_s
+                best_surf = None
+                while min_s <= max_s:
+                    mid = (min_s + max_s) // 2
+                    fnt = self._font_cache.get(mid)
+                    if not fnt:
+                        fnt = pygame.font.SysFont(None, mid); self._font_cache[mid] = fnt
+                    srf = fnt.render(label, True, TEXT)
+                    if srf.get_width() <= target_w:
+                        best_surf = srf
+                        min_s = mid + 1
+                        size = mid
+                    else:
+                        max_s = mid - 1
+                if best_surf is None:
+                    best_surf = self.font.render(label, True, TEXT)
+                screen.blit(best_surf, (bx + (bar_w - best_surf.get_width())//2, by - best_surf.get_height()))
 
         # right log panel
         pygame.draw.rect(screen, CARD, self.rect_log, border_radius=10)
@@ -494,19 +544,36 @@ class MatchState:
         if at_bottom:
             self.log_scroll = max(0, content_h - inner_h)
 
+    def _event_kind(self, e) -> str:
+        if hasattr(e, "kind"): return getattr(e, "kind")
+        if isinstance(e, dict): return str(e.get("kind", e.get("t", "event")))
+        return e.__class__.__name__
+
+    def _event_payload(self, e) -> Dict[str, Any]:
+        if hasattr(e, "payload"): return dict(getattr(e, "payload"))
+        if isinstance(e, dict): return dict(e)
+        return {"text": repr(e)}
+
     def _flush_events_to_log(self):
         if not self.combat: return
         evs = self.combat.events
+        # Process any new entries since last flush
         for i in range(self._event_idx, len(evs)):
             e = evs[i]
-            k = getattr(e, "kind", None) or getattr(e, "t", None)
-            p = getattr(e, "payload", {})
+            # Strings or plain text events
+            if isinstance(e, str):
+                self._push_log(e); continue
+            k = self._event_kind(e)
+            p = self._event_payload(e)
+
+            # Known event kinds
             if k == "init":          self._push_log(f"Init {p.get('name','?')} = {p.get('init','?')}")
             elif k == "round_start": self._push_log(f"— Round {p.get('round','?')} —")
             elif k == "turn_start":  self._push_log(f"{p.get('actor','?')}'s turn")
             elif k == "move_step":   self._push_log(f"  moves to {p.get('to',(0,0))}")
             elif k == "attack":
-                nat = p.get("nat", 0); ac = p.get("target_ac", 0); crit = p.get("critical", False); hit = p.get("hit", False)
+                nat = p.get("nat", p.get("roll", 0)); ac = p.get("target_ac", p.get("ac", 0))
+                crit = bool(p.get("critical", False)); hit = bool(p.get("hit", p.get("success", False)))
                 line = f"  attacks {p.get('defender','?')} (d20={nat} vs AC {ac})"
                 if crit: line += " — CRIT!"
                 if not hit: line += " — MISS"
@@ -517,15 +584,38 @@ class MatchState:
             elif k == "round_end":   self._push_log(f"— End Round {p.get('round','?')} —")
             elif k == "end":
                 w = p.get("winner"); r = p.get("reason","")
-                if w: self._push_log(f"Match ends — Winner: {w} ({r})")
-                else: self._push_log(f"Match ends — {r}")
+                if w is not None: self._push_log(f"Match ends — Winner: {w} ({r})")
+                else:             self._push_log(f"Match ends — {r}")
+            else:
+                # Fallback generic line
+                self._push_log(str(p.get("text", f"{k}: {p}")))
         self._event_idx = len(evs)
 
     def _step_one_turn(self):
         try:
             before = len(self.combat.events)
             self.combat.take_turn()
+            # Flush freshly appended events
             if len(self.combat.events) > before:
                 self._flush_events_to_log()
+            # Safety finish if needed
+            self._safety_end_check()
         except Exception:
             traceback.print_exc()
+
+    def _safety_end_check(self):
+        """Ensure we end if a full side is down."""
+        if not self.combat or self.combat.winner is not None:
+            return
+        alive0 = any(getattr(f, "alive", True) and getattr(f, "team_id", 0) == 0 for f in self.combat.fighters)
+        alive1 = any(getattr(f, "alive", True) and getattr(f, "team_id", 0) == 1 for f in self.combat.fighters)
+        if not alive0 and alive1:
+            self.combat.winner = 1
+            self._push_log("Match ends — Winner: away (all home down)")
+        elif not alive1 and alive0:
+            self.combat.winner = 0
+            self._push_log("Match ends — Winner: home (all away down)")
+        elif not alive0 and not alive1:
+            # edge case: both wiped
+            self.combat.winner = None
+            self._push_log("Match ends — Double KO")
