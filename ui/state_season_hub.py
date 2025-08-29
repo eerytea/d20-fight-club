@@ -2,16 +2,11 @@
 from __future__ import annotations
 import pygame
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 import random
 import traceback
 
-try:
-    from core.career import Career  # type: ignore
-except Exception:
-    Career = None  # type: ignore
-
-# ---------- shared Button ----------
+# ---------- small shared Button ----------
 @dataclass
 class Button:
     rect: pygame.Rect
@@ -249,10 +244,13 @@ class SeasonHubState:
     def _back(self): self.app.pop_state()
 
     def _play(self):
-        """Open the user's fixture for the current week using the correct MatchState signature."""
-        MatchState = _import_opt("ui.state_match.MatchState")
-        if MatchState is None: return
+        """Open Tactics first; it will push MatchState afterward."""
+        try:
+            from ui.state_match_tactics import MatchTacticsState  # type: ignore
+        except Exception:
+            MatchTacticsState = None  # type: ignore
 
+        # Find the user's current fixture this week
         user_tid = int(getattr(self.career, "user_tid", 0))
         week_fixtures = _fixtures_for_week(self.career, self.week)
         my = None
@@ -271,26 +269,19 @@ class SeasonHubState:
             "score_home": my["sh"], "score_away": my["sa"],
         }
 
-        # Try multiple constructor shapes. IMPORTANT: put (app, career, fixture) FIRST.
-        attempts = [
-            (self.app, self.career, fixture),
-            (self.app, fixture, self.career),
-            (self.app, fixture),
-            (self.app, home, away, self.career),
-            (self.app, self.career, home, away),
-            (self.app, home, away),
-        ]
-        last_exc = None
-        for args in attempts:
+        if MatchTacticsState is not None:
             try:
-                self.app.push_state(MatchState(*args))  # type: ignore
+                self.app.push_state(MatchTacticsState(self.app, self.career, fixture))
                 return
-            except Exception as e:  # keep trying other shapes on ANY exception
-                last_exc = e
-                continue
-        # If none worked, print the last for debugging
-        if last_exc:
-            traceback.print_exception(type(last_exc), last_exc, last_exc.__traceback__)
+            except Exception:
+                traceback.print_exc()
+
+        # fallback straight to MatchState if tactics module missing
+        try:
+            from ui.state_match import MatchState  # type: ignore
+            self.app.push_state(MatchState(self.app, self.career, fixture))
+        except Exception:
+            traceback.print_exc()
 
     def _sim_week(self):
         """Advance all fixtures for this week, then bump week and recompute standings."""
