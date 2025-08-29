@@ -6,13 +6,24 @@ def _mod(stat: int) -> int:
     return (int(stat) - 10) // 2
 
 def calc_ac(f: Dict[str, Any]) -> int:
-    """Unified AC formula: 10 + DEX mod + armor_bonus.
-    We keep it simple per project scope; if f already had an 'ac' set, we return
-    the higher of the two (so callers can seed base_ac for special cases).
+    """AC:
+      - Most races: 10 + DEX mod + armor_bonus
+      - Lizardkin: 13 + DEX mod   (replaces armor formula)
+      - Golem: +1 to whatever its computed AC is (after the chosen formula)
     """
     dex = int(f.get("DEX", f.get("dex", 10)))
     armor_bonus = int(f.get("armor_bonus", f.get("armor", 0)))
-    computed = 10 + _mod(dex) + armor_bonus
+    race = str(f.get("race", "")).lower()
+
+    if race == "lizardkin":
+        computed = 13 + _mod(dex)
+    else:
+        computed = 10 + _mod(dex) + armor_bonus
+
+    if race == "golem":
+        computed += 1
+
+    # If caller seeded 'ac', keep the higher of the two.
     try:
         base = int(f.get("ac", computed))
     except Exception:
