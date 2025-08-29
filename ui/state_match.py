@@ -8,11 +8,12 @@ import random
 import traceback
 
 # ==========================
-# Grid / Board constants
+# Grid / Board defaults (now 11x11)
+# TILE will be recomputed to fit screen in enter()
 # ==========================
-GRID_COLS = 9
-GRID_ROWS = 5
-TILE      = 64
+GRID_COLS = 11
+GRID_ROWS = 11
+TILE      = 64  # initial; recalculated to fit
 
 BOARD_BG  = (34, 36, 44)
 GRID_LINE = (26, 28, 34)
@@ -108,7 +109,6 @@ def _recompute_standings(car):
             car.standings.setdefault(tid, {"tid": tid, "pts":0, "w":0, "d":0, "l":0, "gf":0, "ga":0, "gd":0, "name":t["name"]})
             s = car.standings[tid]
             s.update({"pts":0, "w":0, "d":0, "l":0, "gf":0, "ga":0, "gd":0, "name":t["name"]})
-        # Walk through all played weeks
         wmax = getattr(car, "week", 1)
         weeks = getattr(car, "fixtures_by_week", [])
         total_weeks = len(weeks) if weeks else wmax
@@ -162,16 +162,16 @@ class Unit:
 # ==========================
 class MatchState:
     """
-    Watchable grid match:
+    Watchable grid match (11x11 auto-fit):
       - 5 vs 5 units.
-      - Move toward nearest enemy and melee when adjacent.
+      - Move toward nearest enemy; melee when adjacent.
       - Score = KOs (written back to fixtures).
     Supports preset lineup via fixture["preset_lineup"] from the tactics screen.
     Constructor shapes supported:
       (app, career, fixture)
       (app, fixture, career)
       (app, fixture)
-      (app, home_tid, away_tid, career) [fallback: builds fixture]
+      (app, home_tid, away_tid, career)
       (app, home_tid, away_tid)
     """
     def __init__(self, *args, **kwargs):
@@ -203,7 +203,6 @@ class MatchState:
         else:
             raise TypeError("Unsupported MatchState constructor signature")
 
-        # Defaults if career missing
         if self.career is None:
             self.career = type("MiniCar", (), {})()
             self.career.teams = []
@@ -233,7 +232,7 @@ class MatchState:
         # Board & units
         self.grid_cols = GRID_COLS
         self.grid_rows = GRID_ROWS
-        self.tile = TILE
+        self.tile = TILE  # will be recomputed in enter()
 
         self.units: List[Unit] = []
         self.home_kos = 0
@@ -241,10 +240,9 @@ class MatchState:
 
         # Initiative pacing
         self._accum = 0.0
-        self._step_interval = 0.4  # seconds per unit action (slower); faster when fast=True
+        self._step_interval = 0.4
 
-        # Prepare rosters and placement in enter()
-        # but we also need preset hook available here for external calls
+        # Preset lineup if provided by tactics
         self._preset_from_fixture: Optional[Dict[str,Any]] = self.fixture.get("preset_lineup") if isinstance(self.fixture, dict) else None
 
     # ------------- lifecycle -------------
@@ -252,14 +250,31 @@ class MatchState:
         w, h = self.app.screen.get_size()
         pad = 16
 
-        self.rect_header = pygame.Rect(pad, pad, w - pad*2, 48)
-        # Board on left, side controls on right
+        # Reserve right panel min width; header height
+        header_h = 48
+        side_min_w = 360
+
+        # Compute tile that fits 11x11 on left
+        avail_w = w - pad*3 - side_min_w
+        avail_h = h - pad*3 - header_h
+        self.tile = max(36, min(avail_w // self.grid_cols, avail_h // self.grid_rows))
         board_w = self.grid_cols * self.tile
         board_h = self.grid_rows * self.tile
+
+        self.rect_header = pygame.Rect(pad, pad, w - pad*2, header_h)
         bx = pad + 4
         by = self.rect_header.bottom + pad
         self.rect_board = pygame.Rect(bx, by, board_w, board_h)
-        self.rect_side  = pygame.Rect(self.rect_board.right + pad, by, max(360, w - (self.rect_board.right + pad*2)), board_h)
+        self.rect_side  = pygame.Rect(self.rect_board.right + pad, by, w - (self.rect_board.right + pad*2), board_h)
+        if self.rect_side.w < side_min_w:
+            # If the board ate too much width, recompute tile smaller
+            avail_w = w - pad*3 - side_min_w
+            self.tile = max(32, min(avail_w // self.grid_cols, avail_h // self.grid_rows))
+            board_w = self.grid_cols * self.tile
+            board_h = self.grid_rows * self.tile
+            self.rect_board.size = (board_w, board_h)
+            self.rect_side.x = self.rect_board.right + pad
+            self.rect_side.w = side_min_w
 
         # Buttons in side panel
         sx, sy = self.rect_side.x + 12, self.rect_side.y + 12
@@ -289,15 +304,13 @@ class MatchState:
         sel_home = top5(home_list)
         sel_away = top5(away_list)
 
-        # Convert to Units
+        # Convert to Units with default placements (home left, away right)
         self.units = []
-        # default placement grids (home left, away right)
         home_cols = [1,1,1,0,0] if self.grid_cols >= 2 else [0]*5
         home_rows = self._spread_rows(len(sel_home))
         away_cols = [self.grid_cols-2, self.grid_cols-2, self.grid_cols-2, self.grid_cols-1, self.grid_cols-1] if self.grid_cols >= 2 else [self.grid_cols-1]*5
         away_rows = self._spread_rows(len(sel_away))
 
-        # Build units with stats
         for i, p in enumerate(sel_home):
             u = self._make_unit(p, team="home",
                                 cx=home_cols[i % len(home_cols)],
@@ -309,7 +322,7 @@ class MatchState:
                                 cy=away_rows[i % len(away_rows)])
             self.units.append(u)
 
-        # Apply preset lineup from tactics if present (overrides positions for the user's side)
+        # Apply preset lineup from tactics if present (overrides positions for user's side)
         if self._preset_from_fixture:
             try:
                 self._apply_preset_lineup(self._preset_from_fixture.get("side","home"),
@@ -320,11 +333,7 @@ class MatchState:
     def handle(self, ev: pygame.event.Event):
         if ev.type == pygame.KEYDOWN:
             if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
-                if self.finished:
-                    self._back_to_hub()
-                else:
-                    # confirm? for now just go back
-                    self._back_to_hub()
+                self._back_to_hub()
             elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self._toggle_start_pause()
             elif ev.key == pygame.K_f:
@@ -333,7 +342,6 @@ class MatchState:
                 self._skip_to_end()
 
         for b in self.btns:
-            # After finish, morph buttons into a single Back button
             b.handle(ev)
 
     def update(self, dt: float):
@@ -378,15 +386,16 @@ class MatchState:
         pygame.draw.rect(screen, (42,44,52), self.rect_side, border_radius=10)
         pygame.draw.rect(screen, (24,24,28), self.rect_side, 2, border_radius=10)
         x = self.rect_side.x + 12
-        y = self.rect_side.y + 12 + (44+10)*3 + 8  # below buttons
+        y = self.rect_side.y + 12
         lh = self.font.get_height() + 8
 
+        # buttons area already occupies top—just render status under them
+        y += (44+10)*3 + 8
         score_text = self.h2.render("Score (KOs)", True, (215,215,220))
         screen.blit(score_text, (x, y)); y += lh
         s_line = self.font.render(f"{self.home_name}: {self.home_kos}     {self.away_name}: {self.away_kos}", True, (230,230,235))
         screen.blit(s_line, (x, y)); y += lh
 
-        # status / controls
         y += 8
         st = "FINISHED" if self.finished else ("RUNNING" if self.running else "PAUSED")
         st_s = self.font.render(f"Status: {st}   Speed: {'FAST' if self.fast else 'NORMAL'}", True, (230,230,235))
@@ -397,16 +406,8 @@ class MatchState:
             done = self.h2.render("Match complete. Press Backspace/Esc to return.", True, (210,210,215))
             screen.blit(done, (x, y))
 
-        # draw buttons last
         for b in self.btns:
             b.draw(screen, self.font)
-        if self.finished:
-            # Overlay a big "Back to Hub" button on top of Skip
-            back_rect = pygame.Rect(self.btns[-1].rect.x, self.btns[-1].rect.y, self.btns[-1].rect.w, self.btns[-1].rect.h)
-            pygame.draw.rect(screen, (88,92,110), back_rect, border_radius=10)
-            pygame.draw.rect(screen, (24,24,28), back_rect, 2, border_radius=10)
-            txt = self.font.render("Back to Hub", True, (235,235,240))
-            screen.blit(txt, (back_rect.x + 14, back_rect.y + (back_rect.h - txt.get_height()) // 2))
 
     # ------------- controls -------------
     def _toggle_start_pause(self):
@@ -418,10 +419,9 @@ class MatchState:
         self.fast = not self.fast
 
     def _skip_to_end(self):
-        if self.finished: 
-            self._back_to_hub(); 
+        if self.finished:
+            self._back_to_hub()
             return
-        # Simulate instantly
         guard = 0
         while not self.finished and guard < 2000:
             self._step_once()
@@ -431,7 +431,20 @@ class MatchState:
             guard += 1
 
     def _back_to_hub(self):
-        self.app.pop_state()
+        """Pop this state; if the next is the tactics screen, pop it too so we land on Season Hub."""
+        try:
+            self.app.pop_state()  # pop Match
+            # Peek and pop tactics if present
+            top = getattr(self.app, "states", getattr(self.app, "stack", None))
+            if isinstance(top, list) and top:
+                st = top[-1]
+                clsname = type(st).__name__.lower()
+                modname = getattr(type(st), "__module__", "").lower()
+                if "tactics" in clsname or "tactics" in modname:
+                    self.app.pop_state()
+        except Exception:
+            # best-effort; at least remove ourselves
+            pass
 
     # ------------- unit helpers -------------
     def _team_fighters(self, tid: int) -> List[Dict[str,Any]]:
@@ -445,11 +458,11 @@ class MatchState:
         name = (G("name") or (f"{G('first','') } {G('last','')}".strip())) or "Fighter"
         hp   = int(G("hp", G("max_hp", 10)))
         max_hp = int(G("max_hp", hp))
-        ac   = int(G("ac", 12))
-        STR  = int(G("str", G("STR", 10)))
+        # AC fallback: 10 + ((DEX-10)//2). Keep armor bonus placeholder 0 for now.
         DEX  = int(G("dex", G("DEX", 10)))
+        ac   = int(G("ac", 10 + ((DEX - 10)//2)))
+        STR  = int(G("str", G("STR", 10)))
         ovr  = int(G("ovr", G("OVR", 60)))
-        # Basic melee attack mod: better of STR/DEX mod (+ ovr influence small)
         atk_mod = max((STR-10)//2, (DEX-10)//2) + (ovr-60)//20
         dmg_mod = max((STR-10)//2, 0)
         return Unit(pid=int(G("pid", -1)), team=team, name=name, ovr=ovr,
@@ -461,8 +474,6 @@ class MatchState:
                            self.rect_board.y + cy*self.tile, self.tile, self.tile)
 
     def _spread_rows(self, n: int) -> List[int]:
-        rows = list(range(self.grid_rows))
-        # center-first ordering
         center = self.grid_rows // 2
         order = [center]
         for i in range(1, self.grid_rows):
@@ -476,20 +487,16 @@ class MatchState:
                 u.alive = False
 
     def spawn_unit(self, side: str, fighter: Dict[str,Any], cx: int, cy: int):
-        # Remove any existing on that exact cell (prevent overlap)
         for u in self.units:
             if u.alive and u.cx == cx and u.cy == cy:
                 u.alive = False
         self.units.append(self._make_unit(fighter, side, cx, cy))
 
     def _apply_preset_lineup(self, side: str, slots: List[Dict[str,Any]]):
-        """Called from enter(); places given pids for side at cx,cy and removes defaults for that side."""
         team_tid = self.home_tid if side == "home" else self.away_tid
         roster = self._team_fighters(team_tid)
         pid_to_fighter = { int(p.get("pid",-1)): p for p in roster }
-        # clear current
         self.clear_side_units(side)
-        # place new
         for slot in slots:
             pid = int(slot.get("pid", -1))
             cx  = int(slot.get("cx", 0))
@@ -514,23 +521,19 @@ class MatchState:
         return best
 
     def _step_once(self):
-        # simple initiative: home units first, then away
         order = self._units_alive("home") + self._units_alive("away")
-        rnd = random.Random(12345)  # deterministic local jitter for tie-breaks
+        rnd = random.Random(12345)
         for u in order:
             if not u.alive: continue
             tgt = self._nearest_enemy(u)
             if tgt is None:
                 continue
-            # if adjacent, attack
             if abs(tgt.cx - u.cx) + abs(tgt.cy - u.cy) <= 1:
                 self._attack(u, tgt, rnd)
             else:
-                # move one step toward target (greedy; prefer horizontal advance)
                 dx = 1 if tgt.cx > u.cx else -1 if tgt.cx < u.cx else 0
                 dy = 1 if tgt.cy > u.cy else -1 if tgt.cy < u.cy else 0
                 step = (u.cx + (dx if dx != 0 else 0), u.cy + (dy if dx == 0 else 0))
-                # If step occupied or off board, try vertical/horizontal swap
                 if not self._can_move_to(*step):
                     alt = (u.cx, u.cy + (dy if dy != 0 else 0))
                     if self._can_move_to(*alt):
@@ -552,7 +555,6 @@ class MatchState:
         return True
 
     def _attack(self, a: Unit, d: Unit, rnd: random.Random):
-        # D20 to hit
         roll = rnd.randint(1, 20)
         hit = (roll + a.atk_mod) >= d.ac
         if hit:
@@ -575,7 +577,6 @@ class MatchState:
 
         # Write back to fixture store
         try:
-            # Find raw fixture object for this week & teams
             weeks = getattr(self.career, "fixtures_by_week", None)
             raw = None
             if weeks and 0 <= self.week-1 < len(weeks):
@@ -591,7 +592,6 @@ class MatchState:
                         if h == self.home_tid and a == self.away_tid:
                             raw = f; break
             if raw is None:
-                # fallback search in flat fixtures
                 for f in getattr(self.career, "fixtures", []):
                     if not isinstance(f, dict): continue
                     if int(f.get("week", -1)) != self.week: continue
@@ -607,19 +607,16 @@ class MatchState:
 
     # ------------- drawing helpers -------------
     def _draw_unit(self, surf: pygame.Surface, rect: pygame.Rect, u: Unit):
-        # color by team
         bg = (80, 128, 100) if u.team == "home" else (120, 92, 120)
         pygame.draw.rect(surf, bg, rect, border_radius=6)
         pygame.draw.rect(surf, (22,24,28), rect, 2, border_radius=6)
 
-        # name / ovr
         nm = self._short(_safe(u.name), 12)
         l1 = self.font.render(nm, True, (240,240,245))
         l2 = self.font.render(f"{u.ovr}", True, (230,230,235))
         surf.blit(l1, (rect.x + 6, rect.y + 4))
         surf.blit(l2, (rect.right - l2.get_width() - 6, rect.y + 4))
 
-        # HP bar
         bar_w = rect.w - 12
         hp_ratio = max(0.0, min(1.0, u.hp / max(1, u.max_hp)))
         bar_bg = pygame.Rect(rect.x + 6, rect.bottom - 12, bar_w, 6)
