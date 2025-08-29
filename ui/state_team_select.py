@@ -78,9 +78,11 @@ def _fallback_fighter(team_tid: int, jersey: int, country: str, r: random.Random
     dex = abilities.get("DEX", 10)
     ac = 10 + (dex - 10)//2 + 0
     hp = 10 + (abilities.get("CON",10)-10)//2
+    # Age 18-38
+    age = r.randint(18, 38)
     return {
-        "pid": jersey-1,
-        "num": jersey,
+        "pid": jersey-1,               # internal id; fine to keep
+        "age": age,                    # << age replaces jersey number
         "name": _fallback_name(r),
         "race": race,
         "origin": country,
@@ -160,17 +162,23 @@ class TeamSelectState:
         if generate_fighter is not None:
             try:
                 f = generate_fighter(level=1, rng=rng, town=country, neg_trait_prob=0.15)  # old API
-                f["team_id"] = team_tid; f["pid"] = jersey - 1; f["num"] = jersey
+                f["team_id"] = team_tid; f["pid"] = jersey - 1
                 f["max_hp"] = f.get("max_hp", f.get("hp", 10)); f["alive"] = True
                 f.setdefault("origin", country)
+                f.pop("num", None)  # remove jersey number if provided
+                if "age" not in f:
+                    f["age"] = rng.randint(18, 38)
                 return f
             except TypeError:
                 # Try newer API
                 try:
                     f = generate_fighter(team={"tid": team_tid}, seed=rng.randint(0, 10_000_000))  # new API
-                    f["team_id"] = team_tid; f["pid"] = jersey - 1; f["num"] = jersey
+                    f["team_id"] = team_tid; f["pid"] = jersey - 1
                     f["max_hp"] = f.get("max_hp", f.get("hp", 10)); f["alive"] = True
                     f.setdefault("origin", country)
+                    f.pop("num", None)
+                    if "age" not in f:
+                        f["age"] = rng.randint(18, 38)
                     return f
                 except Exception:
                     traceback.print_exc()
@@ -343,7 +351,6 @@ class TeamSelectState:
         if self.btn_start:
             self.btn_start.disabled = (self.team_idx is None)
         for b in self.btns:
-            # toggles get selected styling elsewhere
             if b not in (self.toggle_top, self.toggle_bottom):
                 b.draw(screen, self.font)
         if self.toggle_top: self.toggle_top.draw(screen, self.font, selected=(self.league_level==1))
@@ -422,10 +429,10 @@ class TeamSelectState:
         y0 = list_area.y + self.scroll_players
         for i, p in enumerate(fighters):
             r = pygame.Rect(list_area.x, y0 + i*row_h, list_area.w, row_h-4)
-            num = int(p.get('num',0))
             nm = self._display_name(p)
             ovr = _ovr(p)
-            label = f"{nm}   #{num:02d}   OVR {ovr}"
+            age = int(p.get('age', 18))
+            label = f"{nm}   AGE {age}   OVR {ovr}"
             Button(r, label, lambda: None).draw(screen, self.font, selected=(self.player_idx==i))
         screen.set_clip(prev)
         content_h = len(fighters) * row_h
@@ -454,6 +461,7 @@ class TeamSelectState:
         hp = int(G("hp",10)); max_hp = int(G("max_hp", hp)); ac = int(G("ac",12))
         STR = int(G("str",G("STR",10))); DEX = int(G("dex",G("DEX",10))); CON = int(G("con",G("CON",10)))
         INT = int(G("int",G("INT",10))); WIS = int(G("wis",G("WIS",10))); CHA = int(G("cha",G("CHA",10)))
+        age = int(G("age", 18))
 
         wpn = G("weapon",{})
         weapon_name = (wpn.get("name") if isinstance(wpn,dict) else (wpn if isinstance(wpn,str) else "-"))
@@ -471,11 +479,8 @@ class TeamSelectState:
             surf = self.font.render(text, True, (220,220,225))
             screen.blit(surf, (x0, y)); y += line_h
 
-        # Compact top lines
-        from_num = G('num',0)
-        try: num_txt = f"{int(from_num):02d}"
-        except Exception: num_txt = "00"
-        line(f"{name}    #{num_txt}    LVL: {level}")
+        # Compact top lines (AGE replaces jersey number)
+        line(f"{name}    AGE: {age}    LVL: {level}")
         line(f"{race}    {origin}    OVR: {ovr}    POT: {pot}")
         line(f"{cls}    HP: {hp}/{max_hp}    AC: {ac}")
 
