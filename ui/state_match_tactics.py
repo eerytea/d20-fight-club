@@ -28,7 +28,7 @@ class Button:
 
 # --- Helpers to grab grid settings from state_match (falls back to sane defaults) ---
 def _match_grid_defaults():
-    cols, rows, tile = 9, 5, 64
+    cols, rows, tile = 11, 11, 64
     try:
         import ui.state_match as sm  # type: ignore
         cols = getattr(sm, "GRID_COLS", getattr(sm, "BOARD_COLS", cols))
@@ -52,16 +52,44 @@ def _name(p: Dict[str,Any]) -> str:
     return (first + " " + last).strip() or "Player"
 
 def _ovr(p: Dict[str,Any]) -> int:
-    return int(p.get("OVR", p.get("ovr", p.get("OVR_RATING", 60))))
+    try: return int(p.get("OVR", p.get("ovr", p.get("OVR_RATING", 60))))
+    except Exception: return 60
+
+def _val(p: Dict[str,Any], k: str, d=0):
+    return p.get(k, p.get(k.upper(), d))
+
+def _race_disp(p: Dict[str,Any]) -> str:
+    r = str(p.get("race", p.get("Race", "Human")))
+    return r.replace("_"," ").title()
+
+def _cls_disp(p: Dict[str,Any]) -> str:
+    c = str(p.get("class", p.get("Class", "Fighter")))
+    return c.replace("_"," ").title()
+
+def _lvl(p: Dict[str,Any]) -> int:
+    return int(p.get("level", p.get("Level", p.get("LVL", 1))))
+
+def _pot(p: Dict[str,Any]) -> int:
+    return int(p.get("potential", p.get("POT", p.get("pot", 70))))
+
+def _age(p: Dict[str,Any]) -> int:
+    return int(p.get("age", p.get("Age", 20)))
+
+def _dex(p: Dict[str,Any]) -> int:
+    return int(p.get("DEX", p.get("dex", 10)))
+
+def _ac_calc(p: Dict[str,Any]) -> int:
+    # AC=(10 + ((Dex-10)//2)) + armor bonuses (0 for now)
+    return 10 + ((_dex(p)-10)//2)
 
 def _shorten(text: str, max_len: int=16) -> str:
     return text if len(text) <= max_len else text[:max_len-1] + "…"
 
 class MatchTacticsState:
     """
-    Pre-match tactics: show the same grid as the match viewer (no units on it),
-    and let the manager drag exactly 5 players from the bench (right panel) onto grid cells.
-    On Next, we write a preset lineup into the fixture and push the MatchState.
+    Pre-match tactics: 11x11 grid (auto-fit), drag exactly 5 players from the
+    scrollable bench (right, top box) onto board cells. Bottom right box shows
+    player details in the same style as team select.
     """
     def __init__(self, app, career, fixture):
         self.app = app
@@ -74,7 +102,10 @@ class MatchTacticsState:
 
         self.grid_cols, self.grid_rows, self.tile = _match_grid_defaults()
         self.rect_board: Optional[pygame.Rect] = None
-        self.rect_bench: Optional[pygame.Rect] = None
+        self.rect_panel: Optional[pygame.Rect] = None
+        self.rect_bench_box: Optional[pygame.Rect] = None
+        self.rect_detail_box: Optional[pygame.Rect] = None
+
         self.btn_next: Optional[Button] = None
         self.btn_clear: Optional[Button] = None
         self.btn_back: Optional[Button] = None
@@ -87,6 +118,12 @@ class MatchTacticsState:
         self.bench: List[Dict[str,Any]] = list(_team_fighters(self.career, self.user_tid))
         self.placed: List[Dict[str,Any]] = []  # {pid, cx, cy, data}
 
+        # bench scroll
+        self.bench_scroll = 0
+        self.row_h = 28
+        self._bench_inner: Optional[pygame.Rect] = None
+        self.selected_pid: Optional[int] = None
+
         # dragging
         self.drag_src = None  # "bench" or "board"
         self.drag_idx = -1
@@ -94,40 +131,93 @@ class MatchTacticsState:
         self.drag_offset = (0,0)
         self.mx_my = (0,0)
 
-    def enter(self):
+    # ----- layout helpers -----
+    def _compute_layout(self):
         w, h = self.app.screen.get_size()
         pad = 16
+        header_h = self.h1.get_height() + 12
 
+        # Compute tile to fit 11x11 board on left with a right panel >= 420
+        right_min_w = 420
+        avail_w = w - pad*3 - right_min_w
+        avail_h = h - pad*3 - header_h
+        self.tile = max(32, min(avail_w // self.grid_cols, avail_h // self.grid_rows))
         board_w = self.grid_cols * self.tile
         board_h = self.grid_rows * self.tile
+
+        # rects
+        hdr = pygame.Rect(pad, pad, w - pad*2, header_h)
         bx = pad + 4
-        by = self.h1.get_height() + pad*2 + 4
+        by = hdr.bottom + pad
         self.rect_board = pygame.Rect(bx, by, board_w, board_h)
+        self.rect_panel = pygame.Rect(self.rect_board.right + pad, by, w - (self.rect_board.right + pad*2), board_h)
+        if self.rect_panel.w < right_min_w:
+            avail_w = w - pad*3 - right_min_w
+            self.tile = max(30, min(avail_w // self.grid_cols, avail_h // self.grid_rows))
+            board_w = self.grid_cols * self.tile
+            board_h = self.grid_rows * self.tile
+            self.rect_board.size = (board_w, board_h)
+            self.rect_panel.x = self.rect_board.right + pad
+            self.rect_panel.w = right_min_w
 
-        bench_w = max(380, w - (self.rect_board.right + pad*3))
-        self.rect_bench = pygame.Rect(self.rect_board.right + pad, self.rect_board.y, bench_w, self.rect_board.h)
+        # Panel split: top = bench (scrollable), bottom = detail panel
+        panel_pad = 12
+        total_h = self.rect_panel.h - panel_pad*3
+        bench_h = int(total_h * 0.58)
+        detail_h = total_h - bench_h
+        self.rect_bench_box  = pygame.Rect(self.rect_panel.x + panel_pad, self.rect_panel.y + panel_pad,
+                                           self.rect_panel.w - panel_pad*2, bench_h)
+        self.rect_detail_box = pygame.Rect(self.rect_panel.x + panel_pad, self.rect_bench_box.bottom + panel_pad,
+                                           self.rect_panel.w - panel_pad*2, detail_h)
 
-        hdr = pygame.Rect(pad, pad, w - pad*2, self.h1.get_height() + 12)
+        # inner scroll area for bench
+        self._bench_inner = self.rect_bench_box.inflate(-12, -36)  # leave room for title
+
+        # Header buttons (Back / Clear / Next)
         bw, bh, gap = 140, 40, 10
         self.btn_back  = Button(pygame.Rect(hdr.x+8, hdr.y+6, 110, bh), "Back", self._back)
         self.btn_clear = Button(pygame.Rect(hdr.right - (bw*2 + gap) - 8, hdr.y+6, bw, bh), "Clear", self._clear)
         self.btn_next  = Button(pygame.Rect(hdr.right - bw - 8, hdr.y+6, bw, bh), "Next", self._next)
 
+        return hdr
+
+    # ----- lifecycle -----
+    def enter(self):
+        self._hdr_rect = self._compute_layout()
+
     def handle(self, ev: pygame.event.Event):
+        if ev.type == pygame.VIDEORESIZE:
+            self._hdr_rect = self._compute_layout()
+
         if ev.type == pygame.KEYDOWN:
             if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE): self._back(); return
             if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):  self._next(); return
+
         if ev.type == pygame.MOUSEMOTION:
             self.mx_my = ev.pos
+
+        # buttons
         for b in (self.btn_back, self.btn_clear, self.btn_next):
             if b: b.handle(ev)
 
+        # scrolling
+        if ev.type == pygame.MOUSEWHEEL and self._bench_inner and self.rect_bench_box.collidepoint(pygame.mouse.get_pos()):
+            content_h = max(0, len(self._bench_list()) * self.row_h)
+            max_scroll = max(0, content_h - self._bench_inner.h)
+            self.bench_scroll -= ev.y * 24  # wheel up -> y>0
+            if self.bench_scroll < 0: self.bench_scroll = 0
+            if self.bench_scroll > max_scroll: self.bench_scroll = max_scroll
+
+        # dragging / selecting
         if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-            if self.rect_bench and self.rect_bench.collidepoint(ev.pos):
+            if self._bench_inner and self._bench_inner.collidepoint(ev.pos):
                 idx = self._bench_index_at(ev.pos)
-                if idx is not None and idx < len(self.bench):
+                bench = self._bench_list()
+                if idx is not None and 0 <= idx < len(bench):
+                    self.selected_pid = bench[idx].get("pid")
+                    # start drag
                     self.drag_src = "bench"; self.drag_idx = idx
-                    self.dragging = dict(self.bench[idx])
+                    self.dragging = dict(bench[idx])
                     self.drag_offset = (0,0)
             elif self.rect_board and self.rect_board.collidepoint(ev.pos):
                 hit = self._placed_at_pixel(ev.pos)
@@ -157,9 +247,11 @@ class MatchTacticsState:
     def draw(self, screen: pygame.Surface):
         screen.fill((16,16,20))
 
+        # Title
         title = self.h1.render("Match Tactics", True, (235,235,240))
         screen.blit(title, (16,16))
 
+        # Board frame + grid (11x11 auto-fit)
         pygame.draw.rect(screen, (42,44,52), self.rect_board, border_radius=10)
         pygame.draw.rect(screen, (24,24,28), self.rect_board, 2, border_radius=10)
         for c in range(self.grid_cols):
@@ -168,36 +260,63 @@ class MatchTacticsState:
                 pygame.draw.rect(screen, (34,36,44), rect)
                 pygame.draw.rect(screen, (26,28,34), rect, 1)
 
+        # Placed tokens
         for tok in self.placed:
             rect = self._cell_rect(tok["cx"], tok["cy"])
             self._draw_token(screen, rect, tok["data"], selected=False)
 
+        # Drag ghost from board
         if self.dragging is not None and self.drag_src == "board":
             mx,my = self.mx_my
             rect = pygame.Rect(mx + self.drag_offset[0], my + self.drag_offset[1], self.tile, self.tile)
             self._draw_token(screen, rect, self.dragging["data"], selected=True)
 
-        pygame.draw.rect(screen, (42,44,52), self.rect_bench, border_radius=10)
-        pygame.draw.rect(screen, (24,24,28), self.rect_bench, 2, border_radius=10)
+        # Right panel shells
+        for box in (self.rect_bench_box, self.rect_detail_box):
+            pygame.draw.rect(screen, (42,44,52), box, border_radius=10)
+            pygame.draw.rect(screen, (24,24,28), box, 2, border_radius=10)
+
+        # Bench title
         cap = self.h2.render(f"Select 5 • Placed: {len(self.placed)}/5", True, (215,215,220))
-        screen.blit(cap, (self.rect_bench.x + 12, self.rect_bench.y + 8))
+        screen.blit(cap, (self.rect_bench_box.x + 10, self.rect_bench_box.y + 8))
 
-        row_h = 28
-        inner = self.rect_bench.inflate(-16, -48); inner.y = self.rect_bench.y + 36
-        y = inner.y
-        for p in self._bench_list():
-            r = pygame.Rect(inner.x, y, inner.w, row_h-4)
-            pygame.draw.rect(screen, (58,60,70), r, border_radius=8)
-            pygame.draw.rect(screen, (24,24,28), r, 2, border_radius=8)
-            label = f"{_shorten(_name(p), 24)}   OVR {_ovr(p)}"
-            txt = self.font.render(label, True, (230,230,235))
-            screen.blit(txt, (r.x + 10, r.y + (r.h - txt.get_height())//2))
-            y += row_h
+        # Bench scrollable list
+        inner = self._bench_inner
+        bench = self._bench_list()
+        if inner:
+            clip = screen.get_clip()
+            screen.set_clip(inner)
+            y = inner.y - int(self.bench_scroll)
+            for p in bench:
+                r = pygame.Rect(inner.x, y, inner.w, self.row_h-4)
+                # row background
+                bg = (58,60,70)
+                if self.selected_pid is not None and p.get("pid") == self.selected_pid:
+                    bg = (88,92,110)
+                pygame.draw.rect(screen, bg, r, border_radius=8)
+                pygame.draw.rect(screen, (24,24,28), r, 2, border_radius=8)
+                label = f"{_shorten(_name(p), 24)}   OVR {_ovr(p)}"
+                txt = self.font.render(label, True, (230,230,235))
+                screen.blit(txt, (r.x + 10, r.y + (r.h - txt.get_height())//2))
+                y += self.row_h
+            screen.set_clip(clip)
 
+        # Detail panel
+        sel = None
+        if self.selected_pid is not None:
+            for p in self.bench:
+                if p.get("pid") == self.selected_pid:
+                    sel = p; break
+        if sel is None and bench:
+            sel = bench[0]
+        self._draw_detail(screen, self.rect_detail_box, sel)
+
+        # Drag ghost from bench
         if self.dragging is not None and self.drag_src == "bench":
             rect = pygame.Rect(self.mx_my[0]-self.tile//2, self.mx_my[1]-self.tile//2, self.tile, self.tile)
             self._draw_token(screen, rect, self.dragging, selected=True)
 
+        # Buttons
         for b in (self.btn_back, self.btn_clear, self.btn_next):
             b.draw(screen, self.font)
 
@@ -207,11 +326,10 @@ class MatchTacticsState:
         return [p for p in self.bench if p.get("pid") not in placed_ids]
 
     def _bench_index_at(self, pos) -> Optional[int]:
-        inner = self.rect_bench.inflate(-16, -48); inner.y = self.rect_bench.y + 36
-        if not inner.collidepoint(pos): return None
-        row_h = 28
-        idx = (pos[1] - inner.y) // row_h
-        return int(idx)
+        if not self._bench_inner: return None
+        if not self._bench_inner.collidepoint(pos): return None
+        idx = int(((pos[1] - self._bench_inner.y) + self.bench_scroll) // self.row_h)
+        return idx
 
     def _cell_rect(self, cx: int, cy: int) -> pygame.Rect:
         return pygame.Rect(self.rect_board.x + cx*self.tile,
@@ -245,7 +363,7 @@ class MatchTacticsState:
         line1 = self.font.render(nm, True, (240,240,245))
         line2 = self.font.render(f"{ovr}", True, (230,230,235))
         surf.blit(line1, (rect.x + 6, rect.y + 4))
-        surf.blit(line2, (rect.right - line2.get_width() - 6, rect.bottom - line2.get_height() - 2))
+        surf.blit(line2, (rect.right - line2.get_width() - 6, rect.bottom - line2.get_height()) )
 
     def _place_dragging(self, cx: int, cy: int):
         if self.drag_src == "bench":
@@ -262,9 +380,51 @@ class MatchTacticsState:
     def _cancel_drag(self):
         self.dragging = None; self.drag_src = None; self.drag_idx = -1
 
+    def _draw_detail(self, screen: pygame.Surface, box: pygame.Rect, p: Optional[Dict[str,Any]]):
+        # Shell & header
+        title = self.h2.render("Player Details", True, (215,215,220))
+        screen.blit(title, (box.x + 10, box.y + 8))
+        inner = box.inflate(-12, -36); inner.y = box.y + 36
+
+        if not p:
+            msg = self.font.render("Select a player from the list.", True, (195,195,200))
+            screen.blit(msg, (inner.x, inner.y))
+            return
+
+        # Name row (Name + LVL + POT + Age)
+        y = inner.y
+        name = (_name(p) or "Player")
+        lvl  = _lvl(p)
+        pot  = _pot(p)
+        age  = _age(p)
+        head = self.h2.render(f"{name}   LVL {lvl}   POT {pot}   Age {age}", True, (235,235,240))
+        screen.blit(head, (inner.x, y)); y += head.get_height() + 8
+
+        # Row 2: Race, Class, AC
+        race = _race_disp(p)
+        cls  = _cls_disp(p)
+        ac   = int(p.get("ac", _ac_calc(p)))
+        line2 = self.font.render(f"{race}    Class {cls}    AC {ac}", True, (230,230,235))
+        screen.blit(line2, (inner.x, y)); y += line2.get_height() + 8
+
+        # Attributes line
+        STR = int(_val(p, "STR", _val(p,"str",10)))
+        DEX = int(_val(p, "DEX", _val(p,"dex",10)))
+        CON = int(_val(p, "CON", _val(p,"con",10)))
+        INT = int(_val(p, "INT", _val(p,"int",10)))
+        WIS = int(_val(p, "WIS", _val(p,"wis",10)))
+        CHA = int(_val(p, "CHA", _val(p,"cha",10)))
+        attr_text = self.font.render(f"STR {STR}  DEX {DEX}  CON {CON}  INT {INT}  WIS {WIS}  CHA {CHA}", True, (230,230,235))
+        screen.blit(attr_text, (inner.x, y)); y += attr_text.get_height() + 8
+
+        # OVR emphasized
+        ovr = _ovr(p)
+        oline = self.font.render(f"OVR {ovr}", True, (230,230,235))
+        screen.blit(oline, (inner.x, y))
+
     # ----- actions -----
     def _back(self):
-        self.app.pop_state()
+        self.app.pop_state()  # back to Season Hub
 
     def _clear(self):
         self.placed.clear()
