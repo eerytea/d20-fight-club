@@ -1,6 +1,6 @@
 # engine/team_tactics.py
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, Optional, Tuple, List
 
 # -----------------------------
@@ -85,14 +85,12 @@ class TacticsController(BaseController):
             return step
         return None
 
-    # ------- Main decision -------
+    # ------- Main decision (same as prior Patch D sample; you can swap in your own later) -------
     def decide(self, world, actor) -> List[dict]:
         spec = self._spec_for(actor)
-
         desired = max(1, int(spec.desired_range))
         desired = max(desired, world.reach(actor))  # don’t desire less than own reach
 
-        # First: respect anchor/roam if too far away
         back_step = self._enforce_anchor(world, actor, spec)
         if back_step is not None:
             return [{"type": "move", "to": back_step}]
@@ -106,8 +104,7 @@ class TacticsController(BaseController):
 
         intents: List[dict] = []
 
-        # Simple action-economy heuristics:
-        # - Defensive stance with low HP → Dodge
+        # Defensive + low HP -> Dodge
         try:
             hp = int(getattr(actor, "hp", 1)); mhp = int(getattr(actor, "max_hp", max(1, hp)))
         except Exception:
@@ -115,33 +112,27 @@ class TacticsController(BaseController):
         if str(getattr(spec, "stance", "balanced")).lower() == "defensive" and hp * 2 <= mhp:
             intents.append({"type": "dodge"})
 
-        # - If playing as ranged (desired >= 2) and threatened in melee, Disengage first
+        # Ranged stance: if threatened, disengage first; if far, dash
         if int(desired) >= 2:
             try:
                 if world._threatened_in_melee(actor):
                     intents.append({"type": "disengage"})
             except Exception:
                 pass
+            if dist > speed:
+                intents.append({"type": "dash"})
 
-        # - If far from desired range, Dash once to close/open distance faster
-        if dist > speed and int(desired) >= 2:
-            intents.append({"type": "dash"})
-
-        # If already in desired range, attack now (with one-shot roll settings)
+        # If already in desired range, consider hide then attack
         if world.distance(actor, enemy) <= desired:
             if getattr(spec, "attack_advantage", False):
-                try: world.grant_advantage(actor, 1)
-                except Exception: pass
+                world.grant_advantage(actor, 1)
             if getattr(spec, "attack_disadvantage", False):
-                try: world.grant_disadvantage(actor, 1)
-                except Exception: pass
-            # Ranged stance may choose to hide first, then shoot
+                world.grant_disadvantage(actor, 1)
             if int(desired) >= 2:
                 intents.append({"type": "hide"})
             intents.append({"type": "attack", "target": enemy})
             return intents
 
-        # Otherwise, plan up to speed steps toward target (avoiding OA when possible)
         for _ in range(speed):
             if world.distance(actor, enemy) <= desired:
                 break
@@ -150,18 +141,13 @@ class TacticsController(BaseController):
                 break
             intents.append({"type": "move", "to": step})
 
-        # If we've reached desired range and are a ranged stance, consider Hiding before attacking
         if world.distance(actor, enemy) <= desired and int(desired) >= 2:
             intents.append({"type": "hide"})
-
-        # After moving, apply one-shot roll modifiers if configured, then attack if in range
         if world.distance(actor, enemy) <= desired:
             if getattr(spec, "attack_advantage", False):
-                try: world.grant_advantage(actor, 1)
-                except Exception: pass
+                world.grant_advantage(actor, 1)
             if getattr(spec, "attack_disadvantage", False):
-                try: world.grant_disadvantage(actor, 1)
-                except Exception: pass
+                world.grant_disadvantage(actor, 1)
             intents.append({"type": "attack", "target": enemy})
 
         if not intents:
@@ -197,10 +183,8 @@ def team_tactics_from_fixture(blob: Dict[str, Any]) -> TeamTactics:
     tt = TeamTactics()
     if not isinstance(blob, dict):
         return tt
-    # defaults
     if "default" in blob:
         tt.default = _rolespec_from_dict(blob["default"])
-    # roles
     roles = blob.get("roles", {})
     if isinstance(roles, dict):
         for pid, spec in roles.items():
@@ -208,13 +192,6 @@ def team_tactics_from_fixture(blob: Dict[str, Any]) -> TeamTactics:
     return tt
 
 def load_match_tactics(fixture: Dict[str, Any]) -> MatchTactics:
-    """
-    UI can embed tactics in fixture like:
-      fixture["tactics"] = {
-        "home": { "default": {...}, "roles": {pid: {...}} },
-        "away": { ... }
-      }
-    """
     mt = MatchTactics()
     if not isinstance(fixture, dict):
         return mt
@@ -226,3 +203,20 @@ def load_match_tactics(fixture: Dict[str, Any]) -> MatchTactics:
     if "away" in tac:
         mt.by_team[1] = team_tactics_from_fixture(tac["away"])
     return mt
+
+# --- NEW: serializer to write tactics back into a fixture-friendly dict ---
+def dump_match_tactics(mt: MatchTactics) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for tid, tt in mt.by_team.items():
+        d = {
+            "default": _rolespec_to_dict(tt.default),
+            "roles": {pid: _rolespec_to_dict(rs) for pid, rs in tt.roles.items()},
+        }
+        out["home" if tid == 0 else "away"] = d
+    return out
+
+def _rolespec_to_dict(rs: RoleSpec) -> Dict[str, Any]:
+    d = asdict(rs)
+    if rs.anchor is None:
+        d.pop("anchor", None)
+    return d
