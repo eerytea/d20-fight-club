@@ -138,27 +138,17 @@ def _top5(lst: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
         return lst[:5]
 
 def _get_coord(f, default=0) -> Tuple[int,int]:
-    """Return (cx, cy) from fighter/actor, preferring x,y then tx,ty."""
-    cx = getattr(f, "x", None)
-    cy = getattr(f, "y", None)
-    if cx is not None and cy is not None:
-        return int(cx), int(cy)
-    cx = getattr(f, "tx", None)
-    cy = getattr(f, "ty", None)
-    if cx is not None and cy is not None:
-        return int(cx), int(cy)
+    cx = getattr(f, "x", None); cy = getattr(f, "y", None)
+    if cx is not None and cy is not None: return int(cx), int(cy)
+    cx = getattr(f, "tx", None); cy = getattr(f, "ty", None)
+    if cx is not None and cy is not None: return int(cx), int(cy)
     return default, default
 
 def _set_coord(f, cx: int, cy: int):
-    """Set both spawn (tx,ty) and live (x,y) coords if present."""
-    try:
-        setattr(f, "tx", int(cx)); setattr(f, "ty", int(cy))
-    except Exception:
-        pass
-    try:
-        setattr(f, "x", int(cx)); setattr(f, "y", int(cy))
-    except Exception:
-        pass
+    try: setattr(f, "tx", int(cx)); setattr(f, "ty", int(cy))
+    except Exception: pass
+    try: setattr(f, "x", int(cx)); setattr(f, "y", int(cy))
+    except Exception: pass
 
 # ----------------- Match State -----------------
 class MatchState:
@@ -301,7 +291,7 @@ class MatchState:
 
         # default layout
         layout_teams_tiles(fighters, GRID_COLS, GRID_ROWS)
-        # IMPORTANT: ensure both spawn and live coords are set
+        # ensure both spawn and live coords are set
         for f in fighters:
             cx = getattr(f, "tx", getattr(f, "x", 0))
             cy = getattr(f, "ty", getattr(f, "y", 0))
@@ -313,7 +303,6 @@ class MatchState:
             try:
                 side = preset.get("side", "home")
                 slots = preset.get("slots", [])
-                # team 0 == home, 1 == away
                 target_tid = 0 if side == "home" else 1
                 for s in slots:
                     pid = s.get("pid"); cx = int(s.get("cx", 0)); cy = int(s.get("cy", 0))
@@ -398,21 +387,23 @@ class MatchState:
             b.handle(ev)
 
     def update(self, dt: float):
+        # autoplay
         if self.running and self.combat and self.combat.winner is None:
             self.auto_timer -= dt
             if self.auto_timer <= 0:
                 self._step_one_turn()
                 self.auto_timer = self._auto_interval
 
+        # ALWAYS flush any new engine events each frame (fix for missing logs)
+        self._flush_events_to_log()
+
+        # write scheduled result once when finished
         if self.combat and self.combat.winner is not None and not self._result_recorded:
             home_kos = len([f for f in self.combat.fighters if getattr(f, "team_id", 0) == 1 and not getattr(f, "alive", True)])
             away_kos = len([f for f in self.combat.fighters if getattr(f, "team_id", 0) == 0 and not getattr(f, "alive", True)])
-            if self.combat.winner == 0:
-                winner = "home"
-            elif self.combat.winner == 1:
-                winner = "away"
-            else:
-                winner = "draw"
+            if self.combat.winner == 0:   winner = "home"
+            elif self.combat.winner == 1: winner = "away"
+            else:                          winner = "draw"
             _record_result_best_effort(self.career, self.week, self.home_tid, self.away_tid, winner, home_kos, away_kos)
             self._result_recorded = True
 
@@ -438,7 +429,7 @@ class MatchState:
                 pygame.draw.rect(screen, GRID_BG, cell)
                 pygame.draw.rect(screen, GRID_LINE, cell, 1)
 
-        # units (draw at x,y if present; else tx,ty)
+        # units
         if self.combat:
             for f in self.combat.fighters:
                 if not getattr(f, "alive", True): continue
@@ -447,7 +438,6 @@ class MatchState:
                 col = (120,180,255) if getattr(f, "team_id", 0) == 0 else (255,140,140)
                 pygame.draw.rect(screen, col, rect.inflate(-8, -8), border_radius=6)
                 pygame.draw.rect(screen, BORDER, rect.inflate(-8, -8), 2, border_radius=6)
-
                 # HP bar
                 hp = getattr(f, "hp", 1); mx = getattr(f, "max_hp", max(1, hp))
                 frac = max(0.0, min(1.0, hp / mx))
@@ -455,7 +445,6 @@ class MatchState:
                 pygame.draw.rect(screen, (60,62,70), pygame.Rect(bx, by, bw, bh), border_radius=3)
                 c = (90,220,140) if frac>0.5 else (240,210,120) if frac>0.25 else (240,120,120)
                 pygame.draw.rect(screen, c, pygame.Rect(bx+1, by+1, int((bw-2)*frac), bh-2), border_radius=3)
-
                 nm = self.font.render(getattr(f, "name", "F"), True, TEXT)
                 screen.blit(nm, (rect.centerx - nm.get_width()//2, rect.y + 4))
 
@@ -464,8 +453,7 @@ class MatchState:
         pygame.draw.rect(screen, BORDER, self.rect_log, 2, border_radius=10)
         title = self.h2.render("Turn Log", True, TEXT_MID)
         screen.blit(title, (self.rect_log.x + 10, self.rect_log.y + 8))
-        inner = self.rect_log.inflate(-12, -30)
-        inner.y = self.rect_log.y + 26
+        inner = self.rect_log.inflate(-12, -30); inner.y = self.rect_log.y + 26
 
         clip = screen.get_clip()
         screen.set_clip(inner)
