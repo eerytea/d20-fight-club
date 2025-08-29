@@ -5,11 +5,16 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Dict, Any, Tuple
 import random
 
-# Try to import generator (works with your current core/)
+# Prefer your real generator. If it fails, we will use a solid internal fallback.
 try:
-    from core.creator import generate_fighter
+    from core.creator import generate_fighter as _real_generate_fighter
 except Exception:
-    generate_fighter = None  # type: ignore
+    _real_generate_fighter = None  # type: ignore
+
+try:
+    from core.ratings import compute_ovr as _compute_ovr  # optional (for fallback only)
+except Exception:
+    _compute_ovr = None  # type: ignore
 
 def _import_opt(fullname: str):
     try:
@@ -54,6 +59,60 @@ def _rand_name(rng: random.Random) -> str: return f"{rng.choice(_TEAM_WORDS_A)} 
 def _rand_color(rng: random.Random) -> Tuple[int,int,int]: return (rng.randint(60,220), rng.randint(60,220), rng.randint(60,220))
 def _ovr(p: Dict[str,Any]) -> int: return int(p.get("OVR", p.get("ovr", p.get("OVR_RATING", 60))))
 
+# ---- internal fallback generator (only used if the real one fails) ----
+_STD_ARRAY = [15,14,13,12,10,8]
+_RACE_FALLBACK = [
+    "Human","Dwarf","Elf","Orc","Halfling","Gnome","Tiefling","Half-Elf"
+]
+_FIRST = ["Kael","Ryn","Mira","Thorn","Lysa","Doran","Nyra","Kellan","Sera","Jorin",
+          "Talia","Bren","Arin","Sel","Vara","Garrin","Orin","Kira","Fen","Zara"]
+_LAST  = ["Stone","Vale","Rook","Ash","Hollow","Black","Bright","Gale","Wolfe","Mire",
+          "Thorne","Ridge","Hawk","Frost","Dusk","Iron","Raven","Drake","Storm","Oath"]
+
+def _fallback_generate_fighter(team_tid: int, jersey: int, country: str, rng: random.Random) -> Dict[str, Any]:
+    # Standard array → random assignment
+    vals = _STD_ARRAY[:]; rng.shuffle(vals)
+    keys = ["STR","DEX","CON","INT","WIS","CHA"]; rng.shuffle(keys)
+    base = {k: v for k, v in zip(keys, vals)}
+
+    race = rng.choice(_RACE_FALLBACK)
+    name = f"{rng.choice(_FIRST)} {rng.choice(_LAST)}"
+
+    # Simple vitals
+    dex_mod = (base.get("DEX",10)-10)//2
+    con_mod = (base.get("CON",10)-10)//2
+    hp = 10 + con_mod
+    ac = 10 + dex_mod  # armor_bonus=0 for now
+
+    # Build lowercase mirrors for OVR calc if available
+    lower = {k.lower(): v for k,v in base.items()}
+    f = {
+        "pid": jersey-1,
+        "num": jersey,
+        "team_id": team_tid,
+        "origin": country,
+        "name": name,
+        "race": race,
+        "class": "Fighter",
+        "level": 1,
+        "hp": hp, "max_hp": hp, "ac": ac,
+        **base,
+        **lower,
+        "alive": True,
+        "weapon": {"name": "Longsword", "damage": "1d8"},
+        "armor_bonus": 0,
+    }
+    # Try to compute a decent OVR; otherwise a stable heuristic
+    if _compute_ovr:
+        try:
+            f["OVR"] = int(_compute_ovr(f))
+        except Exception:
+            f["OVR"] = 60 + (base["STR"]+base["DEX"]+base["CON"]-30)//2
+    else:
+        f["OVR"] = 60 + (base["STR"]+base["DEX"]+base["CON"]-30)//2
+    f.setdefault("potential", int(f["OVR"] + rng.randint(5, 20)))
+    return f
+
 class TeamSelectState:
     """
     3 columns: Countries | League (Top/Bottom) + Teams | Roster (top) + Player (bottom)
@@ -92,6 +151,19 @@ class TeamSelectState:
         self.world = self._build_world(self.seed)
 
     # ---- world build ----
+    def _try_real_generator(self, rng: random.Random, country: str) -> Optional[Dict[str, Any]]:
+        if _real_generate_fighter is None:
+            return None
+        try:
+            # Signature that matches your repo creator.py
+            return _real_generate_fighter(level=1, rng=rng, town=country, neg_trait_prob=0.15)
+        except Exception as e:
+            # If the signature changed, fall back safely.
+            try:
+                return _real_generate_fighter()
+            except Exception:
+                return None
+
     def _build_world(self, seed: int) -> Dict[str, Any]:
         rng = random.Random(seed)
         world = {"countries": []}
@@ -103,51 +175,19 @@ class TeamSelectState:
                     tid = i
                     color = _rand_color(rng)
                     name = _rand_name(rng)
-                    # team stub (lets us pass per-team race weights later)
                     team_stub: Dict[str, Any] = {"tid": tid, "name": name, "color": color}
                     fighters: List[Dict[str, Any]] = []
                     for j in range(12):
-                        p = None
-                        if generate_fighter:
-                            try:
-                                p = generate_fighter(team=team_stub, seed=rng.randint(0, 10_000_000))
-                            except TypeError:
-                                try:
-                                    p = generate_fighter(seed=rng.randint(0, 10_000_000))
-                                except Exception:
-                                    try:
-                                        p = generate_fighter()
-                                    except Exception:
-                                        p = None
-                        if not isinstance(p, dict):
-                            # simple fallback
-                            num = (j % 99) + 1
-                            STR = 10 + rng.randint(-1, 3)
-                            DEX = 10 + rng.randint(-1, 3)
-                            CON = 10 + rng.randint(-1, 3)
-                            INT = 8 + rng.randint(0, 2)
-                            WIS = 8 + rng.randint(0, 2)
-                            CHA = 8 + rng.randint(0, 2)
-                            ovr = int(0.6*STR + 0.7*DEX + 0.6*CON + 0.3*CHA + 4)
-                            p = {
-                                "pid": int(f"{tid}{num:02d}"),
-                                "name": f"F{tid}-{num:02d}",
-                                "num": num,
-                                "race": "human",
-                                "origin": cname,
-                                "class": "fighter",
-                                "hp": 10, "max_hp": 10, "ac": 10 + (DEX-10)//2,
-                                "STR": STR, "DEX": DEX, "CON": CON, "INT": INT, "WIS": WIS, "CHA": CHA,
-                                "OVR": ovr, "potential": ovr + rng.randint(3, 15),
-                                "weapon": {"name": "Sword"},
-                                "armor_bonus": 0,
-                                "team_id": tid,
-                                "level": 1,
-                            }
-                        # ensure team_id and origin are sane
-                        p["team_id"] = tid
-                        p.setdefault("origin", cname)
-                        fighters.append(p)
+                        f = self._try_real_generator(rng, cname)
+                        if isinstance(f, dict):
+                            f["team_id"] = tid
+                            f["pid"] = (j % 99)
+                            f["num"] = (j % 99) + 1
+                            f.setdefault("origin", cname)
+                            f.setdefault("name", f"{cname[:1]}{tid}-{j:02d}")  # belt-and-suspenders
+                        else:
+                            f = _fallback_generate_fighter(tid, (j % 99) + 1, cname, rng)
+                        fighters.append(f)
                     team_stub["fighters"] = fighters
                     teams.append(team_stub)
                 leagues.append({"name": lname if li==0 else 'Division', "teams": teams})
@@ -400,7 +440,7 @@ class TeamSelectState:
         prev = screen.get_clip(); screen.set_clip(clip)
 
         x0 = rect.x + 12
-        y = rect.y + 12 + self.scroll_stats   # compact
+        y = rect.y + 12 + self.scroll_stats
         line_h = self.font.get_height() + 6
 
         def line(text: str):
@@ -408,7 +448,7 @@ class TeamSelectState:
             surf = self.font.render(text, True, (220,220,225))
             screen.blit(surf, (x0, y)); y += line_h
 
-        # Top lines (labels removed; LVL + POT; unified font)
+        # Minimal, label-free top: name + jersey + LVL and OVR/POT
         line(f"{name}    #{num_format(G('num',0))}    LVL: {level}")
         line(f"{race}    {origin}    OVR: {ovr}    POT: {pot}")
         line(f"{cls}    HP: {hp}/{max_hp}    AC: {ac}")
@@ -508,30 +548,16 @@ class TeamSelectState:
                     size = len(t.get("fighters", [])) or 8
                     new_list = []
                     for j in range(size):
-                        if generate_fighter:
-                            try:
-                                p = generate_fighter(team=t, seed=r.randint(0, 10_000_000))
-                            except TypeError:
-                                try:
-                                    p = generate_fighter(seed=r.randint(0, 10_000_000))
-                                except Exception:
-                                    try:
-                                        p = generate_fighter()
-                                    except Exception:
-                                        p = None
+                        f = self._try_real_generator(r, country)
+                        if isinstance(f, dict):
+                            f["team_id"] = tid
+                            f["pid"] = (j % 99)
+                            f["num"] = (j % 99) + 1
+                            f.setdefault("origin", country)
+                            f.setdefault("name", f"{country[:1]}{tid}-{j:02d}")
                         else:
-                            p = None
-                        if not isinstance(p, dict):
-                            # fallback
-                            num = (j % 99) + 1
-                            DEX = 10 + r.randint(-1, 3)
-                            p = {"name": f"F{tid}-{num:02d}", "num": num, "race": "human",
-                                 "OVR": 60, "potential": 70, "ac": 10 + (DEX-10)//2, "DEX": DEX,
-                                 "origin": country, "class": "fighter", "hp": 10, "max_hp": 10, "team_id": tid, "level": 1,
-                                 "armor_bonus": 0}
-                        p["team_id"] = tid
-                        p.setdefault("origin", country)
-                        new_list.append(p)
+                            f = _fallback_generate_fighter(tid, (j % 99) + 1, country, r)
+                        new_list.append(f)
                     t["fighters"] = new_list
         self.player_idx = 0; self.scroll_players = self.scroll_stats = 0
 
