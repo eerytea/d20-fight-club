@@ -18,8 +18,9 @@ else:
     _ENGINE_IMPORT_ERROR = None
 
 # ----------------- constants & styles -----------------
-GRID_COLS = 11
-GRID_ROWS = 11
+GRID_COLS = 30
+GRID_ROWS = 30
+MIN_TILE  = 12           # allows 30x30 to fit; raise if you want larger minimum cells
 
 PAD = 16
 HEADER_H = 36           # tiny header that sits ONLY above the log column
@@ -183,7 +184,7 @@ def _elide(text: str, font: pygame.font.Font, max_w: int) -> str:
 # ----------------- Match State -----------------
 class MatchState:
     """
-    11×11 combat viewer. Compact header sits ONLY above the log column.
+    30×30 combat viewer. Compact header sits ONLY above the log column.
     Buttons live under the log; board expands to fill remaining space.
     """
     def __init__(self, *args, **kwargs):
@@ -235,7 +236,7 @@ class MatchState:
         self.rect_board:  Optional[pygame.Rect] = None
         self.rect_log:    Optional[pygame.Rect] = None
         self.rect_footer: Optional[pygame.Rect] = None
-        self.tile = 48
+        self.tile = 14  # default; recalculated in _layout
 
         # buttons & loop
         self.btns: List[Button] = []
@@ -275,19 +276,16 @@ class MatchState:
         footer_h, bw, bh = self._compute_footer_layout(log_w)
 
         # RIGHT COLUMN (header + log + footer)
-        # header sits at top right
         self.rect_header = pygame.Rect(w - PAD - log_w, PAD, log_w, HEADER_H)
-        # log below header
         right_col_h = h - PAD*2
         log_h = max(120, right_col_h - HEADER_H - footer_h - PAD)
         self.rect_log = pygame.Rect(self.rect_header.x, self.rect_header.bottom + PAD, log_w, log_h)
-        # footer under log
         self.rect_footer = pygame.Rect(self.rect_log.x, self.rect_log.bottom + PAD, log_w, footer_h)
 
         # LEFT AREA (board) uses all remaining space top-to-bottom
         board_w_avail = w - PAD*3 - log_w
         board_h_avail = h - PAD*2
-        self.tile = max(30, min(board_w_avail // GRID_COLS, board_h_avail // GRID_ROWS))
+        self.tile = max(MIN_TILE, min(board_w_avail // GRID_COLS, board_h_avail // GRID_ROWS))
         board_w = GRID_COLS * self.tile
         board_h = GRID_ROWS * self.tile
         self.rect_board = pygame.Rect(PAD + 4, PAD, board_w, board_h)
@@ -468,8 +466,8 @@ class MatchState:
                 # HP bar
                 hp = getattr(f, "hp", 1); mx = getattr(f, "max_hp", max(1, hp))
                 frac = max(0.0, min(1.0, hp / mx))
-                bar_margin = 5
-                bar_h = max(5, int(self.tile * 0.12))
+                bar_margin = 4
+                bar_h = max(4, int(self.tile * 0.12))
                 bar_w = rect.w - bar_margin*2
                 bx = rect.x + bar_margin; by = rect.bottom - bar_margin - bar_h
                 pygame.draw.rect(screen, (60,62,70), pygame.Rect(bx, by, bar_w, bar_h), border_radius=3)
@@ -481,8 +479,8 @@ class MatchState:
                 last  = getattr(f, "last", getattr(f, "last_name", None)) or ""
                 if first or last: name_raw = (first + " " + last).strip()
                 label = _short_name(name_raw)
-                target_w = bar_w - 6
-                lo, hi = 10, max(12, int(self.tile * 0.35))
+                target_w = bar_w - 4
+                lo, hi = 8, max(10, int(self.tile * 0.33))
                 best = None
                 while lo <= hi:
                     mid = (lo + hi)//2
