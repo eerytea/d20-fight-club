@@ -67,7 +67,6 @@ def _team_name(career, tid: int) -> str:
         for t in getattr(career, "teams", []):
             if int(t.get("tid", -1)) == int(tid):
                 return t.get("name", f"Team {tid}")
-        # alt structure (dict indexed by id)
         teams = getattr(career, "teams", {})
         if isinstance(teams, dict) and tid in teams:
             return teams[tid].get("name", f"Team {tid}")
@@ -76,9 +75,7 @@ def _team_name(career, tid: int) -> str:
     return f"Team {tid}"
 
 def _find_fixture_object(career, week: int, home_tid: int, away_tid: int):
-    """Return the raw fixture object in career storage if possible."""
     try:
-        # format A: fixtures_by_week: List[List[dict]]
         weeks = getattr(career, "fixtures_by_week", None)
         if weeks and 0 <= week-1 < len(weeks):
             for f in weeks[week-1]:
@@ -87,7 +84,6 @@ def _find_fixture_object(career, week: int, home_tid: int, away_tid: int):
                     a = int(f.get("away_id", f.get("away_tid", f.get("B", -1))))
                     if h == home_tid and a == away_tid:
                         return f
-        # format B: dict keyed by "S{season}W{week}"
         if hasattr(career, "fixtures") and isinstance(career.fixtures, dict):
             cur_season = getattr(getattr(career, "date", {}), "get", lambda *_: None)("season") if hasattr(career, "date") else None
             if cur_season is None and isinstance(career.date, dict):
@@ -96,7 +92,6 @@ def _find_fixture_object(career, week: int, home_tid: int, away_tid: int):
             for f in career.fixtures.get(key, []):
                 if isinstance(f, dict) and int(f.get("home", f.get("home_id", -1))) == home_tid and int(f.get("away", f.get("away_id", -1))) == away_tid:
                     return f
-        # format C: flat list of dicts with 'week'
         for f in getattr(career, "fixtures", []):
             if not isinstance(f, dict): continue
             if int(f.get("week", -1)) != week: continue
@@ -109,8 +104,6 @@ def _find_fixture_object(career, week: int, home_tid: int, away_tid: int):
     return None
 
 def _record_result_best_effort(career, week: int, home_tid: int, away_tid: int, winner: Optional[str], sh: int, sa: int):
-    """Try several career write paths; don’t crash if structure differs."""
-    # new-style API
     try:
         if hasattr(career, "record_result") and callable(career.record_result):
             season = career.date["season"] if isinstance(career.date, dict) else getattr(career, "season", 1)
@@ -118,7 +111,6 @@ def _record_result_best_effort(career, week: int, home_tid: int, away_tid: int, 
             return
     except Exception:
         pass
-    # legacy inline edit
     raw = _find_fixture_object(career, week, home_tid, away_tid)
     if raw is None: return
     try:
@@ -130,7 +122,6 @@ def _record_result_best_effort(career, week: int, home_tid: int, away_tid: int, 
         pass
 
 def _fighters_for_team(career, tid: int) -> List[Dict[str,Any]]:
-    # career.teams could be list[dict] or dict[int->dict]
     ts = getattr(career, "teams", {})
     if isinstance(ts, dict):
         t = ts.get(tid, {})
@@ -145,6 +136,29 @@ def _top5(lst: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
         return sorted(lst, key=lambda p: int(p.get("ovr", p.get("OVR", 60))), reverse=True)[:5]
     except Exception:
         return lst[:5]
+
+def _get_coord(f, default=0) -> Tuple[int,int]:
+    """Return (cx, cy) from fighter/actor, preferring x,y then tx,ty."""
+    cx = getattr(f, "x", None)
+    cy = getattr(f, "y", None)
+    if cx is not None and cy is not None:
+        return int(cx), int(cy)
+    cx = getattr(f, "tx", None)
+    cy = getattr(f, "ty", None)
+    if cx is not None and cy is not None:
+        return int(cx), int(cy)
+    return default, default
+
+def _set_coord(f, cx: int, cy: int):
+    """Set both spawn (tx,ty) and live (x,y) coords if present."""
+    try:
+        setattr(f, "tx", int(cx)); setattr(f, "ty", int(cy))
+    except Exception:
+        pass
+    try:
+        setattr(f, "x", int(cx)); setattr(f, "y", int(cy))
+    except Exception:
+        pass
 
 # ----------------- Match State -----------------
 class MatchState:
@@ -232,7 +246,6 @@ class MatchState:
 
     def _layout(self):
         w, h = self.app.screen.get_size()
-        # compute tile to fit 11×11 + right log + footer + header
         avail_w = w - PAD*3 - LOG_MIN_W
         avail_h = h - PAD*3 - HEADER_H - FOOTER_H
         self.tile = max(30, min(avail_w // GRID_COLS, avail_h // GRID_ROWS))
@@ -244,7 +257,6 @@ class MatchState:
         self.rect_board = pygame.Rect(PAD + 4, by, board_w, board_h)
         self.rect_log   = pygame.Rect(self.rect_board.right + PAD, by, w - (self.rect_board.right + PAD*2), board_h)
         if self.rect_log.w < LOG_MIN_W:
-            # shrink tile if needed
             avail_w = w - PAD*3 - LOG_MIN_W
             self.tile = max(28, min(avail_w // GRID_COLS, avail_h // GRID_ROWS))
             board_w = GRID_COLS * self.tile
@@ -273,12 +285,11 @@ class MatchState:
         home_roster = _top5(_fighters_for_team(self.career, self.home_tid))
         away_roster = _top5(_fighters_for_team(self.career, self.away_tid))
 
-        # convert dict -> engine Fighter
         f_home = [fighter_from_dict({**fd, "team_id": 0}) for fd in home_roster]
         f_away = [fighter_from_dict({**fd, "team_id": 1}) for fd in away_roster]
         fighters = f_home + f_away
 
-        # attach pid/ovr if present so XP award / logs can reference
+        # attach pid/ovr for logs/XP
         pid_map = {}
         for src, dst in zip(home_roster + away_roster, fighters):
             try:
@@ -288,21 +299,27 @@ class MatchState:
             except Exception:
                 pass
 
-        # default layout: left/right lines
+        # default layout
         layout_teams_tiles(fighters, GRID_COLS, GRID_ROWS)
+        # IMPORTANT: ensure both spawn and live coords are set
+        for f in fighters:
+            cx = getattr(f, "tx", getattr(f, "x", 0))
+            cy = getattr(f, "ty", getattr(f, "y", 0))
+            _set_coord(f, cx, cy)
 
-        # apply preset lineup (from tactics), overriding tiles for user's side only
+        # apply preset lineup (from tactics) overriding user's side
         preset = self.fixture.get("preset_lineup")
         if isinstance(preset, dict):
             try:
                 side = preset.get("side", "home")
                 slots = preset.get("slots", [])
-                tid = self.home_tid if side == "home" else self.away_tid
+                # team 0 == home, 1 == away
+                target_tid = 0 if side == "home" else 1
                 for s in slots:
                     pid = s.get("pid"); cx = int(s.get("cx", 0)); cy = int(s.get("cy", 0))
                     f = pid_map.get(pid)
-                    if f and ((side == "home" and f.team_id == 0) or (side == "away" and f.team_id == 1)):
-                        f.tx, f.ty = cx, cy
+                    if f and getattr(f, "team_id", -1) == target_tid:
+                        _set_coord(f, cx, cy)
             except Exception:
                 traceback.print_exc()
 
@@ -336,14 +353,12 @@ class MatchState:
     def _next_round(self):
         if not self.combat or self.combat.winner is not None: return
         target_round = self.combat.round
-        # advance until round increments (or match ends)
         guard = 0
         while self.combat.winner is None and self.combat.round == target_round and guard < 200:
             self._step_one_turn()
             guard += 1
 
     def _back_to_hub(self):
-        # Pop this state; if the next is tactics, pop it too (return to Season Hub)
         try:
             self.app.pop_state()
             stack = getattr(self.app, "states", getattr(self.app, "stack", None))
@@ -383,18 +398,15 @@ class MatchState:
             b.handle(ev)
 
     def update(self, dt: float):
-        # auto-play
         if self.running and self.combat and self.combat.winner is None:
             self.auto_timer -= dt
             if self.auto_timer <= 0:
                 self._step_one_turn()
                 self.auto_timer = self._auto_interval
 
-        # record scheduled result if applicable (best-effort)
         if self.combat and self.combat.winner is not None and not self._result_recorded:
-            # compute KO scores (how many enemies are down)
-            home_kos = len([f for f in self.combat.fighters if f.team_id == 1 and not f.alive])
-            away_kos = len([f for f in self.combat.fighters if f.team_id == 0 and not f.alive])
+            home_kos = len([f for f in self.combat.fighters if getattr(f, "team_id", 0) == 1 and not getattr(f, "alive", True)])
+            away_kos = len([f for f in self.combat.fighters if getattr(f, "team_id", 0) == 0 and not getattr(f, "alive", True)])
             if self.combat.winner == 0:
                 winner = "home"
             elif self.combat.winner == 1:
@@ -426,12 +438,13 @@ class MatchState:
                 pygame.draw.rect(screen, GRID_BG, cell)
                 pygame.draw.rect(screen, GRID_LINE, cell, 1)
 
-        # units
+        # units (draw at x,y if present; else tx,ty)
         if self.combat:
             for f in self.combat.fighters:
                 if not getattr(f, "alive", True): continue
-                rect = pygame.Rect(self.rect_board.x + f.tx*self.tile, self.rect_board.y + f.ty*self.tile, self.tile, self.tile)
-                col = (120,180,255) if f.team_id == 0 else (255,140,140)
+                cx, cy = _get_coord(f, 0)
+                rect = pygame.Rect(self.rect_board.x + cx*self.tile, self.rect_board.y + cy*self.tile, self.tile, self.tile)
+                col = (120,180,255) if getattr(f, "team_id", 0) == 0 else (255,140,140)
                 pygame.draw.rect(screen, col, rect.inflate(-8, -8), border_radius=6)
                 pygame.draw.rect(screen, BORDER, rect.inflate(-8, -8), 2, border_radius=6)
 
@@ -454,7 +467,6 @@ class MatchState:
         inner = self.rect_log.inflate(-12, -30)
         inner.y = self.rect_log.y + 26
 
-        # clip & scroll
         clip = screen.get_clip()
         screen.set_clip(inner)
         y = inner.y - int(self.log_scroll)
@@ -464,7 +476,7 @@ class MatchState:
             y += self._line_h
         screen.set_clip(clip)
 
-        # scrollbar (simple)
+        # scrollbar
         content_h = max(1, len(self.lines) * self._line_h)
         vis_h = inner.h
         if content_h > vis_h:
@@ -481,7 +493,6 @@ class MatchState:
         for b in self.btns:
             b.draw(screen, self.font)
 
-        # if finished, hint
         if self.combat and self.combat.winner is not None:
             msg = self.h2.render("Match complete — press Back to return.", True, TEXT_MID)
             screen.blit(msg, (self.rect_footer.right - msg.get_width() - 12, self.rect_footer.y + (self.rect_footer.h - msg.get_height())//2))
@@ -489,8 +500,6 @@ class MatchState:
     # -------------- internal --------------
     def _push_log(self, s: str):
         self.lines.append(s)
-
-        # autoscroll to bottom if we were near bottom
         inner_h = (self.rect_log.h - 24) if self.rect_log else 0
         content_h = len(self.lines) * self._line_h
         at_bottom = (self.log_scroll + inner_h + 2*self._line_h) >= (content_h - 1)
@@ -528,7 +537,6 @@ class MatchState:
         try:
             before = len(self.combat.events)
             self.combat.take_turn()
-            # flush new events
             if len(self.combat.events) > before:
                 self._flush_events_to_log()
         except Exception:
