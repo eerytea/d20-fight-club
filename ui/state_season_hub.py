@@ -34,14 +34,6 @@ class Button:
                 self.action()
 
 # ---------- helpers ----------
-def _import_opt(fullname: str):
-    try:
-        module_name, class_name = fullname.rsplit(".", 1)
-        mod = __import__(module_name, fromlist=[class_name])
-        return getattr(mod, class_name, None)
-    except Exception:
-        return None
-
 def _team_name(car, tid: int) -> str:
     if hasattr(car, "team_name") and callable(getattr(car, "team_name")):
         try: return car.team_name(int(tid))  # type: ignore
@@ -168,7 +160,6 @@ class SeasonHubState:
         self.rect_left   = pygame.Rect(pad, self.rect_header.bottom + pad, int(w * 0.62) - pad, h - (self.rect_header.bottom + pad*2))
         self.rect_right  = pygame.Rect(self.rect_left.right + pad, self.rect_left.y, w - (self.rect_left.right + pad*2), self.rect_left.h)
 
-        # Buttons
         bx = self.rect_right.x + 12
         by = self.rect_right.y + 12
         bw, bh, gap = self.rect_right.w - 24, 48, 12
@@ -201,7 +192,6 @@ class SeasonHubState:
         w, h = screen.get_size()
         screen.fill((16,16,20))
 
-        # header
         hdr = self.rect_header
         pygame.draw.rect(screen, (42,44,52), hdr, border_radius=12)
         pygame.draw.rect(screen, (24,24,28), hdr, 2, border_radius=12)
@@ -212,7 +202,6 @@ class SeasonHubState:
         screen.blit(t1, (hdr.x + 12, hdr.y + (hdr.h - t1.get_height()) // 2))
         screen.blit(t2, (hdr.right - t2.get_width() - 12, hdr.y + (hdr.h - t2.get_height()) // 2))
 
-        # left: this week's games
         lp = self.rect_left
         pygame.draw.rect(screen, (42,44,52), lp, border_radius=12)
         pygame.draw.rect(screen, (24,24,28), lp, 2, border_radius=12)
@@ -233,7 +222,6 @@ class SeasonHubState:
             screen.blit(surf, (lp.x + 12, y))
             y += line_h
 
-        # right: buttons
         rp = self.rect_right
         pygame.draw.rect(screen, (42,44,52), rp, border_radius=12)
         pygame.draw.rect(screen, (24,24,28), rp, 2, border_radius=12)
@@ -244,13 +232,9 @@ class SeasonHubState:
     def _back(self): self.app.pop_state()
 
     def _play(self):
-        """Open Tactics first; it will push MatchState afterward."""
-        try:
-            from ui.state_match_tactics import MatchTacticsState  # type: ignore
-        except Exception:
-            MatchTacticsState = None  # type: ignore
+        """Open Tactics; this screen is required (no fallback)."""
+        from ui.state_match_tactics import MatchTacticsState  # type: ignore
 
-        # Find the user's current fixture this week
         user_tid = int(getattr(self.career, "user_tid", 0))
         week_fixtures = _fixtures_for_week(self.career, self.week)
         my = None
@@ -269,22 +253,9 @@ class SeasonHubState:
             "score_home": my["sh"], "score_away": my["sa"],
         }
 
-        if MatchTacticsState is not None:
-            try:
-                self.app.push_state(MatchTacticsState(self.app, self.career, fixture))
-                return
-            except Exception:
-                traceback.print_exc()
-
-        # fallback straight to MatchState if tactics module missing
-        try:
-            from ui.state_match import MatchState  # type: ignore
-            self.app.push_state(MatchState(self.app, self.career, fixture))
-        except Exception:
-            traceback.print_exc()
+        self.app.push_state(MatchTacticsState(self.app, self.career, fixture))
 
     def _sim_week(self):
-        """Advance all fixtures for this week, then bump week and recompute standings."""
         used_native = False
         for name in ("sim_week", "simulate_week", "simulate_current_week", "sim_round"):
             fn = getattr(self.career, name, None)
@@ -301,7 +272,7 @@ class SeasonHubState:
                 week_fixtures = _fixtures_for_week(self.career, self.week)
                 ovr_by_tid = {int(t["tid"]): _avg_ovr(t) for t in getattr(self.career, "teams", [])}
                 for fx in week_fixtures:
-                    if fx["played"]:  # already simmed
+                    if fx["played"]:
                         continue
                     h, a = int(fx["home"]), int(fx["away"])
                     hq = ovr_by_tid.get(h, 60.0)
@@ -310,13 +281,12 @@ class SeasonHubState:
                     ab = max(0.4, (aq - 40.0) / 25.0)
                     sh = max(0, int(rnd.gauss(hb, 0.9)))
                     sa = max(0, int(rnd.gauss(ab, 0.9)))
-                    if rnd.random() < 0.15: sh += 1  # home edge
+                    if rnd.random() < 0.15: sh += 1
                     _set_fixture_result(fx.get("_raw"), sh, sa)
                     fx["played"] = True; fx["sh"] = sh; fx["sa"] = sa
             except Exception:
                 traceback.print_exc()
 
-        # Advance week (don’t exceed available weeks)
         try:
             total_weeks = len(getattr(self.career, "fixtures_by_week", [])) or getattr(self.career, "total_weeks", 0)
             self.career.week = min(int(getattr(self.career, "week", 1)) + 1, total_weeks or 9999)
