@@ -65,11 +65,12 @@ class TeamSelectState:
     """
     def __init__(self, app):
         self.app = app
-        # slightly smaller fonts for tighter layout
+        # fonts (unify player-box to one size)
         self.font  = pygame.font.SysFont(None, 22)
         self.h1    = pygame.font.SysFont(None, 34)
-        self.h2    = pygame.font.SysFont(None, 20)
-        self.small = pygame.font.SysFont(None, 18)
+        self.h2    = pygame.font.SysFont(None, 20)  # used for panel titles only
+        # player stats box uses ONLY self.font for consistent sizing
+        self.small = self.font
 
         self.rect_countries: Optional[pygame.Rect] = None
         self.rect_league: Optional[pygame.Rect] = None
@@ -145,7 +146,6 @@ class TeamSelectState:
                 except TypeError:
                     continue
                 except Exception:
-                    # Unexpected failure: break to fallback
                     break
 
         # fallback simple generator
@@ -170,6 +170,7 @@ class TeamSelectState:
             "weapon": {"name": "Sword"},
             "equipped_armor": "Leather",
             "team_id": tid,
+            "level": max(1, ovr // 10),
         }
 
     # ---- life-cycle ----
@@ -234,7 +235,9 @@ class TeamSelectState:
                 self.scroll_teams = self._clamp_scroll(self.scroll_teams, event.y*step, len(self._teams()), 34, area)
             elif self.rect_roster and self.rect_roster.collidepoint(mx, my):
                 list_area = self.rect_roster.inflate(-16, -54); list_area.y = self.rect_roster.y + 36
-                self.scroll_players = self._clamp_scroll(self.scroll_players, event.y*step, len(self._selected_team().get("fighters", [])), 28, list_area)
+                team = self._selected_team()
+                n = len(team.get("fighters", [])) if team else 0
+                self.scroll_players = self._clamp_scroll(self.scroll_players, event.y*step, n, 28, list_area)
             elif self.rect_stats and self.rect_stats.collidepoint(mx, my):
                 content_h = max(self.stats_content_h, self.rect_stats.h)  # avoid lock before first draw
                 self.scroll_stats = self._clamp_scroll_px(self.scroll_stats, event.y*step, content_h, self.rect_stats)
@@ -296,6 +299,19 @@ class TeamSelectState:
         if title:
             t = self.h2.render(title, True, (215,215,220)); screen.blit(t, (rect.x+12, rect.y+10))
 
+    def _draw_scrollbar(self, screen: pygame.Surface, area: pygame.Rect, content_h: int, scroll_px: int):
+        """Generic slim scrollbar on the right edge of area."""
+        if content_h <= area.h: return
+        track = pygame.Rect(area.right - 6, area.y, 4, area.h)
+        pygame.draw.rect(screen, (30,30,35), track, border_radius=2)
+        # scroll_px is <= 0. Convert to ratio 0..1
+        denom = max(1, content_h - area.h)
+        ratio = min(1.0, max(0.0, -scroll_px / denom))
+        thumb_h = max(18, int(area.h * area.h / content_h))
+        thumb_y = area.y + int((area.h - thumb_h) * ratio)
+        thumb = pygame.Rect(track.x, thumb_y, track.w, thumb_h)
+        pygame.draw.rect(screen, (120,120,130), thumb, border_radius=2)
+
     def _draw_countries(self, screen: pygame.Surface):
         rect = self.rect_countries
         if not rect: return
@@ -326,11 +342,13 @@ class TeamSelectState:
             txt = self.font.render(nm, True, (230,230,235))
             screen.blit(txt, (r.x + 10, r.y + (r.h - txt.get_height()) // 2))
         screen.set_clip(prev)
+        # scrollbar for team list
+        content_h = len(self._teams()) * row_h
+        self._draw_scrollbar(screen, inner, content_h, self.scroll_teams)
 
     def _draw_roster(self, screen: pygame.Surface):
         rect = self.rect_roster
         if not rect: return
-        # removed header: Players
         list_area = rect.inflate(-16, -54); list_area.y = rect.y + 36
         row_h = 28
         team = self._selected_team(); fighters = team.get("fighters", []) if team else []
@@ -347,6 +365,9 @@ class TeamSelectState:
             txt = self.font.render(nm, True, (230,230,235))
             screen.blit(txt, (rr.x + 10, rr.y + (rr.h - txt.get_height()) // 2))
         screen.set_clip(prev)
+        # scrollbar for roster list
+        content_h = len(fighters) * row_h
+        self._draw_scrollbar(screen, list_area, content_h, self.scroll_players)
 
     def _draw_player_stats(self, screen: pygame.Surface):
         rect = self.rect_stats
@@ -359,16 +380,20 @@ class TeamSelectState:
 
         def G(key, default=None): return p.get(key, p.get(key.upper(), default))
 
+        ovr = int(G("ovr", G("OVR", 60)))
+        lvl_src = G("level", G("lvl", None))
+        level = int(lvl_src) if lvl_src is not None else max(1, ovr // 10)
+
         name = G("name","Unknown"); num = int(G("num",0))
         race = G("race","-"); origin = G("origin", self._country().get("name","-"))
-        ovr = int(G("ovr", G("OVR", 60))); pot = int(G("potential",70))
+        pot = int(G("potential",70))
         cls = G("class","Fighter"); hp = int(G("hp",10)); max_hp = int(G("max_hp", hp)); ac = int(G("ac",12))
         STR = int(G("str",G("STR",10))); DEX = int(G("dex",G("DEX",10))); CON = int(G("con",G("CON",10)))
         INT = int(G("int",G("INT",10))); WIS = int(G("wis",G("WIS",10))); CHA = int(G("cha",G("CHA",10)))
 
         wpn = G("weapon",{})
         weapon_name = (wpn.get("name") if isinstance(wpn,dict) else (wpn if isinstance(wpn,str) else "-"))
-        equipped_armor = (
+        armor_val = (
             G("equipped_armor", None)
             or (G("armor",{}).get("name") if isinstance(G("armor",None),dict) else (G("armor") if isinstance(G("armor",None),str) else None))
             or G("armor_name", None) or "-"
@@ -386,26 +411,27 @@ class TeamSelectState:
             surf = self.font.render(text, True, (220,220,225))
             screen.blit(surf, (x0, y)); y += line_h
 
-        # Removed "Player" header and labels for name/race/origin
-        line(f"{name}    #{num:02d}")
-        line(f"{race}    {origin}    OVR: {ovr}    Potential: {pot}")
-        line(f"Class: {cls}    HP: {hp}/{max_hp}    AC: {ac}")
+        # Top lines (labels removed; font unified)
+        line(f"{name}    #{num:02d}    LVL: {level}")
+        line(f"{race}    {origin}    OVR: {ovr}    POT: {pot}")
+        line(f"{cls}    HP: {hp}/{max_hp}    AC: {ac}")
 
+        # Attributes grid (labels & values use the same font)
         y += 4
         labels = ("STR","DEX","CON","INT","WIS","CHA"); vals = (STR,DEX,CON,INT,WIS,CHA)
         col_w = (rect.w - 24) // 6; top_y = y
         for i, lab in enumerate(labels):
             lx = x0 + i*col_w + col_w//2
-            surf = self.small.render(lab, True, (210,210,215))
+            surf = self.font.render(lab, True, (210,210,215))
             screen.blit(surf, (lx - surf.get_width()//2, top_y))
-        y = top_y + self.small.get_height() + 4
+        y = top_y + self.font.get_height() + 4
         for i, v in enumerate(vals):
             lx = x0 + i*col_w + col_w//2
-            surf = self.h2.render(str(v), True, (235,235,240))
+            surf = self.font.render(str(v), True, (235,235,240))
             screen.blit(surf, (lx - surf.get_width()//2, y))
-        y += self.h2.get_height() + 10
+        y += self.font.get_height() + 10
 
-        line(f"Equipped Armor: {equipped_armor}    Weapon: {weapon_name}")
+        line(f"Armor: {armor_val}    Weapon: {weapon_name}")
 
         self.stats_content_h = max(0, (y - (rect.y + 12)))
         screen.set_clip(prev)
