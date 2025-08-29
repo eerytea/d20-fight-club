@@ -69,10 +69,8 @@ def _fallback_name(r: random.Random) -> str:
     return f"{r.choice(first)} {r.choice(last)}"
 
 def _pick_class_from_abilities(abilities: Dict[str,int], r: random.Random) -> str:
-    # Choose a class group based on top ability; random within group for variety.
     items = sorted(abilities.items(), key=lambda kv: kv[1], reverse=True)
-    top = items[0][0] if items else "STR"
-    top = top.upper()
+    top = (items[0][0] if items else "STR").upper()
     if top == "STR":
         return r.choice(["fighter","barbarian","paladin"])
     if top == "DEX":
@@ -83,26 +81,20 @@ def _pick_class_from_abilities(abilities: Dict[str,int], r: random.Random) -> st
         return r.choice(["cleric","druid","ranger"])
     if top == "CHA":
         return r.choice(["bard","sorcerer","paladin","warlock"])
-    # CON or fallback:
     return r.choice(_ALL_CLASSES)
 
 def _fallback_fighter(team_tid: int, idx: int, country: str, r: random.Random) -> Dict[str,Any]:
-    # Abilities from standard array
     vals = _STD_ARRAY[:]; r.shuffle(vals)
     keys = _ABILITY_KEYS[:]; r.shuffle(keys)
     abilities = dict(zip(keys, vals))
-    # Race variety
     race = r.choice(_FALLBACK_RACES)
-    # Class from abilities (instead of always 'fighter')
     klass = _pick_class_from_abilities(abilities, r)
-    # AC = 10 + floor((DEX-10)/2) + armor_bonus
     dex = abilities.get("DEX", 10)
     ac = 10 + (dex - 10)//2 + 0
     hp = 10 + (abilities.get("CON",10)-10)//2
-    # Age 18-38
     age = r.randint(18, 38)
     return {
-        "pid": idx,                  # internal id
+        "pid": idx,
         "age": age,
         "name": _fallback_name(r),
         "race": race,
@@ -112,7 +104,6 @@ def _fallback_fighter(team_tid: int, idx: int, country: str, r: random.Random) -
         "hp": hp, "max_hp": hp, "ac": ac, "alive": True,
         "armor_bonus": 0,
         **abilities,
-        # lowercase mirrors
         "str": abilities.get("STR",10), "dex": abilities.get("DEX",10), "con": abilities.get("CON",10),
         "int": abilities.get("INT",10), "wis": abilities.get("WIS",10), "cha": abilities.get("CHA",10),
         "OVR": 60 + r.randint(-5, 10),
@@ -182,22 +173,19 @@ class TeamSelectState:
         return {"name": name, "teams": teams}
 
     def _mk_fighter(self, team_tid: int, idx: int, country: str, rng: random.Random) -> Dict[str, Any]:
-        # Try generator (old signature)
         if generate_fighter is not None:
             try:
                 f = generate_fighter(level=1, rng=rng, town=country, neg_trait_prob=0.15)  # old API
                 f["team_id"] = team_tid; f["pid"] = idx
                 f["max_hp"] = f.get("max_hp", f.get("hp", 10)); f["alive"] = True
                 f.setdefault("origin", country)
-                f.pop("num", None)  # drop jersey number if provided
+                f.pop("num", None)
                 if "age" not in f:
                     f["age"] = rng.randint(18, 38)
-                # ensure class exists
                 f.setdefault("class", _pick_class_from_abilities(
                     {k: f.get(k, f.get(k.lower(), 10)) for k in _ABILITY_KEYS}, rng))
                 return f
             except TypeError:
-                # Try newer API
                 try:
                     f = generate_fighter(team={"tid": team_tid}, seed=rng.randint(0, 10_000_000))  # new API
                     f["team_id"] = team_tid; f["pid"] = idx
@@ -213,7 +201,6 @@ class TeamSelectState:
                     traceback.print_exc()
             except Exception:
                 traceback.print_exc()
-        # Fallback
         return _fallback_fighter(team_tid, idx, country, rng)
 
     # ---- life-cycle ----
@@ -228,16 +215,13 @@ class TeamSelectState:
         self.rect_league    = pygame.Rect(self.rect_countries.right + pad, 70, mid_w, h - 70 - pad)
         self.rect_detail    = pygame.Rect(self.rect_league.right + pad, 70, right_w, h - 70 - pad)
 
-        # right column split
         self.rect_roster = pygame.Rect(self.rect_detail.x, self.rect_detail.y, self.rect_detail.w, int(self.rect_detail.h * 0.55))
         self.rect_stats  = pygame.Rect(self.rect_detail.x, self.rect_roster.bottom + pad, self.rect_detail.w, self.rect_detail.bottom - (self.rect_roster.bottom + pad))
 
-        # toggles top/bottom
         tb_w, tb_h = 120, 32
         self.toggle_top    = Button(pygame.Rect(self.rect_league.x, self.rect_league.y - tb_h - 6, tb_w, tb_h), "Top League", self._set_level_top)
         self.toggle_bottom = Button(pygame.Rect(self.rect_league.x + tb_w + 8, self.rect_league.y - tb_h - 6, tb_w, tb_h), "Bottom League", self._set_level_bottom)
 
-        # top-right buttons: Start (far right) and Regenerate (left of it)
         btn_w, btn_h, gap = 140, 40, 10
         start_x = w - btn_w - 16
         regen_x = start_x - btn_w - gap
@@ -256,11 +240,9 @@ class TeamSelectState:
     def _teams(self) -> List[Dict[str, Any]]: return self._league()["teams"]
 
     def _team_row_h(self) -> int:
-        """Height of a team tile in the mid column (two text lines)."""
         return 48
 
     def _team_avgs(self, t: Dict[str, Any]) -> Tuple[int, int]:
-        """Average OVR and POT for a team; robust to key variants."""
         fighters = t.get("fighters", []) or []
         if not fighters: return (0, 0)
         s_ovr, s_pot, n = 0, 0, 0
@@ -291,7 +273,6 @@ class TeamSelectState:
         i = max(0, min(self.player_idx or 0, len(plist)-1))
         return plist[i]
 
-    # --- display helpers ---
     def _display_name(self, p: dict) -> str:
         n = p.get("name") or p.get("Name") or p.get("full_name") or p.get("fullName")
         if n: return str(n)
@@ -333,21 +314,18 @@ class TeamSelectState:
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
-            # country selection
             if self.rect_countries and self.rect_countries.collidepoint(mx, my):
                 inner = self.rect_countries.inflate(-16, -58); inner.y = self.rect_countries.y + 48
                 row_h = 36
                 idx = (my - inner.y) // row_h
                 if 0 <= idx < len(self._countries()):
                     self._select_country(int(idx))
-            # team selection
             if self.rect_league and self.rect_league.collidepoint(mx, my):
                 inner = self.rect_league.inflate(-16, -74); inner.y = self.rect_league.y + 60
                 row_h = self._team_row_h()
                 idx = (my - inner.y - self.scroll_teams) // row_h
                 if 0 <= idx < len(self._teams()):
                     self._select_team(int(idx))
-            # player selection
             if self.rect_roster and self.rect_roster.collidepoint(mx, my):
                 list_area = self.rect_roster.inflate(-16, -54); list_area.y = self.rect_roster.y + 36
                 row_h = 28
@@ -376,7 +354,6 @@ class TeamSelectState:
 
         self._draw_player_stats(screen)
 
-        # buttons (update Start enabled state)
         if self.btn_start:
             self.btn_start.disabled = (self.team_idx is None)
         for b in self.btns:
@@ -432,12 +409,10 @@ class TeamSelectState:
             pygame.draw.rect(screen, bg, r, border_radius=8)
             pygame.draw.rect(screen, (24, 24, 28), r, 2, border_radius=8)
 
-            # First line: team name
             nm = t.get("name", f"Team {i}")
             name_surf = self.font.render(nm, True, (230,230,235))
             screen.blit(name_surf, (r.x + 10, r.y + 6))
 
-            # Second line: averages
             avg_ovr, avg_pot = self._team_avgs(t)
             sub_txt = f"AVG OVR: {avg_ovr}   •   AVG POT: {avg_pot}"
             sub_surf = self.h2.render(sub_txt, True, (205,205,210))
@@ -509,14 +484,13 @@ class TeamSelectState:
             surf = self.font.render(text, True, (220,220,225))
             screen.blit(surf, (x0, y)); y += line_h
 
-        # Compact top lines (AGE replaces jersey number)
         line(f"{name}    AGE: {age}    LVL: {level}")
         line(f"{race}    {origin}    OVR: {ovr}    POT: {pot}")
         line(f"{cls_disp}    HP: {hp}/{max_hp}    AC: {ac}")
 
-        # Attributes grid
         y += 4
-        labels = ("STR","DEX","CON","INT","WIS","CHA"); vals = (STR,DEX,CON,INT,WIS,CHA)
+        labels = ("STR","DEX","CON","INT","WIS","CHA")
+        vals = (STR,DEX,CON,INT,WIS,CHA)
         col_w = (rect.w - 24) // 6; top_y = y
         for i, lab in enumerate(labels):
             lx = x0 + i*col_w + col_w//2
@@ -583,21 +557,17 @@ class TeamSelectState:
             remapped.append({"tid": i, "name": t["name"], "color": t.get("color",(120,120,120)), "fighters": fighters})
 
         user_tid = int(self.team_idx if self.team_idx is not None else 0)
+        team_size = len(remapped[0]["fighters"]) if remapped else 12
+        team_names = [t["name"] for t in remapped]
 
         if Career is not None:
-            # Call Career.new without unsupported kwargs (e.g., 'names')
+            # Expected positional order: (seed, n_teams, team_size, fighters, team_names, user_tid)
             try:
-                car = Career.new(seed=self.seed,
-                                 n_teams=len(remapped),
-                                 team_size=(len(remapped[0]["fighters"]) if remapped else 12),
-                                 fighters=remapped,
-                                 user_tid=user_tid)
+                car = Career.new(self.seed, len(remapped), team_size, remapped, team_names, user_tid)
             except TypeError:
-                # Fallback: try positional common order
+                # Fallback: try the variant with (seed, n_teams, team_size, team_names, fighters, user_tid)
                 try:
-                    car = Career.new(self.seed, len(remapped),
-                                     len(remapped[0]["fighters"]) if remapped else 12,
-                                     remapped, user_tid)
+                    car = Career.new(self.seed, len(remapped), team_size, team_names, remapped, user_tid)
                 except Exception:
                     traceback.print_exc()
                     return
@@ -639,6 +609,5 @@ def _import_opt(fullname: str):
     except Exception:
         return None
 
-# Back-compat exports
 TeamSelect = TeamSelectState
 __all__ = ["TeamSelectState", "TeamSelect"]
