@@ -2,120 +2,138 @@
 from __future__ import annotations
 import random
 from typing import Dict, Any, List
-from core.constants import RACES, DEFAULT_RACE_WEIGHTS, DEV_TRAITS
-from core.ratings import compute_ovr, simulate_to_level, CLASS_FIT_WEIGHTS, calc_ac
+from core.constants import RACES, DEFAULT_RACE_WEIGHTS, DEV_TRAITS, RACE_TRAITS, RACE_SPEED
+from core.ratings import compute_ovr, simulate_to_level, CLASS_FIT_WEIGHTS
+from core.ac import calc_ac
 
 _rng = random.Random()
 
-# -------------------- helpers --------------------
 STD_ARRAY = [15, 14, 13, 12, 10, 8]
 ABIL_KEYS: List[str] = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
 
 def _weighted_choice(weights: Dict[str, float]) -> str:
     items = list(weights.items())
     total = sum(w for _, w in items) or 1.0
-    r = _rng.random() * total
+    pick = _rng.random() * total
     acc = 0.0
-    for k, w in items:
+    for key, w in items:
         acc += w
-        if r <= acc:
-            return k
+        if pick <= acc:
+            return key
     return items[-1][0]
 
-def _assign_dev_trait() -> str:
-    # 25% each
-    return _rng.choice(["bad", "normal", "star", "superstar"])
+def _apply_race_bonuses(abilities: Dict[str,int], race_code: str) -> Dict[str,int]:
+    d = dict(abilities)
+    mods = RACE_TRAITS.get(race_code, {})
+    for k, v in mods.items():
+        if k in d:
+            d[k] = int(d[k]) + int(v)
+    return d
 
-def _choose_race(team: Dict[str, Any] | None) -> str:
-    weights = (team or {}).get("race_weights") or DEFAULT_RACE_WEIGHTS
-    # ensure all races exist with a number
-    w = {r: float(weights.get(r, 1.0)) for r in RACES}
-    return _weighted_choice(w)
-
-def _choose_class_by_fit(abilities: Dict[str, int]) -> str:
+def _choose_class_by_fit(abilities: Dict[str,int]) -> str:
+    lowers = {k.lower(): int(v) for k, v in abilities.items()}
     best_cls, best_score = None, -1.0
-    for cls, w in CLASS_FIT_WEIGHTS.items():
+    for cls, weights in CLASS_FIT_WEIGHTS.items():
         num = 0.0; den = 0.0
-        for a, wt in w.items():
-            val = abilities.get(a.upper(), abilities.get(a, 10))
-            num += wt * max(0.0, (int(val) - 3) / 17.0)
-            den += abs(wt)
+        for a, w in weights.items():
+            den += abs(w)
+            num += lowers.get(a, 10) * w
         score = (num / den) if den else 0.0
         if score > best_score:
             best_cls, best_score = cls, score
-    return best_cls or "fighter"
+    return (best_cls or "fighter").capitalize()
 
 def _roll_standard_array(rng: random.Random) -> Dict[str, int]:
-    """Assign the standard array randomly to the six ability keys."""
-    vals = STD_ARRAY[:]   # copy
+    vals = STD_ARRAY[:]
     rng.shuffle(vals)
-    # random assignment to keys (also shuffled to be fully random)
     keys = ABIL_KEYS[:]
     rng.shuffle(keys)
     return {k: v for k, v in zip(keys, vals)}
 
-# ultra-light fantasy name generator (guarantees a 'name' string)
-_FIRST = ["Kael", "Ryn", "Mira", "Thorn", "Lysa", "Doran", "Nyra", "Kellan", "Sera", "Jorin",
-          "Talia", "Bren", "Arin", "Sel", "Vara", "Garrin", "Orin", "Kira", "Fen", "Zara"]
-_LAST  = ["Stone", "Vale", "Rook", "Ash", "Hollow", "Black", "Bright", "Gale", "Wolfe", "Mire",
-          "Thorne", "Ridge", "Hawk", "Frost", "Dusk", "Iron", "Raven", "Drake", "Storm", "Oath"]
+_FIRST = ["Kael","Ryn","Mira","Thorn","Lysa","Doran","Nyra","Kellan","Sera","Jorin",
+          "Talia","Bren","Arin","Sel","Vara","Garrin","Orin","Kira","Fen","Zara"]
+_LAST  = ["Stone","Vale","Rook","Ash","Hollow","Black","Bright","Gale","Wolfe","Mire",
+          "Thorne","Ridge","Hawk","Frost","Dusk","Iron","Raven","Drake","Storm","Oath"]
 
 def _generate_name(rng: random.Random, race: str) -> str:
-    # Slight variation by race (purely cosmetic): pick another pool index offset
     i = rng.randrange(0, len(_FIRST))
     j = (i + rng.randrange(0, len(_LAST))) % len(_LAST)
     return f"{_FIRST[i]} {_LAST[j]}"
 
-# -------------------- main factory --------------------
+def _choose_race(team: Dict[str,Any] | None, rng: random.Random) -> str:
+    weights = (team or {}).get("race_weights") or DEFAULT_RACE_WEIGHTS
+    for r in RACES:
+        weights.setdefault(r, 1.0)
+    return _weighted_choice(weights)
+
+def _assign_dev_trait(rng: random.Random) -> str:
+    pools = [("bad", 0.12), ("normal", 0.58), ("star", 0.22), ("superstar", 0.08)]
+    total = sum(w for _, w in pools)
+    x = rng.random() * total
+    acc = 0.0
+    for name, w in pools:
+        acc += w
+        if x <= acc:
+            return name
+    return "normal"
+
 def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None) -> Dict[str, Any]:
     """
-    Create a level-1 fighter dict with:
-      - abilities from a RANDOM STANDARD ARRAY (15,14,13,12,10,8) randomly assigned to STR/DEX/CON/INT/WIS/CHA
-      - class chosen by fit over abilities
-      - race chosen from equal weights (or team['race_weights'] if provided)
-      - dev_trait (bad/normal/star/superstar) controlling XP rate only
-      - potential set to OVR at level 20 (simulated immediately)
+    Generates a L1 fighter with race/class/abilities, now including:
+      - Race-specific speed (RACE_SPEED)
+      - Special AC rules (handled by calc_ac)
+      - Goblin: outgoing damage bonus = level (dmg_bonus_per_level=1)
     """
-    rng = random.Random(seed) if seed is not None else _rng
+    rng = _rng if seed is None else random.Random(seed)
 
-    # 1) Abilities from random standard array
+    # 1) Identity + abilities
+    race = _choose_race(team, rng)
     base = _roll_standard_array(rng)
+    base = _apply_race_bonuses(base, race)
 
-    # 2) Choose class by fit and race by weights
+    # 2) Class fit
     cls = _choose_class_by_fit(base)
-    race = _choose_race(team)
-    dev_trait = _assign_dev_trait()
+    dev_trait = _assign_dev_trait(rng)
 
-    # 3) Core vitals at level 1
+    # 3) Vitals
     lvl = 1
-    armor_bonus = 0  # placeholder for future gear system
-    # Simple HP seed (class HD applied on future level_ups)
+    armor_bonus = 0
     hp = 10 + (base["CON"] - 10) // 2
 
-    # 4) Build fighter object
+    # 4) Build fighter
     f: Dict[str, Any] = {
-        "name": _generate_name(rng, race),   # ensure a displayable name
+        "name": _generate_name(rng, race),
         "num": rng.randint(1, 99),
         "race": race,
         "class": cls,
         "level": lvl,
         "hp": hp,
         "max_hp": hp,
+        "ac": 10,  # recomputed below
         "armor_bonus": armor_bonus,
         **base,
+        "str": base.get("STR",10), "dex": base.get("DEX",10), "con": base.get("CON",10),
+        "int": base.get("INT",10), "wis": base.get("WIS",10), "cha": base.get("CHA",10),
         "team_id": (team or {}).get("tid"),
-        "dev_trait": dev_trait,         # invisible tag
+        "origin": (team or {}).get("country"),
+        "age": rng.randint(18, 38),
+        "dev_trait": dev_trait,
         "xp": 0,
         "xp_rate": DEV_TRAITS[dev_trait],
+        "alive": True,
+        # NEW: race speed
+        "speed": int(RACE_SPEED.get(race, 4)),
     }
 
-    # 5) AC using unified formula (includes armor_bonus placeholder)
+    # NEW: Goblin bonus damage per level (applies to any damage they deal)
+    if race == "goblin":
+        f["dmg_bonus_per_level"] = 1  # engine multiplies by current level
+
+    # 5) AC via helper (handles Lizardkin & Golem rules)
     f["ac"] = calc_ac(f)
 
-    # 6) Initial OVR at level 1
+    # 6) Ratings now and at 20
     f["OVR"] = compute_ovr(f)
-
-    # 7) Potential: simulate to level 20 and record that OVR
     f20 = simulate_to_level(f, 20)
     f["potential"] = int(f20.get("OVR", f["OVR"]))
 
