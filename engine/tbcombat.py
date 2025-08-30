@@ -8,7 +8,6 @@ from engine.conditions import (
     CONDITION_PRONE, CONDITION_RESTRAINED, CONDITION_STUNNED,
     ensure_bag, has_condition, add_condition, clear_condition, decrement_all_for_turn
 )
-from engine.spells import line_aoe_cells
 
 def _prof_for_level(level: int) -> int:
     L = max(1, int(level))
@@ -73,12 +72,11 @@ def _dist_xy(ax: int, ay: int, bx: int, by: int) -> int:
 # ---------- engine ----------
 class TBCombat:
     """
-    Adds equipment handedness:
-      - equipped.main_hand_id / off_hand_id / armor_id / shield_id (shield stacks to AC; off-hand weapon enables an extra swing).
-      - Versatile weapons (Longsword, Warhammer, Unarmed) auto-upgrade dice when two-handed (off-hand empty, no shield).
-      - Dual-wield: off-hand swing gets NO proficiency to-hit or damage.
-      - OA uses main hand only; 'reach' uses the best of main/off.
-    Keeps all previous features (ranged rules, Barbarian, Bard, proficiency to-hit+damage, etc.).
+    Adds:
+      - Equipment handedness (kept): main/off/armor/shield, versatile, dual-wield off-hand swing (off-hand still no prof to-hit nor damage).
+      - Wild Shape: if a Druid equips 'Wild Shape' in main hand and a 'Form' (wild_form) in off-hand,
+        they start the battle *already shaped*; stats can be replaced by the form (when provided).
+      - Global: proficiency bonus is **not added to damage** (melee, ranged, spell, save). To-hit & Save DC still use prof.
     """
 
     def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], cols: int, rows: int, *, seed: Optional[int] = None):
@@ -105,7 +103,6 @@ class TBCombat:
             if not hasattr(f, "reactions_left"): setattr(f, "reactions_left", 1)
             setattr(f, "inspiration_tokens", int(getattr(f, "inspiration_tokens", 0)))
             setattr(f, "inspiration_used", int(getattr(f, "inspiration_used", 0)))
-            # legacy compatibility: ensure equipped container exists
             if not hasattr(f, "equipped"): setattr(f, "equipped", {})
 
         # Initiative (Barbarian L7+ advantage)
@@ -118,6 +115,10 @@ class TBCombat:
         rolls.sort(reverse=True)
         self._initiative = [i for _, i in rolls]
         self.turn_idx = 0
+
+        # Apply Wild Shape for anyone who starts shaped
+        for f in self.fighters:
+            self._maybe_start_wildshape(f)
 
         self._push({"type": "round_start", "round": self.round})
 
@@ -149,29 +150,29 @@ class TBCombat:
         eq = getattr(f, "equipped", {})
         oid = eq.get("off_hand_id")
         if oid is None: return None
-        # It could be a shield or a weapon
         s = self._inv_lookup(f, "shields", oid)
         if s: return s
-        return self._inv_lookup(f, "weapons", oid)
+        # maybe a weapon
+        w = self._inv_lookup(f, "weapons", oid)
+        if w: return w
+        # or a wild shape form
+        form = self._inv_lookup(f, "forms", oid)
+        if form: return form
+        return None
 
     def _two_handing(self, f) -> bool:
-        """True when no shield and no off-hand weapon."""
         off = self._equipped_off(f)
-        if off is None: return True
-        # If off-hand is a shield or a weapon, not two-handing
-        return False
+        return (off is None)  # if anything is in off-hand (shield/weapon/form), not two-handing
 
     def _weapon_profile_from_item(self, f, w: Optional[Dict[str, Any]]) -> Tuple[int, int, str, int]:
-        """Translate an explicit weapon item to (num, sides, ability, reach), handling Unarmed & Versatile."""
         if w is None:
-            # fallback to unarmed: race may have 'unarmed_dice'; otherwise 1d1 finesse
+            # default unarmed (race may override)
             ud = getattr(f, "unarmed_dice", None)
             if isinstance(ud, str):
                 num, sides = _parse_dice(ud)
                 return (num, sides, "STR", 1)
             return (1, 1, "FINESSE", 1)
 
-        # Unarmed weapon entry
         if w.get("unarmed"):
             ud = getattr(f, "unarmed_dice", None)
             if isinstance(ud, str):
@@ -179,18 +180,18 @@ class TBCombat:
                 return (num, sides, "STR", 1)
             return (1, 1, "FINESSE", 1)
 
+        # Wild Shape weapon "item" never deals damage itself (form provides stats)
+        if w.get("wildshape"):
+            return (0, 1, "STR", 1)
+
         num, sides = _parse_dice(w.get("dice", "1d4"))
-        # Versatile two-handed upgrade if applicable
         if bool(w.get("versatile", False)) and self._two_handing(f) and w.get("two_handed_dice"):
             num, sides = _parse_dice(w["two_handed_dice"])
-        ability = str(w.get("ability", "STR")).upper()
-        if bool(w.get("finesse", False)):
-            ability = "FINESSE"
+        ability = "FINESSE" if bool(w.get("finesse", False)) else str(w.get("ability", "STR")).upper()
         reach = int(w.get("reach", 1))
         return (num, sides, ability, max(1, reach))
 
     def reach(self, a) -> int:
-        # Threaten with the best of main/off weapon reaches
         main = self._equipped_main(a)
         off = self._equipped_off(a)
         r1 = self._weapon_profile_from_item(a, main)[3]
@@ -211,6 +212,64 @@ class TBCombat:
                 return True
         return False
 
+    # ---------- wild shape ----------
+    def _maybe_start_wildshape(self, f) -> None:
+        """If main-hand is 'Wild Shape' and off-hand is a 'wild_form', transform now."""
+        main = self._equipped_main(f)
+        off = self._equipped_off(f)
+        if not isinstance(main, dict) or not main.get("wildshape", False):
+            return
+        if not (isinstance(off, dict) and off.get("type") == "wild_form"):
+            # nothing selected yet; leave as-is
+            self._push({"type": "wildshape", "actor": _name(f), "started": False, "reason": "no_form_selected"})
+            return
+
+        # Level gate by CR
+        allowed = list(getattr(f, "wildshape_allowed_cr", []))
+        if allowed and float(off.get("cr", 100.0)) not in allowed and float(off.get("cr", 100.0)) > max(allowed):
+            self._push({"type": "wildshape", "actor": _name(f), "started": False, "reason": "cr_not_allowed"})
+            return
+
+        stats = dict(off.get("stats", {}))
+        # Backup humanoid block
+        f._humanoid_backup = {
+            "hp": int(getattr(f, "hp", 1)),
+            "max_hp": int(getattr(f, "max_hp", 1)),
+            "ac": int(getattr(f, "ac", 10)),
+            "speed": int(getattr(f, "speed", 4)),
+            "STR": int(getattr(f, "STR", 10)), "DEX": int(getattr(f, "DEX", 10)), "CON": int(getattr(f, "CON", 10)),
+            "INT": int(getattr(f, "INT", 10)), "WIS": int(getattr(f, "WIS", 10)), "CHA": int(getattr(f, "CHA", 10)),
+            "armor_bonus": int(getattr(f, "armor_bonus", 0)),
+            "shield_bonus": int(getattr(f, "shield_bonus", 0)),
+            "weapon": getattr(f, "weapon", None),
+            "equipped": getattr(f, "equipped", {}).copy(),
+        }
+
+        # Apply form (minimal fields only if present)
+        if "hp" in stats: setattr(f, "hp", int(stats["hp"]))
+        if "max_hp" in stats: setattr(f, "max_hp", int(stats["max_hp"]))
+        if "ac" in stats: setattr(f, "ac", int(stats["ac"]))
+        if "speed" in stats: setattr(f, "speed", int(stats["speed"]))
+        for key in ("STR","DEX","CON","INT","WIS","CHA"):
+            if key in stats:
+                setattr(f, key, int(stats[key]))
+                setattr(f, key.lower(), int(stats[key]))
+
+        # Replace natural weapon if provided
+        nat = stats.get("natural_weapon") or {}
+        if nat:
+            f.weapon = {"type":"weapon","name": nat.get("name","Natural Attack"),
+                        "dice": nat.get("dice","1d6"), "reach": int(nat.get("reach",1)),
+                        "finesse": bool(nat.get("finesse", False)), "ability": nat.get("ability","STR")}
+        # Ignore gear while shaped
+        setattr(f, "armor_bonus", 0)
+        setattr(f, "shield_bonus", 0)
+
+        setattr(f, "wildshape_active", True)
+        setattr(f, "wildshape_form_name", off.get("name", "Form"))
+        self._push({"type": "wildshape", "actor": _name(f), "started": True, "form": off.get("name")})
+
+    # ---------- movement ----------
     def path_step_towards(self, a, to_xy: Tuple[int, int]) -> Tuple[int, int]:
         ax, ay = getattr(a, "tx", 0), getattr(a, "ty", 0)
         tx, ty = map(int, to_xy)
@@ -226,14 +285,12 @@ class TBCombat:
                                *, advantage: int = 0, ranged: bool = False,
                                offhand: bool = False) -> Tuple[bool, bool, Any, int, int, int]:
         ctx = advantage
-        # Inspiration token for attacker
         consume_token = False
         try:
             if int(getattr(attacker, "inspiration_tokens", 0)) > 0:
                 ctx += 1; consume_token = True
         except Exception:
             pass
-        # Defender effects
         if getattr(defender, "_status_dodging", False): ctx -= 1
         if has_condition(defender, CONDITION_RESTRAINED): ctx += 1
         if has_condition(defender, CONDITION_PRONE):
@@ -257,7 +314,7 @@ class TBCombat:
         hit = (eff + mod + prof >= ac) or (eff == 20)
         return (hit, eff == 20, raw, eff, mod, prof)
 
-    # Ranged profile unchanged (most of our starting kit is melee)
+    # Ranged profile for main-hand only
     def _ranged_profile(self, f) -> Optional[Tuple[int, int, str, int, Tuple[int, int]]]:
         w = self._equipped_main(f)
         if isinstance(w, dict) and bool(w.get("ranged", False)):
@@ -269,13 +326,11 @@ class TBCombat:
 
     # ---------- main turn loop ----------
     def take_turn(self):
-        if self.winner is not None:
-            return
+        if self.winner is not None: return
 
         if self.turn_idx == 0 and (len(self.events) == 0 or self.events[-1].get("type") != "round_start"):
             self.round += 1
-            for f in self.fighters:
-                setattr(f, "reactions_left", 1)
+            for f in self.fighters: setattr(f, "reactions_left", 1)
             self._push({"type": "round_start", "round": self.round})
 
         act_i = self._initiative[self.turn_idx % len(self._initiative)]
@@ -321,17 +376,6 @@ class TBCombat:
                 setattr(actor, "rage_active", True); setattr(actor, "resist_all", True)
                 setattr(actor, "rage_bonus_per_level", 1)
                 self._push({"type": "status", "actor": _name(actor), "status": "rage_on"})
-            elif t == "inspire":
-                target = intent.get("target")
-                if target is not None and _alive(target):
-                    uses = int(getattr(actor, "inspiration_used", 0))
-                    per_battle = int(getattr(actor, "bard_inspiration_uses_per_battle", 0))
-                    if uses < per_battle:
-                        setattr(target, "inspiration_tokens", int(getattr(target, "inspiration_tokens", 0)) + 1)
-                        setattr(actor, "inspiration_used", uses + 1)
-                        self._push({"type": "inspire", "actor": _name(actor), "target": _name(target)})
-                    else:
-                        self._push({"type": "inspire", "actor": _name(actor), "target": _name(target), "failed": True, "reason": "no_uses"})
             elif t == "move":
                 to = tuple(intent.get("to", (getattr(actor, "tx", 0), getattr(actor, "ty", 0))))
                 steps_left = self._do_move(actor, to, steps_left)
@@ -344,7 +388,7 @@ class TBCombat:
                 for _ in range(swings):
                     if not (_alive(actor) and _alive(target)): break
                     self._do_melee_attack(actor, target, opportunity=False, offhand=False)
-                # Off-hand extra swing if a weapon (not shield) is equipped in off-hand
+                # Off-hand weapon extra swing (not shield/form)
                 off = self._equipped_off(actor)
                 if off and off.get("type") == "weapon":
                     if _alive(actor) and _alive(target):
@@ -357,6 +401,10 @@ class TBCombat:
                 self._do_heal(actor, tgt, dice, ability)
 
             elif t == "spell_attack":
+                # If shaped and not allowed (L<18), block
+                if bool(getattr(actor, "wildshape_active", False)) and not bool(getattr(actor, "wildshape_cast_while_shaped", False)):
+                    self._push({"type":"spell_blocked","reason":"wildshape"})
+                    continue
                 tgt = intent.get("target")
                 if tgt is None: continue
                 dice = str(intent.get("dice", "1d8"))
@@ -366,6 +414,9 @@ class TBCombat:
                 self._cast_spell_attack(actor, tgt, dice=dice, ability=ability, normal_range=nr, long_range=lr, damage_type=dtype)
 
             elif t == "spell_save":
+                if bool(getattr(actor, "wildshape_active", False)) and not bool(getattr(actor, "wildshape_cast_while_shaped", False)):
+                    self._push({"type":"spell_blocked","reason":"wildshape"})
+                    continue
                 tgt = intent.get("target")
                 if tgt is None: continue
                 save = str(intent.get("save", "DEX")).upper()
@@ -381,12 +432,11 @@ class TBCombat:
                 self._cast_spell_save(actor, tgt, save=save, dc=int(dc), dice=dice, ability=ability,
                                       half_on_success=half, tags=tags, damage_type=dtype, apply_condition_on_fail=cond)
 
-            if self.winner is not None:
-                break
+            if self.winner is not None: break
 
         decrement_all_for_turn(actor)
 
-        # Rage auto-end if no damage dealt (L1–14)
+        # Rage auto-end if no damage dealt
         try:
             if bool(getattr(actor, "rage_active", False)) and not bool(getattr(actor, "barb_rage_capstone", False)):
                 if not bool(getattr(actor, "_dealt_damage_this_turn", False)):
@@ -409,8 +459,7 @@ class TBCombat:
 
         self.turn_idx = (self.turn_idx + 1) % len(self._initiative)
         if self.turn_idx == 0 and self.winner is None:
-            for f in self.fighters:
-                setattr(f, "reactions_left", 1)
+            for f in self.fighters: setattr(f, "reactions_left", 1)
             self.round += 1
             self._push({"type": "round_start", "round": self.round})
 
@@ -438,7 +487,7 @@ class TBCombat:
 
         while pool > 0 and (ax, ay) != goal:
             nx, ny = self.path_step_towards(actor, goal)
-            # OA if leaving enemy reach (offhand reach considered)
+            # OA if leaving reach
             if not getattr(actor, "_status_disengage", False):
                 for e in self._enemies_of(actor):
                     if not _alive(e): continue
@@ -446,7 +495,6 @@ class TBCombat:
                     d_before = self.distance_coords(ax, ay, getattr(e, "tx", 0), getattr(e, "ty", 0))
                     d_after = self.distance_coords(nx, ny, getattr(e, "tx", 0), getattr(e, "ty", 0))
                     if d_before <= reach and d_after > reach and int(getattr(e, "reactions_left", 0)) > 0:
-                        # OA uses main hand only
                         self._do_melee_attack(e, actor, opportunity=True, offhand=False)
                         setattr(e, "reactions_left", int(getattr(e, "reactions_left", 0)) - 1)
                         if self.winner is not None: return 0
@@ -481,12 +529,10 @@ class TBCombat:
     def _do_melee_attack(self, attacker, defender, *, opportunity: bool, offhand: bool):
         if not (_alive(attacker) and _alive(defender)): return
 
-        # Choose weapon item: main or off-hand weapon
         item = self._equipped_off(attacker) if offhand else self._equipped_main(attacker)
         if offhand and (item is None or item.get("type") != "weapon"):
-            return  # no offhand weapon swing
+            return
 
-        # Determine ranged? (main-hand only uses ranged profile; offhand assumed melee here)
         ranged = False; long_dis = False
         if not offhand:
             rp = self._ranged_profile(attacker)
@@ -514,11 +560,10 @@ class TBCombat:
                     "offhand": bool(offhand)})
 
         if hit:
-            # Get dice profile from item (respect versatile)
             num, sides, ability, _ = self._weapon_profile_from_item(attacker, item)
             base = _roll_dice(self.rng, num * (2 if crit else 1), sides)
 
-            # Barbarian brutal crit only on main-hand weapon attacks
+            # Barbarian brutal crit bonus dice (main-hand only)
             if (not offhand) and crit and int(getattr(attacker, "barb_crit_extra_dice", 0)) > 0:
                 base += _roll_dice(self.rng, int(getattr(attacker, "barb_crit_extra_dice", 0)) * num, sides)
 
@@ -528,9 +573,7 @@ class TBCombat:
             else:
                 base += _ability_mod(attacker, ("DEX" if ranged else ability))
 
-            # Proficiency to damage (house rule) – suppressed for off-hand
-            if not offhand:
-                base += prof
+            # NOTE: **No proficiency to damage** (by design)
 
             self._apply_damage(attacker, defender, base)
 
@@ -546,14 +589,12 @@ class TBCombat:
     def _cast_spell_attack(self, caster, target, *, dice: str = "1d8", ability: str = "CHA",
                            normal_range: int = 12, long_range: int = 24, damage_type: Optional[str] = None):
         if not (_alive(caster) and _alive(target)): return
-        # Inspiration consumed in _spell_attack_roll (we reuse earlier behavior)
         adv = 0
         consume_token = False
         try:
             if int(getattr(caster, "inspiration_tokens", 0)) > 0:
                 adv += 1; consume_token = True
-        except Exception:
-            pass
+        except Exception: pass
         d = self.distance(caster, target)
         if d > int(long_range): return
         if d > int(normal_range): adv -= 1
@@ -572,7 +613,8 @@ class TBCombat:
                     "critical": bool(crit), "hit": bool(hit)})
         if hit:
             num, sides = _parse_dice(dice)
-            dmg = _roll_dice(self.rng, (2 if crit else 1) * num, sides) + max(0, mod) + prof
+            dmg = _roll_dice(self.rng, (2 if crit else 1) * num, sides) + max(0, mod)
+            # NOTE: **No proficiency to damage**
             self._apply_damage(caster, target, dmg, damage_type=damage_type)
 
     def _cast_spell_save(self, caster, target, *, save: str = "DEX", dc: int = 12, dice: Optional[str] = "1d8",
@@ -580,26 +622,23 @@ class TBCombat:
                          apply_condition_on_fail: Optional[Tuple[str, int]] = None,
                          tags: Optional[List[str]] = None, damage_type: Optional[str] = None):
         if not (_alive(caster) and _alive(target)): return
+        # Saving throw (includes bard aura, inspiration, race perks)
         tags = [t.lower() for t in (tags or [])]
-        # Bard aura, inspiration, race perks handled inside saving_throw()
         res = self.saving_throw(target, save, dc, tags=tags)
         dmg = 0
         if dice:
             num, sides = _parse_dice(dice)
             base = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
-            base += _prof_for_level(getattr(caster, "level", getattr(caster, "lvl", 1)))
+            # NOTE: **No proficiency to damage**
             if res["success"] and half_on_success: dmg = max(0, base // 2)
             elif not res["success"]: dmg = max(0, base)
         if dmg > 0:
             self._apply_damage(caster, target, dmg, damage_type=damage_type)
         if (not res["success"]) and apply_condition_on_fail:
             cname, dur = apply_condition_on_fail
-            if cname.lower() == "sleep" and getattr(target, "sleep_immune", False):
-                self._push({"type": "condition_ignored", "target": _name(target), "condition": cname, "reason": "immune"})
-            else:
-                add_condition(target, cname, int(dur))
-                self._push({"type": "condition_applied", "source": _name(caster), "target": _name(target),
-                            "condition": cname, "duration": int(dur)})
+            add_condition(target, cname, int(dur))
+            self._push({"type": "condition_applied", "source": _name(caster), "target": _name(target),
+                        "condition": cname, "duration": int(dur)})
 
     # ---------- saves & damage ----------
     def saving_throw(self, actor, ability: str, dc: int, *, adv: int = 0, tags: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -614,20 +653,19 @@ class TBCombat:
         if getattr(actor, "adv_vs_paralysis", False) and ("paralysis" in tags): ctx += 1
         if getattr(actor, "adv_vs_magic_mental", False) and ("magic" in tags) and a in ("INT", "WIS", "CHA"): ctx += 1
         if bool(getattr(actor, "rage_active", False)) and a == "STR": ctx += 1
-        # Bard L6 aura: allies within 6 get adv vs charm/fear
+        # Bard aura: allies within 6 get adv vs charm/fear
         if ("charm" in tags) or ("fear" in tags):
             for ally in self._friendlies_of(actor):
                 if not _alive(ally): continue
                 if not bool(getattr(ally, "bard_aura_charm_fear", False)): continue
                 if self.distance(actor, ally) <= 6:
                     ctx += 1; break
-        # Inspiration token
+        # Inspiration
         consume = False
         try:
             if int(getattr(actor, "inspiration_tokens", 0)) > 0:
                 ctx += 1; consume = True
-        except Exception:
-            pass
+        except Exception: pass
 
         raw, eff = _roll_d20(self.rng, max(-1, min(1, ctx)))
         if consume:
