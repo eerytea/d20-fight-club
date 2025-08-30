@@ -5,7 +5,7 @@ from typing import Dict, Any, List
 from core.constants import RACES, DEFAULT_RACE_WEIGHTS, DEV_TRAITS, RACE_TRAITS, RACE_SPEED, RACE_PERKS
 from core.ratings import compute_ovr, simulate_to_level, CLASS_FIT_WEIGHTS
 from core.ac import calc_ac
-from core.classes import ensure_class_features, grant_starting_kit
+from core.classes import ensure_class_features, grant_starting_kit, FIGHTER_STYLE_CLASSES
 
 _rng = random.Random()
 
@@ -69,6 +69,9 @@ def _assign_dev_trait(rng: random.Random) -> str:
         if x <= acc: return name
     return "normal"
 
+def _uniform_fighter_style(rng: random.Random) -> str:
+    return rng.choice(sorted(FIGHTER_STYLE_CLASSES))
+
 def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None) -> Dict[str, Any]:
     rng = _rng if seed is None else random.Random(seed)
 
@@ -77,6 +80,10 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
     base = _apply_race_bonuses(base, race)
 
     cls = _choose_class_by_fit(base)
+    # If base class is Fighter, pick a style name to display as 'class'
+    if cls == "Fighter":
+        cls = _uniform_fighter_style(rng)
+
     dev_trait = _assign_dev_trait(rng)
     armor_prohibited = (race == "lizardkin")
 
@@ -88,7 +95,7 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
         "name": _generate_name(rng, race),
         "num": rng.randint(1, 99),
         "race": race,
-        "class": cls,
+        "class": cls,  # e.g., "Archer", "Defender", "Enforcer", "Duelist", etc.
         "level": lvl,
         "hp": hp,
         "max_hp": hp,
@@ -117,15 +124,11 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
         "armor_prohibited": armor_prohibited,
     }
 
-    # Race unarmed special dice
     unarmed = RACE_PERKS.get(race, {}).get("unarmed_dice")
     if unarmed: f["unarmed_dice"] = str(unarmed)
-    if race == "goblin": f["dmg_bonus_per_level"] = 1  # goblin racial rider
+    if race == "goblin": f["dmg_bonus_per_level"] = 1
 
-    # Class init (sets L1 HP/flags & casting scaffolds)
     ensure_class_features(f)
-
-    # Starter gear (adds Unarmed + class kit; auto-equips main/off/armor/shield)
     grant_starting_kit(f)
 
     f["ac"] = calc_ac(f)
