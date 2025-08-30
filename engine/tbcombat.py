@@ -10,6 +10,11 @@ from engine.conditions import (
 )
 from engine.spells import line_aoe_cells
 
+# for proficiency lookups (simple inline to avoid deep coupling)
+def _prof_for_level(level: int) -> int:
+    L = max(1, int(level))
+    return min(6, 2 + (L - 1) // 4)
+
 __all__ = ["TBCombat", "Team"]
 
 
@@ -24,13 +29,11 @@ class Team:
 def _name(f) -> str:
     return getattr(f, "name", f"P{getattr(f, 'pid', getattr(f, 'id', '?'))}")
 
-
 def _alive(f) -> bool:
     try:
         return bool(getattr(f, "alive", True)) and int(getattr(f, "hp", 0)) > 0
     except Exception:
         return False
-
 
 def _ability_mod(f, ability: str) -> int:
     k = ability.upper()
@@ -40,14 +43,11 @@ def _ability_mod(f, ability: str) -> int:
     except Exception:
         return 0
 
-
 def _parse_dice(s: str) -> Tuple[int, int]:
     s = str(s or "1d4").lower().strip()
     if "d" not in s:
-        try:
-            return (1, int(s))
-        except Exception:
-            return (1, 4)
+        try: return (1, int(s))
+        except Exception: return (1, 4)
     a, b = s.split("d", 1)
     try:
         n = int(a) if a else 1
@@ -56,11 +56,9 @@ def _parse_dice(s: str) -> Tuple[int, int]:
     except Exception:
         return (1, 4)
 
-
 def _roll_dice(rng: random.Random, n: int, sides: int) -> int:
     n = max(1, int(n)); sides = max(1, int(sides))
     return sum(rng.randint(1, sides) for _ in range(n))
-
 
 def _roll_d20(rng: random.Random, adv: int = 0) -> Tuple[Any, int]:
     a = rng.randint(1, 20)
@@ -72,18 +70,19 @@ def _roll_d20(rng: random.Random, adv: int = 0) -> Tuple[Any, int]:
         return ((a, b), min(a, b))
     return (a, a)
 
-
 def _dist_xy(ax: int, ay: int, bx: int, by: int) -> int:
     return max(abs(ax - bx), abs(ay - by))
-
 
 # ---------- engine ----------
 class TBCombat:
     """
-    Includes patches D–F plus:
-      - Rage (action): resist_all, level-based damage bonus; auto-end if no damage (L1–14), never ends at L15+.
-      - Barbarian extra attacks (L5+), crit extra dice (L9/13/17), initiative advantage (L7+), speed +2 if unarmored (L5+).
-      - Race perks (already integrated earlier): poison resist/adv, sleep immunity, unarmed dice override, goblin dmg bonus/level.
+    Includes:
+      - Patch D–F features from earlier (OA, Dodge/Disengage/Dash/Ready/Hide, ranged rules, conditions, spells scaffold).
+      - Barbarian features (rage, extra attacks, crit dice, initiative adv, unarmored speed bonus).
+      - Global Proficiency Bonus added to to-hit and damage (weapon & spell), and to spell save DC.
+      - Bard features:
+         * Inspiration (action): give one-shot advantage token to an ally (once/battle; unlimited at L20).
+         * Level-6 aura: allies within 6 cells get advantage on saves vs 'charm' or 'fear'.
     """
 
     def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], cols: int, rows: int, *, seed: Optional[int] = None):
@@ -108,6 +107,9 @@ class TBCombat:
             if not hasattr(f, "ac"): setattr(f, "ac", 12)
             if not hasattr(f, "speed"): setattr(f, "speed", 4)
             if not hasattr(f, "reactions_left"): setattr(f, "reactions_left", 1)
+            # inspiration tokens & usage counter (battle-scoped)
+            setattr(f, "inspiration_tokens", 0)
+            setattr(f, "inspiration_used", 0)
 
         # Initiative (Barbarian L7+ advantage)
         rolls: List[Tuple[int, int]] = []
@@ -192,34 +194,61 @@ class TBCombat:
     def _attack_roll(self, attacker, defender, *, advantage: int = 0, ranged: bool = False, long_range: bool = False
                      ) -> Tuple[bool, bool, Any, int, int]:
         ctx = advantage
+        # Inspiration token (consume for the roller)
+        consume_token = False
+        try:
+            if int(getattr(attacker, "inspiration_tokens", 0)) > 0:
+                ctx += 1
+                consume_token = True
+        except Exception:
+            pass
+        # Defender conditions
         if getattr(defender, "_status_dodging", False): ctx -= 1
         if has_condition(defender, CONDITION_RESTRAINED): ctx += 1
         if has_condition(defender, CONDITION_PRONE):
             ctx += (1 if not ranged else 0)
             ctx -= (1 if ranged else 0)
         raw, eff = _roll_d20(self.rng, max(-1, min(1, ctx)))
+        if consume_token:
+            try: setattr(attacker, "inspiration_tokens", int(getattr(attacker, "inspiration_tokens", 1)) - 1)
+            except Exception: pass
         crit = (eff == 20)
         num, sides, ability, _ = self._weapon_profile(attacker)
         if ability == "FINESSE":
             mod = max(_ability_mod(attacker, "STR"), _ability_mod(attacker, "DEX"))
         else:
             mod = _ability_mod(attacker, "DEX" if ranged else ability)
+
+        # Proficiency to hit
+        prof = _prof_for_level(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
         ac = int(getattr(defender, "ac", 12))
-        hit = (eff + mod >= ac) or crit
+        hit = (eff + mod + prof >= ac) or crit
         return (hit, crit, raw, eff, mod)
 
-    def _spell_attack_roll(self, caster, target, *, ability="INT", normal_range=12, long_range=24
+    def _spell_attack_roll(self, caster, target, *, ability="CHA", normal_range=12, long_range=24
                            ) -> Tuple[bool, bool, Any, int, int]:
         adv = 0
+        # Inspiration token for the roller
+        consume_token = False
+        try:
+            if int(getattr(caster, "inspiration_tokens", 0)) > 0:
+                adv += 1
+                consume_token = True
+        except Exception:
+            pass
         d = self.distance(caster, target)
         if d > int(long_range): return (False, False, 1, 1, _ability_mod(caster, ability))
         if d > int(normal_range): adv -= 1
         if self.threatened_in_melee(caster): adv -= 1
         raw, eff = _roll_d20(self.rng, adv)
+        if consume_token:
+            try: setattr(caster, "inspiration_tokens", int(getattr(caster, "inspiration_tokens", 1)) - 1)
+            except Exception: pass
         crit = (eff == 20)
         mod = _ability_mod(caster, ability)
+        prof = _prof_for_level(getattr(caster, "level", getattr(caster, "lvl", 1)))
         ac = int(getattr(target, "ac", 12))
-        hit = (eff + mod >= ac) or crit
+        hit = (eff + mod + prof >= ac) or crit
         return (hit, crit, raw, eff, mod)
 
     # ---------- main turn loop ----------
@@ -239,10 +268,8 @@ class TBCombat:
             self._advance_pointer(actor)
             return
 
-        # per-turn flags
         self._push({"type": "turn_start", "actor": _name(actor)})
         setattr(actor, "_status_disengage", False)
-        # Clear dodge at start of your next turn
         if getattr(actor, "_status_dodging", False): setattr(actor, "_status_dodging", False)
         setattr(actor, "_dash_pool", 0)
         setattr(actor, "_dealt_damage_this_turn", False)
@@ -252,7 +279,6 @@ class TBCombat:
             self._advance_pointer(actor)
             return
 
-        # intents
         intents: List[Dict[str, Any]] = []
         ctrl = self.controllers.get(self._team_of(actor))
         if ctrl is not None and hasattr(ctrl, "decide"):
@@ -261,7 +287,7 @@ class TBCombat:
         if not intents:
             intents = self._baseline_intents(actor)
 
-        # steps (Barbarian L5+ unarmored speed bonus)
+        # steps (+2 if Barbarian L5+ and unarmored)
         steps_left = int(getattr(actor, "speed", 4))
         try:
             if int(getattr(actor, "level", 1)) >= 5 and int(getattr(actor, "barb_speed_bonus_if_unarmored", 0)) > 0:
@@ -272,6 +298,7 @@ class TBCombat:
 
         for intent in intents:
             t = intent.get("type")
+
             if t == "disengage":
                 setattr(actor, "_status_disengage", True)
 
@@ -288,18 +315,29 @@ class TBCombat:
                 setattr(actor, "_ready_reaction", True)
 
             elif t == "rage":
-                # Activate rage (action)
                 setattr(actor, "rage_active", True)
                 setattr(actor, "resist_all", True)
                 setattr(actor, "rage_bonus_per_level", 1)
                 self._push({"type": "status", "actor": _name(actor), "status": "rage_on"})
+
+            elif t == "inspire":
+                # Bard inspiration
+                target = intent.get("target")
+                if target is not None and _alive(target):
+                    uses = int(getattr(actor, "inspiration_used", 0))
+                    per_battle = int(getattr(actor, "bard_inspiration_uses_per_battle", 0))
+                    if uses < per_battle:
+                        setattr(target, "inspiration_tokens", int(getattr(target, "inspiration_tokens", 0)) + 1)
+                        setattr(actor, "inspiration_used", uses + 1)
+                        self._push({"type": "inspire", "actor": _name(actor), "target": _name(target)})
+                    else:
+                        self._push({"type": "inspire", "actor": _name(actor), "target": _name(target), "failed": True, "reason": "no_uses"})
 
             elif t == "move":
                 to = tuple(intent.get("to", (getattr(actor, "tx", 0), getattr(actor, "ty", 0))))
                 steps_left = self._do_move(actor, to, steps_left)
 
             elif t == "attack":
-                # Extra attacks for Barbarian L5+ (not for opportunity attacks)
                 swings = 1 + int(getattr(actor, "barb_extra_attacks", 0))
                 target = intent.get("target") or self._pick_nearest_enemy(actor)
                 for s in range(swings):
@@ -315,24 +353,34 @@ class TBCombat:
             elif t == "spell_attack":
                 tgt = intent.get("target")
                 if tgt is None: continue
-                dice = str(intent.get("dice", "1d8")); ability = str(intent.get("ability", "INT")).upper()
-                nr = int(intent.get("normal_range", 12)); lr = int(intent.get("long_range", 24))
+                dice = str(intent.get("dice", "1d8"))
+                ability = str(intent.get("ability", "CHA")).upper()
+                nr = int(intent.get("normal_range", 12))
+                lr = int(intent.get("long_range", 24))
                 dtype = intent.get("damage_type")
                 self._cast_spell_attack(actor, tgt, dice=dice, ability=ability, normal_range=nr, long_range=lr, damage_type=dtype)
 
             elif t == "spell_save":
                 tgt = intent.get("target")
                 if tgt is None: continue
-                save = str(intent.get("save", "DEX")).upper(); dc = int(intent.get("dc", 12))
-                dice = intent.get("dice", "1d8"); ability = str(intent.get("ability", "INT")).upper()
-                half = bool(intent.get("half_on_success", False)); tags = intent.get("tags"); dtype = intent.get("damage_type")
+                save = str(intent.get("save", "DEX")).upper()
+                # If dc not provided, compute using caster's spell ability (default CHA)
+                dc = intent.get("dc")
+                ability = str(intent.get("ability", "CHA")).upper()
+                if dc is None:
+                    prof = _prof_for_level(getattr(actor, "level", getattr(actor, "lvl", 1)))
+                    dc = 8 + _ability_mod(actor, ability) + prof
+                dice = intent.get("dice", "1d8")
+                half = bool(intent.get("half_on_success", False))
+                tags = intent.get("tags")
+                dtype = intent.get("damage_type")
                 cond = tuple(intent["apply_condition_on_fail"]) if "apply_condition_on_fail" in intent else None
-                self._cast_spell_save(actor, tgt, save=save, dc=dc, dice=dice, ability=ability, half_on_success=half, tags=tags, damage_type=dtype, apply_condition_on_fail=cond)
+                self._cast_spell_save(actor, tgt, save=save, dc=int(dc), dice=dice, ability=ability,
+                                      half_on_success=half, tags=tags, damage_type=dtype, apply_condition_on_fail=cond)
 
             if self.winner is not None:
                 break
 
-        # end-of-turn: tick conditions
         decrement_all_for_turn(actor)
 
         # Rage auto-end if no damage dealt this turn (L1–14)
@@ -387,7 +435,6 @@ class TBCombat:
 
         while pool > 0 and (ax, ay) != goal:
             nx, ny = self.path_step_towards(actor, goal)
-            # OA if leaving reach (unless Disengage)
             if not getattr(actor, "_status_disengage", False):
                 for e in self._enemies_of(actor):
                     if not _alive(e): continue
@@ -398,13 +445,11 @@ class TBCombat:
                         self._do_attack(e, actor, opportunity=True)
                         setattr(e, "reactions_left", int(getattr(e, "reactions_left", 0)) - 1)
                         if self.winner is not None: return 0
-            # step
             setattr(actor, "tx", nx); setattr(actor, "ty", ny)
             self._push({"type": "move_step", "actor": _name(actor), "to": (nx, ny)})
             ax, ay = nx, ny
             pool -= 1
 
-            # Ready reactions when entering reach
             for e in self._enemies_of(actor):
                 if not _alive(e): continue
                 if not getattr(e, "_ready_reaction", False): continue
@@ -455,12 +500,11 @@ class TBCombat:
                     "disadvantage": isinstance(raw, tuple) and eff == min(raw) and adv < 0})
 
         if hit:
-            # Damage (crit doubles weapon dice; Barbarian adds extra dice at L9/13/17)
             if ranged and rp is not None:
                 num, sides, ability, _, _ = rp
             base = _roll_dice(self.rng, num * (2 if crit else 1), sides)
 
-            # Brutal Critical extra dice for Barbarians (weapon attacks only)
+            # Barbarian brutal crit extra dice (weapon attacks only)
             if crit and int(getattr(attacker, "barb_crit_extra_dice", 0)) > 0:
                 base += _roll_dice(self.rng, int(getattr(attacker, "barb_crit_extra_dice", 0)) * num, sides)
 
@@ -469,6 +513,9 @@ class TBCombat:
                 base += max(_ability_mod(attacker, "STR"), _ability_mod(attacker, "DEX"))
             else:
                 base += _ability_mod(attacker, ("DEX" if ranged else ability))
+
+            # Proficiency adds to damage (house rule)
+            base += _prof_for_level(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
 
             self._apply_damage(attacker, defender, base)
 
@@ -481,7 +528,7 @@ class TBCombat:
             pass
         self._push({"type": "heal", "source": _name(healer), "target": _name(target), "amount": max(0, amt)})
 
-    def _cast_spell_attack(self, caster, target, *, dice: str = "1d8", ability: str = "INT",
+    def _cast_spell_attack(self, caster, target, *, dice: str = "1d8", ability: str = "CHA",
                            normal_range: int = 12, long_range: int = 24, damage_type: Optional[str] = None):
         if not (_alive(caster) and _alive(target)): return
         hit, crit, raw, eff, mod = self._spell_attack_roll(caster, target, ability=ability, normal_range=normal_range, long_range=long_range)
@@ -491,10 +538,12 @@ class TBCombat:
         if hit:
             num, sides = _parse_dice(dice)
             dmg = _roll_dice(self.rng, (2 if crit else 1) * num, sides) + max(0, _ability_mod(caster, ability))
+            # Proficiency adds to spell damage (house rule)
+            dmg += _prof_for_level(getattr(caster, "level", getattr(caster, "lvl", 1)))
             self._apply_damage(caster, target, dmg, damage_type=damage_type)
 
     def _cast_spell_save(self, caster, target, *, save: str = "DEX", dc: int = 12, dice: Optional[str] = "1d8",
-                         ability: str = "INT", half_on_success: bool = False,
+                         ability: str = "CHA", half_on_success: bool = False,
                          apply_condition_on_fail: Optional[Tuple[str, int]] = None,
                          tags: Optional[List[str]] = None, damage_type: Optional[str] = None):
         if not (_alive(caster) and _alive(target)): return
@@ -504,6 +553,8 @@ class TBCombat:
         if dice:
             num, sides = _parse_dice(dice)
             base = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
+            # Proficiency adds to spell damage (house rule)
+            base += _prof_for_level(getattr(caster, "level", getattr(caster, "lvl", 1)))
             if res["success"] and half_on_success: dmg = max(0, base // 2)
             elif not res["success"]: dmg = max(0, base)
         if dmg > 0:
@@ -524,6 +575,7 @@ class TBCombat:
         self._push({"type": "spell_aoe", "source": _name(caster), "cells": cells})
         num, sides = _parse_dice(dice)
         dmg = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
+        dmg += _prof_for_level(getattr(caster, "level", getattr(caster, "lvl", 1)))
         for f in self._enemies_of(caster):
             if not _alive(f): continue
             if (getattr(f, "tx", 0), getattr(f, "ty", 0)) in cells:
@@ -534,6 +586,7 @@ class TBCombat:
         a = (ability or "CON").upper()
         tags = [t.lower() for t in (tags or [])]
         ctx = (1 if adv > 0 else -1 if adv < 0 else 0)
+
         if a == "DEX" and has_condition(actor, CONDITION_RESTRAINED): ctx -= 1
         if a in ("STR", "DEX") and has_condition(actor, CONDITION_STUNNED): ctx -= 1
         # Race perks
@@ -541,10 +594,30 @@ class TBCombat:
         if getattr(actor, "adv_vs_charm", False) and ("charm" in tags): ctx += 1
         if getattr(actor, "adv_vs_paralysis", False) and ("paralysis" in tags): ctx += 1
         if getattr(actor, "adv_vs_magic_mental", False) and ("magic" in tags) and a in ("INT", "WIS", "CHA"): ctx += 1
-        # Rage proxy: advantage on STR saving throws while raging
+        # Rage proxy: STR saves get adv while raging
         if bool(getattr(actor, "rage_active", False)) and a == "STR": ctx += 1
+        # Bard L6 aura: allies within 6 get adv vs charm/fear saves
+        if ("charm" in tags) or ("fear" in tags):
+            for ally in self._friendlies_of(actor):
+                if not _alive(ally): continue
+                if not bool(getattr(ally, "bard_aura_charm_fear", False)): continue
+                if self.distance(actor, ally) <= 6:
+                    ctx += 1
+                    break
+        # Inspiration token (consume for the roller)
+        consume_token = False
+        try:
+            if int(getattr(actor, "inspiration_tokens", 0)) > 0:
+                ctx += 1
+                consume_token = True
+        except Exception:
+            pass
 
         raw, eff = _roll_d20(self.rng, max(-1, min(1, ctx)))
+        if consume_token:
+            try: setattr(actor, "inspiration_tokens", int(getattr(actor, "inspiration_tokens", 1)) - 1)
+            except Exception: pass
+
         mod = _ability_mod(actor, a)
         total = eff + mod
         success = total >= int(dc)
@@ -556,7 +629,7 @@ class TBCombat:
         return {"success": success}
 
     def _apply_damage(self, attacker, defender, dmg: int, *, damage_type: Optional[str] = None):
-        # Outgoing: Goblin & others
+        # Outgoing: racial per-level
         try:
             per_lvl = int(getattr(attacker, "dmg_bonus_per_level", 0))
             lvl = int(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
@@ -564,7 +637,7 @@ class TBCombat:
                 dmg = int(dmg) + per_lvl * lvl
         except Exception:
             pass
-        # Outgoing: Barbarian Rage adds same level bonus while active
+        # Outgoing: Barbarian rage
         try:
             if bool(getattr(attacker, "rage_active", False)) and int(getattr(attacker, "rage_bonus_per_level", 0)) > 0:
                 lvl = int(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
@@ -572,7 +645,7 @@ class TBCombat:
         except Exception:
             pass
 
-        # Incoming resistance: universal resist while raging; else specific poison resist
+        # Incoming: universal resist (rage) or poison resist
         try:
             if bool(getattr(defender, "resist_all", False)):
                 dmg = int(dmg) // 2
@@ -585,14 +658,11 @@ class TBCombat:
             defender.hp = int(defender.hp) - int(dmg)
         except Exception:
             pass
-        self._push({"type": "damage", "actor": _name(attacker), "target": _name(defender), "amount": int(dmg),
-                    "dtype": damage_type})
+        self._push({"type": "damage", "actor": _name(attacker), "target": _name(defender), "amount": int(dmg), "dtype": damage_type})
 
-        # Mark that attacker dealt damage this turn (for Rage persistence)
-        try:
-            setattr(attacker, "_dealt_damage_this_turn", True)
-        except Exception:
-            pass
+        # mark for rage persistence
+        try: setattr(attacker, "_dealt_damage_this_turn", True)
+        except Exception: pass
 
         if getattr(defender, "concentration", False):
             dc = max(10, int(dmg) // 2)
