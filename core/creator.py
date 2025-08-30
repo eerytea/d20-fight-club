@@ -79,12 +79,11 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
 
     cls = _choose_class_by_fit(base)
     dev_trait = _assign_dev_trait(rng)
-
     armor_prohibited = (race == "lizardkin")
 
     lvl = 1
     con_mod = (base["CON"] - 10) // 2
-    hp = 10 + con_mod  # may be overridden by class init (Barb/Bard)
+    hp = 10 + con_mod  # may be overridden by class init hooks
 
     f: Dict[str, Any] = {
         "name": _generate_name(rng, race),
@@ -96,6 +95,7 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
         "max_hp": hp,
         "ac": 10,
         "armor_bonus": 0,
+        "shield_bonus": 0,
         **base,
         "str": base.get("STR",10), "dex": base.get("DEX",10), "con": base.get("CON",10),
         "int": base.get("INT",10), "wis": base.get("WIS",10), "cha": base.get("CHA",10),
@@ -118,16 +118,17 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
         "armor_prohibited": armor_prohibited,
     }
 
+    # Race unarmed special dice
     unarmed = RACE_PERKS.get(race, {}).get("unarmed_dice")
     if unarmed:
         f["unarmed_dice"] = str(unarmed)
     if race == "goblin":
         f["dmg_bonus_per_level"] = 1
 
-    # Class init (sets L1 HP/flags & Bard casting/inspiration scaffolds)
+    # Class init (sets L1 HP/flags & casting scaffolds)
     ensure_class_features(f)
 
-    # Starter gear (includes Bard + Barbarian kits)
+    # Starter gear (adds Unarmed + class kit, auto-equips main/off/armor/shield)
     grant_starting_kit(f)
 
     f["ac"] = calc_ac(f)
