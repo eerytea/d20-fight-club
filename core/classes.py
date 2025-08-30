@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 from core.ac import calc_ac
 
-# ---------- Item helpers (lightweight schema) ----------
+# ---------- Item helpers ----------
 def weapon(name: str, dice: str, *, reach: int = 1, finesse: bool = False,
            ability: str = "STR", ranged: bool = False,
            range_tuple: Tuple[int, int] = (8, 16)) -> Dict[str, Any]:
@@ -19,12 +19,11 @@ def weapon(name: str, dice: str, *, reach: int = 1, finesse: bool = False,
     return d
 
 def armor(name: str, armor_bonus: int) -> Dict[str, Any]:
-    # Leather in our rules: AC = 11 + DEX -> same as normal 10+DEX+1 => armor_bonus=1
+    # Leather -> AC = 11 + DEX == 10 + DEX + 1
     return {"type": "armor", "name": name, "armor_bonus": int(armor_bonus)}
 
-# ---------- Class: starting kits ----------
+# ---------- Class starting kits ----------
 CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-    # Barbarian from previous drop
     "Barbarian": {
         "weapons": [
             weapon("Greataxe", "1d12", ability="STR"),
@@ -33,15 +32,14 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         ],
         "armors": [],
     },
-    # NEW: Bard kit
     "Bard": {
         "weapons": [
             weapon("Rapier", "1d8", finesse=True),
             weapon("Longsword", "1d8", ability="STR"),
-            weapon("Dagger", "1d4", ability="STR"),  # not finesse unless you want it
+            weapon("Dagger", "1d4", finesse=True),  # <-- flipped to finesse
         ],
         "armors": [
-            armor("Leather Armor", 1),  # AC = 10 + DEX + 1  ==  11 + DEX
+            armor("Leather Armor", 1),
         ],
     },
 }
@@ -52,7 +50,7 @@ def proficiency_for_level(level: int) -> int:
     L = max(1, int(level))
     return min(6, 2 + (L - 1) // 4)
 
-# ---------- Barbarian (existing) ----------
+# ---------- Barbarian (as shipped previously) ----------
 _BARB_ASI_LEVELS = {4, 8, 12, 16, 19}
 
 def _apply_barbarian_init(f: Dict[str, Any]) -> None:
@@ -96,10 +94,10 @@ def _apply_barbarian_level_features(f: Dict[str, Any], new_level: int) -> None:
 def _barbarian_needs_asi(level: int) -> bool:
     return level in _BARB_ASI_LEVELS
 
-# ---------- Bard (new) ----------
+# ---------- Bard ----------
 _BARD_ASI_LEVELS = {4, 8, 12, 16, 19}
 
-# Bard spellcasting table (PHB-like), level: (cantrips_known, spells_known, slots[1..9])
+# (cantrips_known, spells_known, slots[1..9])
 _BARD_TABLE: Dict[int, Tuple[int, int, List[int]]] = {
     1:  (2, 4,  [2,0,0,0,0,0,0,0,0]),
     2:  (2, 5,  [3,0,0,0,0,0,0,0,0]),
@@ -124,58 +122,43 @@ _BARD_TABLE: Dict[int, Tuple[int, int, List[int]]] = {
 }
 
 def _apply_bard_init(f: Dict[str, Any]) -> None:
-    """Initialize Bard at level 1 (stats must exist)."""
-    # L1 HP = 8 + CON mod
     con_mod = (int(f.get("CON", f.get("con", 10))) - 10) // 2
     base_hp = 8 + con_mod
     f["hp"] = max(1, base_hp)
     f["max_hp"] = max(int(f.get("max_hp", f["hp"])), f["hp"])
 
-    # Casting scaffold
     f["spell_ability"] = "CHA"
     f["cantrips_known"] = 0
     f["spells_known"] = 0
-    f["known_cantrips"] = []    # list of IDs (filled later)
-    f["known_spells"] = []      # list of IDs (filled later)
-    f["spell_slots_total"] = [0]*10  # index 0 unused; [1..9]
+    f["known_cantrips"] = []
+    f["known_spells"] = []
+    f["spell_slots_total"] = [0]*10
     f["spell_slots_current"] = [0]*10
 
-    # Inspiration
     f["bard_inspiration_uses_per_battle"] = 1
     f["bard_inspiration_unlimited"] = False
-
-    # L6 aura (off at L1)
     f["bard_aura_charm_fear"] = False
 
-    # Sync AC (no special unarmored rule for bard)
     f["ac"] = calc_ac(f)
-
-    # Apply table for current level if creator seeded >1 (safety)
     _apply_bard_casting_table_for_level(f, int(f.get("level", 1)))
 
 def _apply_bard_casting_table_for_level(f: Dict[str, Any], L: int) -> None:
     cantrips, spells, slots = _BARD_TABLE.get(max(1, min(20, L)), (0, 0, [0]*9))
     f["cantrips_known"] = cantrips
     f["spells_known"] = spells
-    # pad index 0
     pad = [0] + slots
     f["spell_slots_total"] = pad[:]
-    # do not auto-refill current slots here; battles/rests will manage recovery
     if not f.get("spell_slots_current"):
         f["spell_slots_current"] = pad[:]
 
 def _apply_bard_level_features(f: Dict[str, Any], new_level: int) -> None:
-    # Each level: +5 HP
     f["max_hp"] = int(f.get("max_hp", f.get("hp", 1))) + 5
-    # Casting table update
     _apply_bard_casting_table_for_level(f, new_level)
-    # L6 aura
     if new_level >= 6:
         f["bard_aura_charm_fear"] = True
-    # L20 unlimited inspiration
     if new_level >= 20:
         f["bard_inspiration_unlimited"] = True
-        f["bard_inspiration_uses_per_battle"] = 999999  # effectively unlimited
+        f["bard_inspiration_uses_per_battle"] = 999_999
 
 def _bard_needs_asi(level: int) -> bool:
     return level in _BARD_ASI_LEVELS
@@ -193,6 +176,7 @@ def _allocate_asi_via_training(f: Dict[str, Any], points: int, *, hard_caps: Dic
             cur = int(f.get(k, 10))
             if cur < cap:
                 f[k] = cur + 1
+                f[k].__class__  # keep mypy quiet
                 f[k.lower()] = f[k]
                 break
 
@@ -203,7 +187,7 @@ def ensure_class_features(f: Dict[str, Any]) -> None:
         _apply_barbarian_init(f)
     elif cls == "Bard":
         _apply_bard_init(f)
-    # (others later)
+    # others later
 
 def apply_class_level_up(f: Dict[str, Any], new_level: int) -> None:
     cls = str(f.get("class", "Fighter")).capitalize()
@@ -223,31 +207,22 @@ def apply_class_level_up(f: Dict[str, Any], new_level: int) -> None:
             f["ac"] = calc_ac(f)
 
 def grant_starting_kit(f: Dict[str, Any]) -> None:
-    """Adds class kit to inventory and auto-equips (respect Lizardkin armor prohibition)."""
     cls = str(f.get("class", "Fighter")).capitalize()
     kit = CLASS_STARTING_KIT.get(cls)
     if not kit:
         return
-
     inv = f.setdefault("inventory", {})
     weapons: List[Dict[str, Any]] = inv.setdefault("weapons", [])
     armors: List[Dict[str, Any]] = inv.setdefault("armors", [])
     eq = f.setdefault("equipped", {})
-
-    def _assign_id(prefix: str, idx: int) -> str:
-        return f"{prefix}_{idx}"
-
+    def _assign_id(prefix: str, idx: int) -> str: return f"{prefix}_{idx}"
     for w in kit.get("weapons", []):
         weapons.append({**w, "id": _assign_id("w", len(weapons))})
     for a in kit.get("armors", []):
         armors.append({**a, "id": _assign_id("a", len(armors))})
-
-    # Weapon: pick first
     if weapons:
         eq["weapon_id"] = weapons[0]["id"]
         f["weapon"] = {k: v for k, v in weapons[0].items() if k != "id"}
-
-    # Armor: equip first if allowed
     race = str(f.get("race", "")).lower()
     armor_allowed = (race != "lizardkin") and not bool(f.get("armor_prohibited", False))
     if armors and armor_allowed:
@@ -256,5 +231,4 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     else:
         eq["armor_id"] = None
         f["armor_bonus"] = 0
-
     f["ac"] = calc_ac(f)
