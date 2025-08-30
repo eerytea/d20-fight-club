@@ -71,14 +71,16 @@ def _dist_xy(ax: int, ay: int, bx: int, by: int) -> int:
 class TBCombat:
     """
     Adds:
-      - Fighter styles:
-        * Archer: +2 to attack rolls with any ranged weapon.
-        * Defender: handled in AC calc (+1) (core.ac).
-        * Enforcer: Two-handed melee damage 'advantage' (roll damage dice twice, take higher).
-        * Duelist: Off-hand weapon uses proficiency for attack rolls.
-      - Two-handed enforcement: if main-hand weapon is two_handed, off-hand (shield/weapon/form) is ignored.
-      - Global: no proficiency added to damage.
-      - Events enriched with useful debug fields for tests (eff_d20, mod, prof, total; damage includes optional rolls).
+      - Fighter styles (Archer/Defender/Enforcer/Duelist) — already integrated.
+      - Monk:
+         * Unarmed off-hand proficiency if both strikes are unarmed; from L15, off-hand prof even with a weapon.
+         * Bonus unarmed strike if all main-hand swings this action were unarmed (>=2 swings).
+         * Deflect Missiles: reduce ranged weapon damage by 1d10 + DEX mod + level (passive).
+         * Evasion (L7): on DEX save, success=0 dmg, fail=half.
+         * Global adv on all saves at L14.
+         * Poison immunity at L10 (damage=0; also auto-pass poison saves).
+      - Two-handed enforcement; no proficiency to damage.
+      - Events enriched with roll/prof fields.
     """
 
     def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], cols: int, rows: int, *, seed: Optional[int] = None):
@@ -106,11 +108,13 @@ class TBCombat:
             setattr(f, "inspiration_used", int(getattr(f, "inspiration_used", 0)))
             if not hasattr(f, "equipped"): setattr(f, "equipped", {})
 
-        # Initiative
+        # Initiative (Barbarian L7 advantage already supported)
         rolls: List[Tuple[int, int]] = []
         for i, f in enumerate(self.fighters):
             dexmod = _ability_mod(f, "DEX")
-            adv = 1 if (str(getattr(f, "class", "")).capitalize() == "Barbarian" and int(getattr(f, "level", 1)) >= 7) else 0
+            adv = 0
+            if str(getattr(f, "class", "")).capitalize() == "Barbarian" and int(getattr(f, "level", 1)) >= 7:
+                adv = 1
             _, eff = _roll_d20(self.rng, adv)
             rolls.append((eff + dexmod, i))
         rolls.sort(reverse=True)
@@ -123,13 +127,14 @@ class TBCombat:
 
         self._push({"type": "round_start", "round": self.round})
 
+    # ---------- utils ----------
     def _push(self, ev: Dict[str, Any]): self.events.append(ev)
     def _team_of(self, f) -> int: return int(getattr(f, "team_id", getattr(f, "tid", 0)))
     def _enemies_of(self, f): tid = self._team_of(f); return [x for x in self.fighters if self._team_of(x) != tid]
     def _friendlies_of(self, f): tid = self._team_of(f); return [x for x in self.fighters if self._team_of(x) == tid and x is not f]
     def distance(self, a, b) -> int: return _dist_xy(getattr(a, "tx", 0), getattr(a, "ty", 0), getattr(b, "tx", 0), getattr(b, "ty", 0))
 
-    # ---------- equipment helpers ----------
+    # ---------- equipment ----------
     def _inv_lookup(self, f, kind: str, item_id: Optional[str]) -> Optional[Dict[str, Any]]:
         inv = getattr(f, "inventory", {})
         items = inv.get(kind, [])
@@ -146,7 +151,6 @@ class TBCombat:
         return self._inv_lookup(f, "weapons", wid)
 
     def _equipped_off(self, f) -> Optional[Dict[str, Any]]:
-        # Two-handed main-hand disables any off-hand usage
         main = self._equipped_main(f)
         if isinstance(main, dict) and bool(main.get("two_handed", False)):
             return None
@@ -166,13 +170,13 @@ class TBCombat:
             ud = getattr(f, "unarmed_dice", None)
             if isinstance(ud, str):
                 num, sides = _parse_dice(ud)
-                return (num, sides, "STR", 1)
+                return (num, sides, "FINESSE", 1)  # finesse: uses best of STR/DEX
             return (1, 1, "FINESSE", 1)
         if w.get("unarmed"):
             ud = getattr(f, "unarmed_dice", None)
             if isinstance(ud, str):
                 num, sides = _parse_dice(ud)
-                return (num, sides, "STR", 1)
+                return (num, sides, "FINESSE", 1)
             return (1, 1, "FINESSE", 1)
         if w.get("wildshape"):
             return (0, 1, "STR", 1)
@@ -192,7 +196,7 @@ class TBCombat:
             r2 = self._weapon_profile_from_item(a, off)[3]
         return max(r1, r2)
 
-    # ---------- wild shape (same as previous drop) ----------
+    # ---------- wild shape (unchanged from previous) ----------
     def _maybe_start_wildshape(self, f) -> None:
         main = self._equipped_main(f)
         off = self._equipped_off(f)
@@ -236,17 +240,18 @@ class TBCombat:
         setattr(f, "wildshape_form_name", off.get("name", "Form"))
         self._push({"type": "wildshape", "actor": _name(f), "started": True, "form": off.get("name")})
 
-    # ---------- rolls & profiles ----------
-    def _ranged_profile(self, f) -> Optional[Tuple[int, int, str, int, Tuple[int, int]]]:
-        w = self._equipped_main(f)
-        if isinstance(w, dict) and bool(w.get("ranged", False)):
-            num, sides = _parse_dice(w.get("dice", "1d6"))
-            ability = str(w.get("ability", "DEX")).upper()
-            normal, longr = w.get("range", (8, 16))
-            return (num, sides, ability, 1, (int(normal), int(longr)))
-        return None
+    # ---------- helpers for monk ----------
+    def _is_monk(self, f) -> bool:
+        return str(getattr(f, "class", "")).capitalize() == "Monk"
 
-    # ---------- main turn loop ----------
+    def _both_unarmed(self, f) -> bool:
+        m = self._equipped_main(f)
+        o = self._equipped_off(f)
+        main_un = (m is None) or bool(m.get("unarmed", False))
+        off_un  = (o is None) or bool(o.get("unarmed", False))
+        return main_un and off_un
+
+    # ---------- main loop ----------
     def take_turn(self):
         if self.winner is not None: return
 
@@ -277,7 +282,6 @@ class TBCombat:
         if not intents:
             intents = self._baseline_intents(actor)
 
-        # Steps (+2 if Barbarian L5+ unarmored)
         steps_left = int(getattr(actor, "speed", 4))
         try:
             if int(getattr(actor, "level", 1)) >= 5 and int(getattr(actor, "barb_speed_bonus_if_unarmored", 0)) > 0:
@@ -292,16 +296,32 @@ class TBCombat:
             if t == "attack":
                 target = intent.get("target") or self._pick_nearest_enemy(actor)
                 if target is None: continue
-                # Main-hand swings: include Fighter extra attacks & Barbarian
-                swings = 1 + int(getattr(actor, "barb_extra_attacks", 0)) + int(getattr(actor, "fighter_extra_attacks", 0))
+
+                # Main-hand swings
+                swings = 1 + int(getattr(actor, "barb_extra_attacks", 0)) + int(getattr(actor, "fighter_extra_attacks", 0)) + int(getattr(actor, "monk_extra_attacks", 0))
+                unarmed_flags: List[bool] = []
                 for _ in range(swings):
                     if not (_alive(actor) and _alive(target)): break
-                    self._do_melee_attack(actor, target, opportunity=False, offhand=False)
-                # Off-hand extra swing if weapon present (not shield/form)
+                    used_unarmed = self._do_melee_attack(actor, target, opportunity=False, offhand=False)
+                    unarmed_flags.append(bool(used_unarmed))
+
+                # Monk bonus unarmed strike if all main-hand swings this action were unarmed and >=2 swings
+                if self._is_monk(actor) and len(unarmed_flags) >= 2 and all(unarmed_flags):
+                    # Force an extra unarmed swing
+                    if _alive(actor) and _alive(target):
+                        self._do_melee_attack(actor, target, opportunity=False, offhand=False, force_unarmed=True)
+                        self._push({"type":"attack_bonus_unarmed", "actor": _name(actor)})
+
+                # Off-hand swing: if actual off-hand weapon, do it; if Monk with unarmed main and no off-hand weapon, allow unarmed off-hand
                 off = self._equipped_off(actor)
                 if off and off.get("type") == "weapon":
                     if _alive(actor) and _alive(target):
                         self._do_melee_attack(actor, target, opportunity=False, offhand=True)
+                elif self._is_monk(actor):
+                    main = self._equipped_main(actor)
+                    if (main is None or main.get("unarmed")) and _alive(actor) and _alive(target):
+                        # off-hand unarmed attempt
+                        self._do_melee_attack(actor, target, opportunity=False, offhand=True, force_unarmed=True)
 
             elif t == "move":
                 to = tuple(intent.get("to", (getattr(actor, "tx", 0), getattr(actor, "ty", 0))))
@@ -364,7 +384,7 @@ class TBCombat:
 
         self._advance_pointer(actor)
 
-    # Movement & OA (unchanged from prior drop)
+    # ---------- movement (OA etc) ----------
     def _do_move(self, actor, to_xy: Tuple[int, int], steps_left: int) -> int:
         ax, ay = getattr(actor, "tx", 0), getattr(actor, "ty", 0)
         goal = tuple(map(int, to_xy))
@@ -401,6 +421,7 @@ class TBCombat:
         else:
             used -= dash; setattr(actor, "_dash_pool", 0); return max(0, steps_left - used)
 
+    # ---------- attacks ----------
     def _attack_roll_with_item(self, attacker, defender, weapon_item: Optional[Dict[str, Any]],
                                *, advantage: int = 0, ranged: bool = False,
                                offhand: bool = False) -> Tuple[bool, bool, Any, int, int, int, int]:
@@ -427,11 +448,22 @@ class TBCombat:
         else:
             mod = _ability_mod(attacker, "DEX" if ranged else ability)
 
-        # Prof: off-hand usually 0, except Duelist style enables proficiency to hit
         base_prof = _prof_for_level(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
-        prof = base_prof if (not offhand or bool(getattr(attacker, "fighter_duelist_offhand_prof", False))) else 0
+        prof = base_prof if not offhand else 0
 
-        # Style bonus: Archer +2 to-hit with any ranged weapon
+        # Duelist off-hand proficiency
+        if offhand and bool(getattr(attacker, "fighter_duelist_offhand_prof", False)):
+            prof = base_prof
+
+        # Monk off-hand proficiency rules
+        if offhand and self._is_monk(attacker):
+            if bool(getattr(attacker, "monk_offhand_prof_even_with_weapon", False)):
+                prof = base_prof
+            else:
+                if self._both_unarmed(attacker):
+                    prof = base_prof
+
+        # Archer ranged +2 to hit
         style_bonus = 2 if (ranged and int(getattr(attacker, "fighter_archery_bonus", 0)) > 0) else 0
 
         ac = int(getattr(defender, "ac", 12))
@@ -447,14 +479,24 @@ class TBCombat:
             return (num, sides, ability, 1, (int(normal), int(longr)))
         return None
 
-    def _do_melee_attack(self, attacker, defender, *, opportunity: bool, offhand: bool):
-        if not (_alive(attacker) and _alive(defender)): return
+    def _do_melee_attack(self, attacker, defender, *, opportunity: bool, offhand: bool, force_unarmed: bool = False) -> bool:
+        """
+        Returns True if the strike was 'unarmed' (for Monk bonus logic).
+        """
+        if not (_alive(attacker) and _alive(defender)): return False
 
-        item = self._equipped_off(attacker) if offhand else self._equipped_main(attacker)
-        if offhand and (item is None or item.get("type") != "weapon"): return
+        item = None
+        if force_unarmed:
+            item = None
+        else:
+            item = self._equipped_off(attacker) if offhand else self._equipped_main(attacker)
+
+        if offhand and not force_unarmed:
+            if item is None or item.get("type") != "weapon":
+                return False
 
         ranged = False; long_dis = False
-        if not offhand:
+        if not offhand and not force_unarmed:
             rp = self._ranged_profile(attacker)
             if rp is not None:
                 ranged = True
@@ -464,13 +506,13 @@ class TBCombat:
                     self._push({"type": "attack", "actor": _name(attacker), "target": _name(defender), "hit": False,
                                 "reason": "out_of_range", "ranged": True, "opportunity": opportunity,
                                 "advantage": False, "disadvantage": False, "offhand": False})
-                    return
+                    return False
                 long_dis = d > normal
 
         adv = 0
         if ranged:
             if long_dis: adv -= 1
-            if self.distance(attacker, defender) <= self.reach(defender):  # threatened
+            if self.distance(attacker, defender) <= self.reach(defender):
                 adv -= 1
 
         hit, crit, raw, eff, mod, prof, style_bonus = self._attack_roll_with_item(attacker, defender, item, advantage=adv, ranged=ranged, offhand=offhand)
@@ -482,33 +524,41 @@ class TBCombat:
                     "eff_d20": eff, "mod": mod, "prof": prof, "style_bonus": style_bonus,
                     "total": eff + mod + prof + style_bonus})
 
-        if hit:
-            num, sides, ability, _ = self._weapon_profile_from_item(attacker, item)
-            # Base damage dice; Enforcer two-handed advantage on damage (main-hand only, melee two_handed)
-            twohand_item = bool((self._equipped_main(attacker) or {}).get("two_handed", False))
-            enforcer = bool(getattr(attacker, "fighter_enforcer_twohand_adv", False))
-            dmg_rolls = None
-            if (not offhand) and enforcer and twohand_item and not ranged:
-                # roll dice twice (crit doubles per roll), take higher
-                r1 = _roll_dice(self.rng, num * (2 if crit else 1), sides)
-                r2 = _roll_dice(self.rng, num * (2 if crit else 1), sides)
-                base = max(r1, r2)
-                dmg_rolls = [r1, r2]
-            else:
-                base = _roll_dice(self.rng, num * (2 if crit else 1), sides)
+        if not hit:
+            return (item is None) or bool(item.get("unarmed", False))
 
-            if ability == "FINESSE":
-                base += max(_ability_mod(attacker, "STR"), _ability_mod(attacker, "DEX"))
-            else:
-                base += _ability_mod(attacker, ("DEX" if ranged else ability))
+        num, sides, ability, _ = self._weapon_profile_from_item(attacker, None if force_unarmed else item)
 
-            # Attach debug rolls for tests (consumed in _apply_damage)
-            if dmg_rolls is not None:
-                setattr(attacker, "_dbg_rolls", dmg_rolls)
-                setattr(attacker, "_dbg_twohand", True)
-            self._apply_damage(attacker, defender, base)
+        # Enforcer two-handed damage advantage (main-hand only, melee, two-handed)
+        twohand_item = bool((self._equipped_main(attacker) or {}).get("two_handed", False))
+        enforcer = bool(getattr(attacker, "fighter_enforcer_twohand_adv", False))
+        dmg_rolls = None
+        if (not offhand) and enforcer and twohand_item and not ranged:
+            r1 = _roll_dice(self.rng, num * (2 if crit else 1), sides)
+            r2 = _roll_dice(self.rng, num * (2 if crit else 1), sides)
+            base = max(r1, r2); dmg_rolls = [r1, r2]
+        else:
+            base = _roll_dice(self.rng, num * (2 if crit else 1), sides)
 
-    # heal & spells (unchanged, but spell_attack/save events already include needed info)
+        if ability == "FINESSE":
+            base += max(_ability_mod(attacker, "STR"), _ability_mod(attacker, "DEX"))
+        else:
+            base += _ability_mod(attacker, ("DEX" if ranged else ability))
+
+        # mark if ranged weapon for Monk Deflect Missiles
+        try:
+            setattr(attacker, "_last_attack_ranged_weapon", bool(ranged))
+        except Exception:
+            pass
+
+        if dmg_rolls is not None:
+            setattr(attacker, "_dbg_rolls", dmg_rolls)
+            setattr(attacker, "_dbg_twohand", True)
+
+        self._apply_damage(attacker, defender, base)
+        return (item is None) or bool(item.get("unarmed", False))
+
+    # ---------- healing ----------
     def _do_heal(self, healer, target, dice: str, ability: str):
         num, sides = _parse_dice(dice)
         amt = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(healer, ability))
@@ -517,11 +567,58 @@ class TBCombat:
         except Exception: pass
         self._push({"type": "heal", "source": _name(healer), "target": _name(target), "amount": max(0, amt)})
 
-    # (spell functions unchanged from previous drop, omitted here for brevity)
-    # ... keep your _cast_spell_attack, _cast_spell_save, saving_throw unchanged ...
+    # ---------- spells ----------
+    def _cast_spell_attack(self, caster, target, *, dice: str, ability: str,
+                           normal_range: int, long_range: int, damage_type: Optional[str] = None):
+        # To-hit roll
+        adv = 0
+        if self.distance(caster, target) > normal_range:
+            if self.distance(caster, target) > long_range:
+                self._push({"type":"attack","actor":_name(caster),"target":_name(target),"hit":False,
+                            "reason":"out_of_range","ranged":True,"opportunity":False,"advantage":False,"disadvantage":False,"offhand":False})
+                return
+            adv -= 1
+        raw, eff = _roll_d20(self.rng, max(-1, min(1, adv)))
+        prof = _prof_for_level(getattr(caster, "level", 1))
+        mod = _ability_mod(caster, ability)
+        hit = (eff + prof + mod >= int(getattr(target, "ac", 12))) or (eff == 20)
+        self._push({"type":"attack","actor":_name(caster),"target":_name(target),"ranged":True,"opportunity":False,
+                    "critical": eff==20,"hit":bool(hit),"offhand":False,"eff_d20":eff,"mod":mod,"prof":prof,"style_bonus":0,
+                    "total": eff+mod+prof})
+
+        if not hit: return
+        num, sides = _parse_dice(dice)
+        dmg = _roll_dice(self.rng, num * (2 if eff==20 else 1), sides) + max(0, _ability_mod(caster, ability))
+        self._apply_damage(caster, target, dmg, damage_type=damage_type)
+
+    def _cast_spell_save(self, caster, target, *, save: str, dc: int, dice: str, ability: str,
+                         half_on_success: bool, tags: Optional[List[str]], damage_type: Optional[str],
+                         apply_condition_on_fail: Optional[Tuple[str, int]]):
+        # Saving throw (with Monk globals / poison immunity)
+        res = self.saving_throw(target, save, dc, tags=(tags or []))
+        num, sides = _parse_dice(dice)
+        base = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
+
+        dmg = 0
+        if save == "DEX" and bool(getattr(target, "monk_evasion", False)):
+            if res["success"]:
+                dmg = 0
+            else:
+                dmg = base // 2
+        else:
+            if res["success"]:
+                dmg = (base // 2) if half_on_success else 0
+            else:
+                dmg = base
+
+        self._apply_damage(caster, target, dmg, damage_type=damage_type)
+
+        if (not res["success"]) and apply_condition_on_fail:
+            cond_name, turns = apply_condition_on_fail
+            add_condition(target, cond_name, turns)
+            self._push({"type":"condition","target":_name(target),"condition":cond_name,"turns":int(turns)})
 
     def saving_throw(self, actor, ability: str, dc: int, *, adv: int = 0, tags: Optional[List[str]] = None) -> Dict[str, Any]:
-        # (same as earlier; omitted for space)
         a = (ability or "CON").upper()
         tags = [t.lower() for t in (tags or [])]
         ctx = (1 if adv > 0 else -1 if adv < 0 else 0)
@@ -532,12 +629,14 @@ class TBCombat:
         if getattr(actor, "adv_vs_paralysis", False) and ("paralysis" in tags): ctx += 1
         if getattr(actor, "adv_vs_magic_mental", False) and ("magic" in tags) and a in ("INT", "WIS", "CHA"): ctx += 1
         if bool(getattr(actor, "rage_active", False)) and a == "STR": ctx += 1
-        if ("charm" in tags) or ("fear" in tags):
-            for ally in self._friendlies_of(actor):
-                if not _alive(ally): continue
-                if not bool(getattr(ally, "bard_aura_charm_fear", False)): continue
-                if self.distance(actor, ally) <= 6:
-                    ctx += 1; break
+        if bool(getattr(actor, "monk_global_saves_adv", False)): ctx += 1  # L14
+
+        # Poison immunity: auto success on poison saves
+        if ("poison" in tags) and bool(getattr(actor, "poison_immune", False)):
+            self._push({"type":"save","target":_name(actor),"ability":a,"roll":"IMMUNE","effective":99,
+                        "modifier":0,"dc":int(dc),"success":True,"advantage":False,"disadvantage":False,"tags":tags})
+            return {"success": True}
+
         consume = False
         try:
             if int(getattr(actor, "inspiration_tokens", 0)) > 0:
@@ -556,7 +655,17 @@ class TBCombat:
                     "tags": tags})
         return {"success": success}
 
+    # ---------- damage ----------
     def _apply_damage(self, attacker, defender, dmg: int, *, damage_type: Optional[str] = None):
+        # Monk: Deflect Missiles (ranged weapon)
+        try:
+            if bool(getattr(attacker, "_last_attack_ranged_weapon", False)) and str(getattr(defender, "class", "")).capitalize() == "Monk":
+                red = _roll_dice(self.rng, 1, 10) + _ability_mod(defender, "DEX") + int(getattr(defender, "level", 1))
+                dmg = max(0, int(dmg) - int(red))
+        except Exception:
+            pass
+
+        # Goblin bonus damage per level, Barbarian Rage bonus, resistances
         try:
             per_lvl = int(getattr(attacker, "dmg_bonus_per_level", 0))
             lvl = int(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
@@ -571,8 +680,11 @@ class TBCombat:
         try:
             if bool(getattr(defender, "resist_all", False)):
                 dmg = int(dmg) // 2
-            elif damage_type and damage_type.lower() == "poison" and getattr(defender, "poison_resist", False):
-                dmg = int(dmg) // 2
+            elif damage_type and damage_type.lower() == "poison":
+                if bool(getattr(defender, "poison_immune", False)):
+                    dmg = 0
+                elif getattr(defender, "poison_resist", False):
+                    dmg = int(dmg) // 2
         except Exception: pass
 
         try:
@@ -580,7 +692,6 @@ class TBCombat:
         except Exception: pass
 
         ev = {"type": "damage", "actor": _name(attacker), "target": _name(defender), "amount": int(dmg), "dtype": damage_type}
-        # include enforcer damage 'rolls' if present
         rolls = getattr(attacker, "_dbg_rolls", None)
         if rolls is not None:
             ev["rolls"] = list(rolls); ev["twohand_adv"] = bool(getattr(attacker, "_dbg_twohand", False))
