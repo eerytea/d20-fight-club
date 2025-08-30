@@ -36,8 +36,7 @@ def _choose_class_by_fit(abilities: Dict[str,int]) -> str:
     for cls, weights in CLASS_FIT_WEIGHTS.items():
         num = 0.0; den = 0.0
         for a, w in weights.items():
-            den += abs(w)
-            num += lowers.get(a, 10) * w
+            den += abs(w); num += lowers.get(a, 10) * w
         score = (num / den) if den else 0.0
         if score > best_score:
             best_cls, best_score = cls, score
@@ -83,7 +82,7 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
 
     lvl = 1
     con_mod = (base["CON"] - 10) // 2
-    hp = 10 + con_mod  # may be overridden by class init hooks
+    hp = 10 + con_mod  # overridden in class init
 
     f: Dict[str, Any] = {
         "name": _generate_name(rng, race),
@@ -120,15 +119,13 @@ def generate_fighter(team: Dict[str, Any] | None = None, seed: int | None = None
 
     # Race unarmed special dice
     unarmed = RACE_PERKS.get(race, {}).get("unarmed_dice")
-    if unarmed:
-        f["unarmed_dice"] = str(unarmed)
-    if race == "goblin":
-        f["dmg_bonus_per_level"] = 1
+    if unarmed: f["unarmed_dice"] = str(unarmed)
+    if race == "goblin": f["dmg_bonus_per_level"] = 1  # goblin racial rider
 
     # Class init (sets L1 HP/flags & casting scaffolds)
     ensure_class_features(f)
 
-    # Starter gear (adds Unarmed + class kit, auto-equips main/off/armor/shield)
+    # Starter gear (adds Unarmed + class kit; auto-equips main/off/armor/shield)
     grant_starting_kit(f)
 
     f["ac"] = calc_ac(f)
