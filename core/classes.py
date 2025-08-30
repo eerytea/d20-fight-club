@@ -12,14 +12,6 @@ def weapon(name: str, dice: str, *, reach: int = 1, finesse: bool = False,
            versatile: bool = False, two_handed_dice: Optional[str] = None,
            two_handed: bool = False,
            unarmed_flag: bool = False, wildshape_flag: bool = False) -> Dict[str, Any]:
-    """
-    Generic weapon description used by engine & UI.
-    - finesse -> uses max(STR, DEX)
-    - versatile -> auto two-handed when off-hand empty; uses 'two_handed_dice' if provided
-    - two_handed -> cannot be used with shield/off-hand (engine/UI should enforce)
-    - unarmed_flag -> universal unarmed (finesse, 1d1) unless race overrides unarmed_dice
-    - wildshape_flag -> equippable token that means "start battle shaped" (off-hand = 'form')
-    """
     d: Dict[str, Any] = {"type": "weapon", "name": name, "dice": dice, "reach": int(reach)}
     if finesse: d["finesse"] = True
     if ability and not finesse: d["ability"] = ability.upper()
@@ -53,7 +45,6 @@ UNARMED_ITEM = weapon("Unarmed", "1d1", finesse=True, versatile=True, unarmed_fl
 
 # ---------- Class starting kits ----------
 CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-    # Barbarian (unchanged here)
     "Barbarian": {
         "weapons": [
             weapon("Greataxe", "1d12", ability="STR", two_handed=True),
@@ -63,7 +54,6 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [],
         "shields": [],
     },
-    # Bard
     "Bard": {
         "weapons": [
             weapon("Rapier", "1d8", finesse=True),
@@ -73,7 +63,6 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Leather Armor", 1)],
         "shields": [],
     },
-    # Cleric (Chain Mail +3 per your correction)
     "Cleric": {
         "weapons": [
             weapon("Mace", "1d6", ability="STR"),
@@ -82,11 +71,10 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [
             armor("Leather Armor", 1),
             armor("Scale Mail", 4),
-            armor("Chain Mail", 3),
+            armor("Chain Mail", 3),  # corrected to +3
         ],
         "shields": [shield("Shield", 2)],
     },
-    # Druid
     "Druid": {
         "weapons": [
             weapon("Scimitar", "1d6", finesse=True),
@@ -95,8 +83,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Leather Armor", 1)],
         "shields": [shield("Shield", 2)],
     },
-    # --- Fighter styles as separate classes by display name ---
-    # Archer: +2 to-hit with any ranged weapon. Longbow two-handed, small grid ranges (2/4). Chain Mail +3.
+    # Fighter styles as distinct class names
     "Archer": {
         "weapons": [
             weapon("Longbow", "1d8", ability="DEX", ranged=True, range_tuple=(2, 4), two_handed=True),
@@ -104,7 +91,6 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Chain Mail", 3)],
         "shields": [],
     },
-    # Defender: +1 AC always. Plate +5, Shield +2, Longsword (versatile 1d10).
     "Defender": {
         "weapons": [
             weapon("Longsword", "1d8", ability="STR", versatile=True, two_handed_dice="1d10"),
@@ -112,7 +98,6 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Plate", 5)],
         "shields": [shield("Shield", 2)],
     },
-    # Enforcer: Two-handed melee damage "advantage" (roll twice, take higher). Halberd 1d12, reach 2, two-handed. Breastplate +4.
     "Enforcer": {
         "weapons": [
             weapon("Halberd", "1d12", ability="STR", reach=2, two_handed=True),
@@ -120,7 +105,6 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Breastplate", 4)],
         "shields": [],
     },
-    # Duelist: Off-hand also adds proficiency to attack rolls. Two Short Swords (1d6). Breastplate +4.
     "Duelist": {
         "weapons": [
             weapon("Shortsword", "1d6", finesse=True),
@@ -129,22 +113,30 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Breastplate", 4)],
         "shields": [],
     },
+    # Monk: no equipment
+    "Monk": {
+        "weapons": [],
+        "armors": [],
+        "shields": [],
+    },
 }
 
 FIGHTER_STYLE_CLASSES = {"Archer", "Defender", "Enforcer", "Duelist"}
 
-# ---------- Proficiency Bonus (global) ----------
+# ---------- Proficiency Bonus ----------
 def proficiency_for_level(level: int) -> int:
     L = max(1, int(level))
     return min(6, 2 + (L - 1) // 4)
 
-# ---------- Existing class tables (Bard/Cleric/Druid) ----------
-_BARB_ASI_LEVELS = {4, 8, 12, 16, 19}
-_BARD_ASI_LEVELS = {4, 8, 12, 16, 19}
+# ---------- ASI schedules ----------
+_BARB_ASI_LEVELS   = {4, 8, 12, 16, 19}
+_BARD_ASI_LEVELS   = {4, 8, 12, 16, 19}
 _CLERIC_ASI_LEVELS = {4, 8, 12, 16, 19}
-_DRUID_ASI_LEVELS = {4, 8, 12, 16, 19}
-_FIGHTER_ASI_LEVELS = {4, 6, 8, 12, 14, 16, 19}
+_DRUID_ASI_LEVELS  = {4, 8, 12, 16, 19}
+_FIGHTER_ASI_LEVELS= {4, 6, 8, 12, 14, 16, 19}
+_MONK_ASI_LEVELS   = {4, 8, 12, 16, 19}
 
+# ---------- Spell tables (as before) ----------
 _BARD_TABLE: Dict[int, Tuple[int, int, List[int]]] = {
     1:(2,4,[2,0,0,0,0,0,0,0,0]),2:(2,5,[3,0,0,0,0,0,0,0,0]),
     3:(2,6,[4,2,0,0,0,0,0,0,0]),4:(3,7,[4,3,0,0,0,0,0,0,0]),
@@ -157,7 +149,6 @@ _BARD_TABLE: Dict[int, Tuple[int, int, List[int]]] = {
     17:(4,20,[4,3,3,3,2,1,1,1,1]),18:(4,22,[4,3,3,3,3,1,1,1,1]),
     19:(4,22,[4,3,3,3,3,2,1,1,1]),20:(4,22,[4,3,3,3,3,2,2,1,1]),
 }
-
 _CLERIC_TABLE: Dict[int, Tuple[int, List[int]]] = {
     1:(3,[2,0,0,0,0,0,0,0,0]), 2:(3,[3,0,0,0,0,0,0,0,0]),
     3:(3,[4,2,0,0,0,0,0,0,0]), 4:(4,[4,3,0,0,0,0,0,0,0]),
@@ -170,7 +161,6 @@ _CLERIC_TABLE: Dict[int, Tuple[int, List[int]]] = {
     17:(5,[4,3,3,3,2,1,1,1,1]), 18:(5,[4,3,3,3,3,1,1,1,1]),
     19:(5,[4,3,3,3,3,2,1,1,1]), 20:(5,[4,3,3,3,3,2,2,1,1]),
 }
-
 _DRUID_TABLE: Dict[int, Tuple[int, List[int]]] = {
     1:(2,[2,0,0,0,0,0,0,0,0]),  2:(2,[3,0,0,0,0,0,0,0,0]),
     3:(2,[4,2,0,0,0,0,0,0,0]),  4:(3,[4,3,0,0,0,0,0,0,0]),
@@ -184,7 +174,10 @@ _DRUID_TABLE: Dict[int, Tuple[int, List[int]]] = {
     19:(4,[4,3,3,3,3,2,1,1,1]), 20:(4,[4,3,3,3,3,2,2,1,1]),
 }
 
-# ---------- Class init/level-up hooks (Barbarian/Bard/Cleric/Druid as in your current build) ----------
+# ---------- Barbarian/Bard/Cleric/Druid/Fighter inits & levels (as in previous drop) ----------
+# (Barbarian/Bard/Cleric/Druid/Fighter helpers unchanged from your last patch; omitted for brevity)
+# ... BEGIN existing helpers you already have ...
+
 def _apply_barbarian_init(f: Dict[str, Any]) -> None:
     f["barb_unarmored_ac"] = True
     f["rage_active"] = False
@@ -329,24 +322,21 @@ def _druid_needs_asi(level: int) -> bool:
 
 # ----- Fighter (Archer/Defender/Enforcer/Duelist) -----
 def _apply_fighter_init(f: Dict[str, Any]) -> None:
-    # HP: 10 + CON mod at L1; +6 per level thereafter
     con_mod = (int(f.get("CON", f.get("con", 10))) - 10) // 2
     f["hp"] = max(1, 10 + con_mod)
     f["max_hp"] = max(int(f.get("max_hp", f["hp"])), f["hp"])
 
-    # Shared fighter flags
-    f["fighter_extra_attacks"] = 0  # +1 @5, +2 @11, +3 @20
+    f["fighter_extra_attacks"] = 0
     f["fighter_defense_ac_bonus"] = 0
     f["fighter_archery_bonus"] = 0
     f["fighter_enforcer_twohand_adv"] = False
     f["fighter_duelist_offhand_prof"] = False
 
-    # Per-style setup
     style = str(f.get("class", "Archer")).capitalize()
     if style == "Archer":
         f["fighter_archery_bonus"] = 2
     elif style == "Defender":
-        f["fighter_defense_ac_bonus"] = 1  # always on
+        f["fighter_defense_ac_bonus"] = 1
     elif style == "Enforcer":
         f["fighter_enforcer_twohand_adv"] = True
     elif style == "Duelist":
@@ -356,14 +346,103 @@ def _apply_fighter_init(f: Dict[str, Any]) -> None:
 
 def _apply_fighter_level_features(f: Dict[str, Any], new_level: int) -> None:
     f["max_hp"] = int(f.get("max_hp", f.get("hp", 1))) + 6
-    # Extra attacks: 5/11/20 -> +1/+2/+3 (i.e., total swings = 2/3/4)
     f["fighter_extra_attacks"] = 0
-    if new_level >= 5: f["fighter_extra_attacks"] = 1
+    if new_level >= 5:  f["fighter_extra_attacks"] = 1
     if new_level >= 11: f["fighter_extra_attacks"] = 2
     if new_level >= 20: f["fighter_extra_attacks"] = 3
 
 def _fighter_needs_asi(level: int) -> bool:
     return level in _FIGHTER_ASI_LEVELS
+
+# ----- Monk helpers -----
+def _parse_die(d: str) -> int:
+    try:
+        return int(str(d).split("d", 1)[1])
+    except Exception:
+        return 4
+
+def _fmt_die(sides: int) -> str:
+    return f"1d{int(sides)}"
+
+def _monk_die_sides_for_level(L: int) -> int:
+    # L1: d4, L5: d6, L11: d8, L17: d10
+    if L >= 17: return 10
+    if L >= 11: return 8
+    if L >= 5:  return 6
+    return 4
+
+def _update_monk_unarmed_die(f: Dict[str, Any]) -> None:
+    L = int(f.get("level", 1))
+    monk_sides = _monk_die_sides_for_level(L)
+    race_die = str(f.get("_race_unarmed_dice", f.get("unarmed_dice", "1d1")))
+    race_sides = _parse_die(race_die) if "d" in str(race_die) else 1
+    chosen = max(monk_sides, race_sides)
+    f["unarmed_dice"] = _fmt_die(chosen)
+
+_MONK_SPEED_TABLE = {
+    2: 2, 6: 3, 10: 4, 14: 5, 18: 6,  # replaces previous bonus at each milestone
+}
+
+def _monk_speed_bonus_for_level(L: int) -> int:
+    bonus = 0
+    for k, v in _MONK_SPEED_TABLE.items():
+        if L >= k: bonus = v
+    return bonus
+
+def _apply_monk_init(f: Dict[str, Any]) -> None:
+    con_mod = (int(f.get("CON", f.get("con", 10))) - 10) // 2
+    f["hp"] = max(1, 8 + con_mod)
+    f["max_hp"] = max(int(f.get("max_hp", f["hp"])), f["hp"])
+
+    # Save original race unarmed die (if any) to compare each milestone
+    if "unarmed_dice" in f and not f.get("_race_unarmed_dice"):
+        f["_race_unarmed_dice"] = f["unarmed_dice"]
+
+    # Monk flags
+    f["monk_unarmored_ac"] = True  # AC = 10 + DEX + WIS when no armor & no shield
+    f["monk_extra_attacks"] = 0    # +1 @5 .. +2 @20
+    f["monk_offhand_prof_even_with_weapon"] = False  # becomes True @15
+    f["monk_evasion"] = False                        # True @7
+    f["monk_global_saves_adv"] = False              # True @14
+    f["poison_immune"] = False                      # True @10
+
+    # Speed baseline
+    f.setdefault("_base_speed", int(f.get("speed", 4)))
+    f["monk_speed_bonus"] = _monk_speed_bonus_for_level(int(f.get("level", 1)))
+    f["speed"] = int(f["_base_speed"]) + int(f["monk_speed_bonus"])
+
+    # Set unarmed die per level vs race
+    _update_monk_unarmed_die(f)
+
+    f["ac"] = calc_ac(f)
+
+def _apply_monk_level_features(f: Dict[str, Any], new_level: int) -> None:
+    f["max_hp"] = int(f.get("max_hp", f.get("hp", 1))) + 5
+
+    # Extra attacks (as extra swings): +1 at 5, +2 at 20
+    f["monk_extra_attacks"] = 0
+    if new_level >= 5:  f["monk_extra_attacks"] = 1
+    if new_level >= 20: f["monk_extra_attacks"] = 2
+
+    # Off-hand proficiency rule expands at 15
+    f["monk_offhand_prof_even_with_weapon"] = (new_level >= 15)
+
+    # Evasion & poison immunity
+    f["monk_evasion"] = (new_level >= 7)
+    f["poison_immune"] = (new_level >= 10)
+
+    # Global advantage on all saves at 14
+    f["monk_global_saves_adv"] = (new_level >= 14)
+
+    # Speed bonus replaces prior
+    f["monk_speed_bonus"] = _monk_speed_bonus_for_level(new_level)
+    f["speed"] = int(f.get("_base_speed", f.get("speed", 4))) + int(f["monk_speed_bonus"])
+
+    # Update unarmed die for new milestone (compare to race each time)
+    _update_monk_unarmed_die(f)
+
+def _monk_needs_asi(level: int) -> bool:
+    return level in _MONK_ASI_LEVELS
 
 # ---------- Shared: ASI allocator ----------
 def _allocate_asi_via_training(f: Dict[str, Any], points: int, *, hard_caps: Dict[str, int]) -> None:
@@ -393,7 +472,8 @@ def ensure_class_features(f: Dict[str, Any]) -> None:
         _apply_druid_init(f)
     elif cls in FIGHTER_STYLE_CLASSES:
         _apply_fighter_init(f)
-    # others later
+    elif cls == "Monk":
+        _apply_monk_init(f)
 
 def apply_class_level_up(f: Dict[str, Any], new_level: int) -> None:
     cls = str(f.get("class", "Fighter")).capitalize()
@@ -429,6 +509,12 @@ def apply_class_level_up(f: Dict[str, Any], new_level: int) -> None:
             caps = {"STR": 20, "DEX": 20, "CON": 20, "INT": 20, "WIS": 20, "CHA": 20}
             _allocate_asi_via_training(f, points=2, hard_caps=caps)
             f["ac"] = calc_ac(f)
+    elif cls == "Monk":
+        _apply_monk_level_features(f, new_level)
+        if _monk_needs_asi(new_level):
+            caps = {"STR": 20, "DEX": 20, "CON": 20, "INT": 20, "WIS": 20, "CHA": 20}
+            _allocate_asi_via_training(f, points=2, hard_caps=caps)
+            f["ac"] = calc_ac(f)
 
 def grant_starting_kit(f: Dict[str, Any]) -> None:
     """
@@ -452,7 +538,6 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
 
     def _assign_id(prefix: str, idx: int) -> str: return f"{prefix}_{idx}"
 
-    # Inject class kit
     for w in kit.get("weapons", []):
         weapons.append({**w, "id": _assign_id("w", len(weapons))})
     for a in kit.get("armors", []):
@@ -464,24 +549,22 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     if not any(w.get("unarmed") for w in weapons):
         weapons.insert(0, {**UNARMED_ITEM, "id": "unarmed"})
 
-    # Armor allowance
+    # Armor allowance (lizardkin rule enforced)
     race = str(f.get("race", "")).lower()
     armor_allowed = (race != "lizardkin") and not bool(f.get("armor_prohibited", False))
 
-    # Equip armor: prefer highest bonus in kit
     if armor_allowed and armors:
         pick = max(armors, key=lambda a: int(a.get("armor_bonus", 0)))
         eq["armor_id"] = pick["id"]; f["armor_bonus"] = int(pick.get("armor_bonus", 0))
     else:
         eq["armor_id"] = None; f["armor_bonus"] = 0
 
-    # Equip shield default (if any)
     if shields:
         eq["shield_id"] = shields[0]["id"]; f["shield_bonus"] = int(shields[0].get("shield_bonus", 0))
     else:
         eq["shield_id"] = None; f["shield_bonus"] = int(f.get("shield_bonus", 0))
 
-    # Main-hand default by class
+    # Main-hand defaults
     names = [w["name"] for w in weapons]
     main = weapons[0]
     if cls == "Cleric" and "Mace" in names: main = weapons[names.index("Mace")]
@@ -490,14 +573,15 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     if cls == "Defender" and "Longsword" in names: main = weapons[names.index("Longsword")]
     if cls == "Enforcer" and "Halberd" in names: main = weapons[names.index("Halberd")]
     if cls == "Duelist" and "Shortsword" in names:
-        # equip one in main; the other will go off-hand
         main = weapons[names.index("Shortsword")]
+    if cls == "Monk":
+        main = weapons[0]  # Unarmed
+
     eq["main_hand_id"] = main["id"]
     f["weapon"] = {k: v for k, v in main.items() if k != "id"}
 
     # Off-hand default
     if cls == "Duelist":
-        # find a second shortsword (by index)
         others = [w for w in weapons if w["name"] == "Shortsword" and w["id"] != main["id"]]
         eq["off_hand_id"] = others[0]["id"] if others else None
     elif cls == "Defender" and shields:
@@ -505,15 +589,13 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     else:
         eq["off_hand_id"] = None
 
-    # Two-handed enforcement: clear shield/off-hand if main is two-handed
+    # Two-handed enforcement
     if bool(main.get("two_handed", False)):
         eq["off_hand_id"] = None
         eq["shield_id"] = None
         f["shield_bonus"] = 0
 
-    # Druid forms list present
     if cls == "Druid":
         inv.setdefault("forms", forms)
 
-    # AC refresh
     f["ac"] = calc_ac(f)
