@@ -68,11 +68,10 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
             weapon("Mace", "1d6", ability="STR"),
             weapon("Warhammer", "1d8", ability="STR", versatile=True, two_handed_dice="1d10"),
         ],
-        # Kept your richer list here
         "armors": [
             armor("Leather Armor", 1),
-            armor("Scale Mail", 4),     # retro rename from Breastplate
-            armor("Chain Mail", 3),     # corrected to +3 (per your file)
+            armor("Scale Mail", 4),
+            armor("Chain Mail", 3),
         ],
         "shields": [shield("Shield", 2)],
     },
@@ -103,7 +102,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "weapons": [
             weapon("Halberd", "1d12", ability="STR", reach=2, two_handed=True),
         ],
-        "armors": [armor("Scale Mail", 4)],  # retro rename from Breastplate
+        "armors": [armor("Scale Mail", 4)],
         "shields": [],
     },
     "Duelist": {
@@ -111,7 +110,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
             weapon("Shortsword", "1d6", finesse=True),
             weapon("Shortsword", "1d6", finesse=True),
         ],
-        "armors": [armor("Scale Mail", 4)],  # retro rename from Breastplate
+        "armors": [armor("Scale Mail", 4)],
         "shields": [],
     },
     # Monk: no equipment
@@ -141,6 +140,15 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Leather Armor", 1)],
         "shields": [],
     },
+
+    # Paladin
+    "Paladin": {
+        "weapons": [
+            weapon("Warhammer", "1d8", ability="STR", versatile=True, two_handed_dice="1d10"),
+        ],
+        "armors": [armor("Chain Mail", 3)],
+        "shields": [shield("Shield", 2)],
+    },
 }
 
 FIGHTER_STYLE_CLASSES = {"Archer", "Defender", "Enforcer", "Duelist"}
@@ -159,53 +167,14 @@ _FIGHTER_ASI_LEVELS = {4, 6, 8, 12, 14, 16, 19}
 _MONK_ASI_LEVELS    = {4, 8, 12, 16, 19}
 _RANGER_ASI_LEVELS  = {4, 8, 12, 16, 19}
 _WIZARD_ASI_LEVELS  = {4, 8, 12, 16, 19}
+_PALADIN_ASI_LEVELS = {4, 8, 12, 16, 19}
 
-# ---------- Spell tables (as before for Bard/Cleric/Druid) ----------
-_BARD_TABLE: Dict[int, Tuple[int, int, List[int]]] = {
-    1:(2,4,[2,0,0,0,0,0,0,0,0]),2:(2,5,[3,0,0,0,0,0,0,0,0]),
-    3:(2,6,[4,2,0,0,0,0,0,0,0]),4:(3,7,[4,3,0,0,0,0,0,0,0]),
-    5:(3,8,[4,3,2,0,0,0,0,0,0]),6:(3,9,[4,3,3,0,0,0,0,0,0]),
-    7:(3,10,[4,3,3,1,0,0,0,0,0]),8:(3,11,[4,3,3,2,0,0,0,0,0]),
-    9:(3,12,[4,3,3,3,1,0,0,0,0]),10:(4,14,[4,3,3,3,2,0,0,0,0]),
-    11:(4,15,[4,3,3,3,2,1,0,0,0]),12:(4,15,[4,3,3,3,2,1,0,0,0]),
-    13:(4,16,[4,3,3,3,2,1,1,0,0]),14:(4,18,[4,3,3,3,2,1,1,0,0]),
-    15:(4,19,[4,3,3,3,2,1,1,1,0]),16:(4,19,[4,3,3,3,2,1,1,1,0]),
-    17:(4,20,[4,3,3,3,2,1,1,1,1]),18:(4,22,[4,3,3,3,3,1,1,1,1]),
-    19:(4,22,[4,3,3,3,3,2,1,1,1]),20:(4,22,[4,3,3,3,3,2,2,1,1]),
-}
-_CLERIC_TABLE: Dict[int, Tuple[int, List[int]]] = {
-    1:(3,[2,0,0,0,0,0,0,0,0]), 2:(3,[3,0,0,0,0,0,0,0,0]),
-    3:(3,[4,2,0,0,0,0,0,0,0]), 4:(4,[4,3,0,0,0,0,0,0,0]),
-    5:(4,[4,3,2,0,0,0,0,0,0]), 6:(4,[4,3,3,0,0,0,0,0,0]),
-    7:(4,[4,3,3,1,0,0,0,0,0]), 8:(4,[4,3,3,2,0,0,0,0,0]),
-    9:(4,[4,3,3,3,1,0,0,0,0]), 10:(5,[4,3,3,3,2,0,0,0,0]),
-    11:(5,[4,3,3,3,2,1,0,0,0]), 12:(5,[4,3,3,3,2,1,0,0,0]),
-    13:(5,[4,3,3,3,2,1,1,0,0]), 14:(5,[4,3,3,3,2,1,1,0,0]),
-    15:(5,[4,3,3,3,2,1,1,1,0]), 16:(5,[4,3,3,3,2,1,1,1,0]),
-    17:(5,[4,3,3,3,2,1,1,1,1]), 18:(5,[4,3,3,3,3,1,1,1,1]),
-    19:(5,[4,3,3,3,3,2,1,1,1]), 20:(5,[4,3,3,3,3,2,2,1,1]),
-}
-_DRUID_TABLE: Dict[int, Tuple[int, List[int]]] = {
-    1:(2,[2,0,0,0,0,0,0,0,0]),  2:(2,[3,0,0,0,0,0,0,0,0]),
-    3:(2,[4,2,0,0,0,0,0,0,0]),  4:(3,[4,3,0,0,0,0,0,0,0]),
-    5:(3,[4,3,2,0,0,0,0,0,0]),  6:(3,[4,3,3,0,0,0,0,0,0]),
-    7:(3,[4,3,3,1,0,0,0,0,0]),  8:(3,[4,3,3,2,0,0,0,0,0]),
-    9:(3,[4,3,3,3,1,0,0,0,0]),  10:(4,[4,3,3,3,2,0,0,0,0]),
-    11:(4,[4,3,3,3,2,1,0,0,0]), 12:(4,[4,3,3,3,2,1,0,0,0]),
-    13:(4,[4,3,3,3,2,1,1,0,0]), 14:(4,[4,3,3,3,2,1,1,0,0]),
-    15:(4,[4,3,3,3,2,1,1,1,0]), 16:(4,[4,3,3,3,2,1,1,1,0]),
-    17:(4,[4,3,3,3,2,1,1,1,1]), 18:(4,[4,3,3,3,3,1,1,1,1]),
-    19:(4,[4,3,3,3,3,2,1,1,1]), 20:(4,[4,3,3,3,3,2,2,1,1]),
-}
-
-# ---------- Wizard spell casting progression (per your table) ----------
-# cantrips known by level
+# ---------- Wizard spell casting progression ----------
 _WIZ_CANTRIPS_KNOWN: Dict[int, int] = {
     1:3, 2:3, 3:3,
     4:4, 5:4, 6:4, 7:4, 8:4, 9:4,
     10:5, 11:5, 12:5, 13:5, 14:5, 15:5, 16:5, 17:5, 18:5, 19:5, 20:5,
 }
-# slots per level [L1..L9]
 _WIZ_SLOTS: Dict[int, List[int]] = {
     1:  [2,0,0,0,0,0,0,0,0],
     2:  [3,0,0,0,0,0,0,0,0],
@@ -256,9 +225,9 @@ _HP_TABLE: Dict[str, Tuple[int, int]] = {
     "Enforcer":  (10, 6),
     "Duelist":   (10, 6),
     "Monk":      (8, 5),
-    # You can add Rogue/Paladin here when wired
     "Ranger":    (10, 6),
     "Wizard":    (6, 4),
+    "Paladin":   (10, 6),
 }
 
 def _mod(x: int) -> int:
@@ -272,7 +241,7 @@ def _recompute_hp_from_formula(f: Dict[str, Any]) -> None:
     f["max_hp"] = int(base + max(0, lvl - 1) * per + con_mod)
     f["hp"] = min(int(f.get("hp", f["max_hp"])), f["max_hp"])
 
-# ---------- Barbarian/Bard/Cleric/Druid/Fighter/Monk inits & levels (from your file) ----------
+# ---------- Barbarian/Bard/Cleric/Druid/Fighter/Monk/Wizard inits (trimmed to what's needed) ----------
 def _apply_barbarian_init(f: Dict[str, Any]) -> None:
     f["barb_unarmored_ac"] = True
     f["rage_active"] = False
@@ -285,11 +254,9 @@ def _apply_barbarian_init(f: Dict[str, Any]) -> None:
     f["barb_speed_bonus_if_unarmored"] = 0
     f["barb_rage_capstone"] = False
     f["barb_cap_24"] = False
-    # hp derived via recompute
     f["ac"] = calc_ac(f)
 
 def _apply_barbarian_level_features(f: Dict[str, Any], new_level: int) -> None:
-    # per-level hp handled by recompute; keep other features
     if new_level >= 5:
         f["barb_extra_attacks"] = 1
         f["barb_speed_bonus_if_unarmored"] = 2
@@ -323,6 +290,18 @@ def _apply_bard_init(f: Dict[str, Any]) -> None:
     _apply_bard_casting_table_for_level(f, int(f.get("level", 1)))
 
 def _apply_bard_casting_table_for_level(f: Dict[str, Any], L: int) -> None:
+    _BARD_TABLE: Dict[int, Tuple[int, int, List[int]]] = {
+        1:(2,4,[2,0,0,0,0,0,0,0,0]),2:(2,5,[3,0,0,0,0,0,0,0,0]),
+        3:(2,6,[4,2,0,0,0,0,0,0,0]),4:(3,7,[4,3,0,0,0,0,0,0,0]),
+        5:(3,8,[4,3,2,0,0,0,0,0,0]),6:(3,9,[4,3,3,0,0,0,0,0,0]),
+        7:(3,10,[4,3,3,1,0,0,0,0,0]),8:(3,11,[4,3,3,2,0,0,0,0,0]),
+        9:(3,12,[4,3,3,3,1,0,0,0,0]),10:(4,14,[4,3,3,3,2,0,0,0,0]),
+        11:(4,15,[4,3,3,3,2,1,0,0,0]),12:(4,15,[4,3,3,3,2,1,0,0,0]),
+        13:(4,16,[4,3,3,3,2,1,1,0,0]),14:(4,18,[4,3,3,3,2,1,1,0,0]),
+        15:(4,19,[4,3,3,3,2,1,1,1,0]),16:(4,19,[4,3,3,3,2,1,1,1,0]),
+        17:(4,20,[4,3,3,3,2,1,1,1,1]),18:(4,22,[4,3,3,3,3,1,1,1,1]),
+        19:(4,22,[4,3,3,3,3,2,1,1,1]),20:(4,22,[4,3,3,3,3,2,2,1,1]),
+    }
     cantrips, spells, slots = _BARD_TABLE.get(max(1, min(20, L)), (0, 0, [0]*9))
     f["cantrips_known"] = cantrips; f["spells_known"] = spells
     pad = [0] + slots
@@ -351,6 +330,18 @@ def _apply_cleric_init(f: Dict[str, Any]) -> None:
     _apply_cleric_casting_table_for_level(f, int(f.get("level", 1)))
 
 def _apply_cleric_casting_table_for_level(f: Dict[str, Any], L: int) -> None:
+    _CLERIC_TABLE: Dict[int, Tuple[int, List[int]]] = {
+        1:(3,[2,0,0,0,0,0,0,0,0]), 2:(3,[3,0,0,0,0,0,0,0,0]),
+        3:(3,[4,2,0,0,0,0,0,0,0]), 4:(4,[4,3,0,0,0,0,0,0,0]),
+        5:(4,[4,3,2,0,0,0,0,0,0]), 6:(4,[4,3,3,0,0,0,0,0,0]),
+        7:(4,[4,3,3,1,0,0,0,0,0]), 8:(4,[4,3,3,2,0,0,0,0,0]),
+        9:(4,[4,3,3,3,1,0,0,0,0]), 10:(5,[4,3,3,3,2,0,0,0,0]),
+        11:(5,[4,3,3,3,2,1,0,0,0]), 12:(5,[4,3,3,3,2,1,0,0,0]),
+        13:(5,[4,3,3,3,2,1,1,0,0]), 14:(5,[4,3,3,3,2,1,1,0,0]),
+        15:(5,[4,3,3,3,2,1,1,1,0]), 16:(5,[4,3,3,3,2,1,1,1,0]),
+        17:(5,[4,3,3,3,2,1,1,1,1]), 18:(5,[4,3,3,3,3,1,1,1,1]),
+        19:(5,[4,3,3,3,3,2,1,1,1]), 20:(5,[4,3,3,3,3,2,2,1,1]),
+    }
     cantrips, slots = _CLERIC_TABLE.get(max(1, min(20, L)), (0, [0]*9))
     f["cantrips_known"] = cantrips
     pad = [0] + slots
@@ -386,6 +377,18 @@ def _apply_druid_init(f: Dict[str, Any]) -> None:
     _apply_druid_casting_table_for_level(f, int(f.get("level", 1)))
 
 def _apply_druid_casting_table_for_level(f: Dict[str, Any], L: int) -> None:
+    _DRUID_TABLE: Dict[int, Tuple[int, List[int]]] = {
+        1:(2,[2,0,0,0,0,0,0,0,0]),  2:(2,[3,0,0,0,0,0,0,0,0]),
+        3:(2,[4,2,0,0,0,0,0,0,0]),  4:(3,[4,3,0,0,0,0,0,0,0]),
+        5:(3,[4,3,2,0,0,0,0,0,0]),  6:(3,[4,3,3,0,0,0,0,0,0]),
+        7:(3,[4,3,3,1,0,0,0,0,0]),  8:(3,[4,3,3,2,0,0,0,0,0]),
+        9:(3,[4,3,3,3,1,0,0,0,0]),  10:(4,[4,3,3,3,2,0,0,0,0]),
+        11:(4,[4,3,3,3,2,1,0,0,0]), 12:(4,[4,3,3,3,2,1,0,0,0]),
+        13:(4,[4,3,3,3,2,1,1,0,0]), 14:(4,[4,3,3,3,2,1,1,0,0]),
+        15:(4,[4,3,3,3,2,1,1,1,0]), 16:(4,[4,3,3,3,2,1,1,1,0]),
+        17:(4,[4,3,3,3,2,1,1,1,1]), 18:(4,[4,3,3,3,3,1,1,1,1]),
+        19:(4,[4,3,3,3,3,2,1,1,1]), 20:(4,[4,3,3,3,3,2,2,1,1]),
+    }
     cantrips, slots = _DRUID_TABLE.get(max(1, min(20, L)), (0, [0]*9))
     f["cantrips_known"] = cantrips
     pad = [0] + slots
@@ -492,33 +495,77 @@ def _apply_monk_level_features(f: Dict[str, Any], new_level: int) -> None:
 def _monk_needs_asi(level: int) -> bool:
     return level in _MONK_ASI_LEVELS
 
-# ----- Wizard init/level (new) -----
+# ----- Wizard init/level -----
 def _apply_wizard_init(f: Dict[str, Any]) -> None:
     L = int(f.get("level", 1))
     f["spell_ability"] = "INT"
     f["cantrips_known"] = _wiz_cantrips_known(L)
     f["known_cantrips"] = f.get("known_cantrips", [])
-    f["known_spells"] = f.get("known_spells", [])  # training will append permanently
+    f["known_spells"] = f.get("known_spells", [])
     slots = _wiz_slots_for_level(L)
     pad = [0] + slots
     f["spell_slots_total"] = pad[:]
     if not f.get("spell_slots_current"): f["spell_slots_current"] = pad[:]
-    # convenience numbers for engine spell math
     int_mod = _mod(int(f.get("INT", f.get("int", 10))))
     prof = proficiency_for_level(L)
     f["spell_attack_bonus"] = prof + int_mod
     f["spell_save_dc"] = 8 + prof + int_mod
-    # features
     f["wiz_cantrip_tier"] = _cantrip_tier(L)
     f["wiz_adv_vs_blind_deaf"] = (L >= 7)
     f["wiz_aoe_ally_exempt"] = 3 if L >= 17 else (2 if L >= 10 else (1 if L >= 3 else 0))
     f["ac"] = calc_ac(f)
 
 def _apply_wizard_level_features(f: Dict[str, Any], new_level: int) -> None:
-    _apply_wizard_init(f)  # refresh slots_total/current, DC/atk, flags, cantrip tier
+    _apply_wizard_init(f)
 
 def _wizard_needs_asi(level: int) -> bool:
     return level in _WIZARD_ASI_LEVELS
+
+# ----- Paladin init/level (NEW) -----
+def _pal_smite_nd6(level: int) -> int:
+    if level >= 17: return 5
+    if level >= 13: return 4
+    if level >= 9:  return 4
+    if level >= 5:  return 3
+    if level >= 2:  return 2
+    return 0
+
+def _pal_smite_chance(level: int) -> float:
+    if level >= 11: return 0.50
+    if level >= 2:  return 0.10
+    return 0.0
+
+def _apply_paladin_init(f: Dict[str, Any]) -> None:
+    L = int(f.get("level", 1))
+    # Lay on Hands pool (refreshed between matches by your season loop)
+    total = 5 * L
+    f["pal_lay_on_hands_total"] = total
+    if "pal_lay_on_hands_current" not in f:
+        f["pal_lay_on_hands_current"] = total
+
+    # Features / flags for engine
+    f["pal_twohand_damage_adv"] = (L >= 2)  # damage dice rolled twice, take higher (two-handed or versatile used 2H)
+    f["poison_immune"] = (L >= 3)           # condition + damage immunity (engine uses flag)
+    f["pal_extra_attacks"] = 1 if L >= 5 else 0
+
+    # Auras
+    cha_mod = _mod(int(f.get("CHA", f.get("cha", 10))))
+    f["pal_aura_radius"] = 6 if L >= 18 else 2
+    f["pal_aura_wis_bonus"] = cha_mod if L >= 6 else 0
+    f["pal_aura_no_fear"] = bool(L >= 10)
+
+    # Smite-like proc
+    f["pal_smite_chance"] = _pal_smite_chance(L)
+    f["pal_smite_nd6"] = _pal_smite_nd6(L)
+
+    # Derived
+    f["ac"] = calc_ac(f)
+
+def _apply_paladin_level_features(f: Dict[str, Any], new_level: int) -> None:
+    _apply_paladin_init(f)
+
+def _paladin_needs_asi(level: int) -> bool:
+    return level in _PALADIN_ASI_LEVELS
 
 # ---------- Shared: ASI allocator ----------
 def _allocate_asi_via_training(f: Dict[str, Any], points: int, *, hard_caps: Dict[str, int]) -> None:
@@ -553,10 +600,10 @@ def ensure_class_features(f: Dict[str, Any]) -> None:
     elif cls == "Wizard":
         _apply_wizard_init(f)
     elif cls == "Ranger":
-        # Ranger has no spell init; features are consumed by engine/AC
         pass
+    elif cls == "Paladin":
+        _apply_paladin_init(f)
 
-    # Derived recomputes (retroactive CON bump)
     _recompute_hp_from_formula(f)
     f["ac"] = calc_ac(f)
 
@@ -600,12 +647,15 @@ def apply_class_level_up(f: Dict[str, Any], new_level: int) -> None:
             caps = {"STR": 20, "DEX": 20, "CON": 20, "INT": 20, "WIS": 20, "CHA": 20}
             _allocate_asi_via_training(f, points=2, hard_caps=caps)
     elif cls == "Ranger":
-        # Ranger ASIs follow standard schedule
         if new_level in _RANGER_ASI_LEVELS:
             caps = {"STR": 20, "DEX": 20, "CON": 20, "INT": 20, "WIS": 20, "CHA": 20}
             _allocate_asi_via_training(f, points=2, hard_caps=caps)
+    elif cls == "Paladin":
+        _apply_paladin_level_features(f, new_level)
+        if _paladin_needs_asi(new_level):
+            caps = {"STR": 20, "DEX": 20, "CON": 20, "INT": 20, "WIS": 20, "CHA": 20}
+            _allocate_asi_via_training(f, points=2, hard_caps=caps)
 
-    # Always recompute deriveds after level up
     _recompute_hp_from_formula(f)
     f["ac"] = calc_ac(f)
 
@@ -614,7 +664,6 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     Adds class kit; sets up equipment model:
       - f['equipped']: main_hand_id, off_hand_id, armor_id, shield_id
       - Always injects the synthetic 'Unarmed' weapon.
-      - Druid: inventory['forms'] exists (for Wild Shape).
       - Lizardkin: cannot equip body armor; shield still allowed.
       - Two-handed main-hand clears off-hand and shield.
     """
@@ -668,8 +717,8 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     if cls == "Duelist" and "Shortsword" in names: main = weapons[names.index("Shortsword")]
     if cls == "Wizard" and "Quarterstaff" in names: main = weapons[names.index("Quarterstaff")]
     if cls == "Monk": main = weapons[0]  # Unarmed
-    # Ranger defaults to Longbow main
     if cls == "Ranger" and "Longbow" in names: main = weapons[names.index("Longbow")]
+    if cls == "Paladin" and "Warhammer" in names: main = weapons[names.index("Warhammer")]
 
     eq["main_hand_id"] = main["id"]
     f["weapon"] = {k: v for k, v in main.items() if k != "id"}
@@ -683,6 +732,8 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     elif cls == "Ranger":
         ss = [w for w in weapons if w["name"] == "Shortsword" and w["id"] != main["id"]]
         eq["off_hand_id"] = ss[0]["id"] if ss else None
+    elif cls == "Paladin" and shields:
+        eq["off_hand_id"] = shields[0]["id"]
     else:
         eq["off_hand_id"] = None
 
