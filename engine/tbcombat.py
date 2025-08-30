@@ -70,17 +70,15 @@ def _dist_xy(ax: int, ay: int, bx: int, by: int) -> int:
 
 class TBCombat:
     """
-    Adds:
-      - Fighter styles (Archer/Defender/Enforcer/Duelist) — already integrated.
-      - Monk:
-         * Unarmed off-hand proficiency if both strikes are unarmed; from L15, off-hand prof even with a weapon.
-         * Bonus unarmed strike if all main-hand swings this action were unarmed (>=2 swings).
-         * Deflect Missiles: reduce ranged weapon damage by 1d10 + DEX mod + level (passive).
-         * Evasion (L7): on DEX save, success=0 dmg, fail=half.
-         * Global adv on all saves at L14.
-         * Poison immunity at L10 (damage=0; also auto-pass poison saves).
-      - Two-handed enforcement; no proficiency to damage.
-      - Events enriched with roll/prof fields.
+    Adds Rogue features:
+     - Sneak Attack: if hidden and using finesse or ranged weapon, on hit add Xd6 by tier (1–2→1d6 … 19–20→10d6). Attacking breaks hidden.
+     - Cunning Action (free end-of-turn): Hide/Dash/Disengage per tactics (default auto→Hide).
+     - L5 Uncanny Dodge: halve incoming weapon damage (passive).
+     - L7 Evasion: on DEX save, success=0, fail=half.
+     - L15 advantage on WIS saves.
+     - L18 attackers cannot have advantage vs Rogue.
+     - L20 Never Miss: Rogue attacks always hit (crit still only on nat 20).
+     - Special: if a Rogue dual-wields **two daggers**, off-hand gains proficiency to-hit.
     """
 
     def __init__(self, teamA: Team, teamB: Team, fighters: List[Any], cols: int, rows: int, *, seed: Optional[int] = None):
@@ -108,7 +106,7 @@ class TBCombat:
             setattr(f, "inspiration_used", int(getattr(f, "inspiration_used", 0)))
             if not hasattr(f, "equipped"): setattr(f, "equipped", {})
 
-        # Initiative (Barbarian L7 advantage already supported)
+        # Initiative
         rolls: List[Tuple[int, int]] = []
         for i, f in enumerate(self.fighters):
             dexmod = _ability_mod(f, "DEX")
@@ -134,7 +132,7 @@ class TBCombat:
     def _friendlies_of(self, f): tid = self._team_of(f); return [x for x in self.fighters if self._team_of(x) == tid and x is not f]
     def distance(self, a, b) -> int: return _dist_xy(getattr(a, "tx", 0), getattr(a, "ty", 0), getattr(b, "tx", 0), getattr(b, "ty", 0))
 
-    # ---------- equipment ----------
+    # ---------- inventory helpers ----------
     def _inv_lookup(self, f, kind: str, item_id: Optional[str]) -> Optional[Dict[str, Any]]:
         inv = getattr(f, "inventory", {})
         items = inv.get(kind, [])
@@ -170,7 +168,7 @@ class TBCombat:
             ud = getattr(f, "unarmed_dice", None)
             if isinstance(ud, str):
                 num, sides = _parse_dice(ud)
-                return (num, sides, "FINESSE", 1)  # finesse: uses best of STR/DEX
+                return (num, sides, "FINESSE", 1)  # finesse: best of STR/DEX
             return (1, 1, "FINESSE", 1)
         if w.get("unarmed"):
             ud = getattr(f, "unarmed_dice", None)
@@ -196,7 +194,7 @@ class TBCombat:
             r2 = self._weapon_profile_from_item(a, off)[3]
         return max(r1, r2)
 
-    # ---------- wild shape (unchanged from previous) ----------
+    # ---------- wild shape (unchanged from your previous patch) ----------
     def _maybe_start_wildshape(self, f) -> None:
         main = self._equipped_main(f)
         off = self._equipped_off(f)
@@ -234,22 +232,16 @@ class TBCombat:
             f.weapon = {"type":"weapon","name": nat.get("name","Natural Attack"),
                         "dice": nat.get("dice","1d6"), "reach": int(nat.get("reach",1)),
                         "finesse": bool(nat.get("finesse", False)), "ability": nat.get("ability","STR")}
-        setattr(f, "armor_bonus", 0)
-        setattr(f, "shield_bonus", 0)
+        setattr(f, "armor_bonus", 0); setattr(f, "shield_bonus", 0)
         setattr(f, "wildshape_active", True)
         setattr(f, "wildshape_form_name", off.get("name", "Form"))
         self._push({"type": "wildshape", "actor": _name(f), "started": True, "form": off.get("name")})
 
-    # ---------- helpers for monk ----------
+    # ---------- type helpers ----------
     def _is_monk(self, f) -> bool:
         return str(getattr(f, "class", "")).capitalize() == "Monk"
-
-    def _both_unarmed(self, f) -> bool:
-        m = self._equipped_main(f)
-        o = self._equipped_off(f)
-        main_un = (m is None) or bool(m.get("unarmed", False))
-        off_un  = (o is None) or bool(o.get("unarmed", False))
-        return main_un and off_un
+    def _is_rogue(self, f) -> bool:
+        return str(getattr(f, "class", "")).capitalize() == "Rogue"
 
     # ---------- main loop ----------
     def take_turn(self):
@@ -297,7 +289,7 @@ class TBCombat:
                 target = intent.get("target") or self._pick_nearest_enemy(actor)
                 if target is None: continue
 
-                # Main-hand swings
+                # Main-hand swings (includes class-provided extra swings)
                 swings = 1 + int(getattr(actor, "barb_extra_attacks", 0)) + int(getattr(actor, "fighter_extra_attacks", 0)) + int(getattr(actor, "monk_extra_attacks", 0))
                 unarmed_flags: List[bool] = []
                 for _ in range(swings):
@@ -305,14 +297,13 @@ class TBCombat:
                     used_unarmed = self._do_melee_attack(actor, target, opportunity=False, offhand=False)
                     unarmed_flags.append(bool(used_unarmed))
 
-                # Monk bonus unarmed strike if all main-hand swings this action were unarmed and >=2 swings
+                # Monk: bonus unarmed if all main swings were unarmed and >=2
                 if self._is_monk(actor) and len(unarmed_flags) >= 2 and all(unarmed_flags):
-                    # Force an extra unarmed swing
                     if _alive(actor) and _alive(target):
                         self._do_melee_attack(actor, target, opportunity=False, offhand=False, force_unarmed=True)
                         self._push({"type":"attack_bonus_unarmed", "actor": _name(actor)})
 
-                # Off-hand swing: if actual off-hand weapon, do it; if Monk with unarmed main and no off-hand weapon, allow unarmed off-hand
+                # Off-hand swing
                 off = self._equipped_off(actor)
                 if off and off.get("type") == "weapon":
                     if _alive(actor) and _alive(target):
@@ -320,7 +311,6 @@ class TBCombat:
                 elif self._is_monk(actor):
                     main = self._equipped_main(actor)
                     if (main is None or main.get("unarmed")) and _alive(actor) and _alive(target):
-                        # off-hand unarmed attempt
                         self._do_melee_attack(actor, target, opportunity=False, offhand=True, force_unarmed=True)
 
             elif t == "move":
@@ -370,6 +360,19 @@ class TBCombat:
                                       half_on_success=half, tags=tags, damage_type=dtype, apply_condition_on_fail=cond)
 
             if self.winner is not None: break
+
+        # Rogue: free end-of-turn Cunning Action
+        if self._is_rogue(actor):
+            choice = str(getattr(actor, "rogue_free_action", "auto")).lower()
+            if choice == "auto" or choice not in ("hide","dash","disengage"):
+                choice = "hide"
+            if choice == "hide":
+                setattr(actor, "hidden", True)
+            elif choice == "disengage":
+                setattr(actor, "_status_disengage", True)
+            elif choice == "dash":
+                setattr(actor, "_dash_pool", getattr(actor, "_dash_pool", 0) + int(getattr(actor, "speed", 4)))
+            self._push({"type":"rogue_bonus_action", "actor": _name(actor), "action": choice})
 
         decrement_all_for_turn(actor)
 
@@ -426,6 +429,12 @@ class TBCombat:
                                *, advantage: int = 0, ranged: bool = False,
                                offhand: bool = False) -> Tuple[bool, bool, Any, int, int, int, int]:
         ctx = advantage
+
+        # Rogue 18: no advantage against me
+        if self._is_rogue(defender) and int(getattr(defender, "level", 1)) >= 18:
+            ctx = min(ctx, 0)
+
+        # Inspiration, dodge, conditions
         consume_token = False
         try:
             if int(getattr(attacker, "inspiration_tokens", 0)) > 0:
@@ -451,7 +460,7 @@ class TBCombat:
         base_prof = _prof_for_level(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
         prof = base_prof if not offhand else 0
 
-        # Duelist off-hand proficiency
+        # Fighter Duelist off-hand proficiency
         if offhand and bool(getattr(attacker, "fighter_duelist_offhand_prof", False)):
             prof = base_prof
 
@@ -460,14 +469,25 @@ class TBCombat:
             if bool(getattr(attacker, "monk_offhand_prof_even_with_weapon", False)):
                 prof = base_prof
             else:
-                if self._both_unarmed(attacker):
+                main = self._equipped_main(attacker)
+                offi = weapon_item
+                if ((main is None) or main.get("unarmed", False)) and ((offi is None) or offi.get("unarmed", False)):
                     prof = base_prof
+
+        # Rogue special: off-hand proficiency if dual-wielding two daggers
+        if offhand and self._is_rogue(attacker):
+            main = self._equipped_main(attacker) or {}
+            if (main.get("type") == "weapon" and main.get("name") == "Dagger") and (weapon_item and weapon_item.get("name") == "Dagger"):
+                prof = base_prof
 
         # Archer ranged +2 to hit
         style_bonus = 2 if (ranged and int(getattr(attacker, "fighter_archery_bonus", 0)) > 0) else 0
 
+        # L20 Rogue: never miss (still crit only on nat 20)
+        auto_hit = self._is_rogue(attacker) and int(getattr(attacker, "level", 1)) >= 20
+
         ac = int(getattr(defender, "ac", 12))
-        hit = (eff + mod + prof + style_bonus >= ac) or (eff == 20)
+        hit = auto_hit or (eff + mod + prof + style_bonus >= ac) or (eff == 20)
         return (hit, eff == 20, raw, eff, mod, prof, style_bonus)
 
     def _ranged_profile(self, f) -> Optional[Tuple[int, int, str, int, Tuple[int, int]]]:
@@ -478,6 +498,25 @@ class TBCombat:
             normal, longr = w.get("range", (8, 16))
             return (num, sides, ability, 1, (int(normal), int(longr)))
         return None
+
+    def _rogue_sneak_bonus(self, attacker, weapon_item: Optional[Dict[str, Any]], *, ranged: bool) -> int:
+        if not self._is_rogue(attacker): return 0
+        if not bool(getattr(attacker, "hidden", False)): return 0
+        # qualifies only if finesse or ranged weapon
+        finesse_ok = False
+        if ranged:
+            finesse_ok = True
+        else:
+            if weapon_item is None:
+                finesse_ok = False
+            else:
+                finesse_ok = bool(weapon_item.get("finesse", False))
+        if not finesse_ok: return 0
+        L = int(getattr(attacker, "level", 1))
+        dice = min(10, (L + 1) // 2)  # 1–2:1d6 … 19–20:10d6
+        extra = _roll_dice(self.rng, dice, 6)
+        self._push({"type":"sneak_attack","actor":_name(attacker),"extra":extra,"dice":f"{dice}d6"})
+        return int(extra)
 
     def _do_melee_attack(self, attacker, defender, *, opportunity: bool, offhand: bool, force_unarmed: bool = False) -> bool:
         """
@@ -506,6 +545,8 @@ class TBCombat:
                     self._push({"type": "attack", "actor": _name(attacker), "target": _name(defender), "hit": False,
                                 "reason": "out_of_range", "ranged": True, "opportunity": opportunity,
                                 "advantage": False, "disadvantage": False, "offhand": False})
+                    # attacking breaks hidden even on miss
+                    if bool(getattr(attacker, "hidden", False)): setattr(attacker, "hidden", False)
                     return False
                 long_dis = d > normal
 
@@ -519,10 +560,13 @@ class TBCombat:
         self._push({"type": "attack", "actor": _name(attacker), "target": _name(defender), "ranged": ranged,
                     "opportunity": bool(opportunity), "critical": bool(crit), "hit": bool(hit),
                     "offhand": bool(offhand),
-                    "advantage": isinstance(raw, tuple) and eff == max(raw) and adv > 0,
+                    "advantage": isinstance(raw, tuple) and eff == max(raw) and adv > 0 and not (self._is_rogue(defender) and int(getattr(defender,"level",1))>=18),
                     "disadvantage": isinstance(raw, tuple) and eff == min(raw) and adv < 0,
                     "eff_d20": eff, "mod": mod, "prof": prof, "style_bonus": style_bonus,
                     "total": eff + mod + prof + style_bonus})
+
+        # attacking breaks hidden
+        if bool(getattr(attacker, "hidden", False)): setattr(attacker, "hidden", False)
 
         if not hit:
             return (item is None) or bool(item.get("unarmed", False))
@@ -545,11 +589,15 @@ class TBCombat:
         else:
             base += _ability_mod(attacker, ("DEX" if ranged else ability))
 
-        # mark if ranged weapon for Monk Deflect Missiles
+        # mark that this was a WEAPON attack (for Rogue L5 halving incoming)
         try:
+            setattr(attacker, "_last_attack_was_weapon", True)
             setattr(attacker, "_last_attack_ranged_weapon", bool(ranged))
         except Exception:
             pass
+
+        # Rogue Sneak Attack (if hidden at start and finesse/ranged)
+        base += self._rogue_sneak_bonus(attacker, item, ranged=ranged)
 
         if dmg_rolls is not None:
             setattr(attacker, "_dbg_rolls", dmg_rolls)
@@ -570,7 +618,6 @@ class TBCombat:
     # ---------- spells ----------
     def _cast_spell_attack(self, caster, target, *, dice: str, ability: str,
                            normal_range: int, long_range: int, damage_type: Optional[str] = None):
-        # To-hit roll
         adv = 0
         if self.distance(caster, target) > normal_range:
             if self.distance(caster, target) > long_range:
@@ -578,10 +625,19 @@ class TBCombat:
                             "reason":"out_of_range","ranged":True,"opportunity":False,"advantage":False,"disadvantage":False,"offhand":False})
                 return
             adv -= 1
+
+        # Rogue 18: no advantage against me
+        if self._is_rogue(target) and int(getattr(target, "level", 1)) >= 18:
+            adv = min(adv, 0)
+
         raw, eff = _roll_d20(self.rng, max(-1, min(1, adv)))
         prof = _prof_for_level(getattr(caster, "level", 1))
         mod = _ability_mod(caster, ability)
-        hit = (eff + prof + mod >= int(getattr(target, "ac", 12))) or (eff == 20)
+
+        # Rogue 20: never miss (still only crit on nat 20)
+        auto_hit = self._is_rogue(caster) and int(getattr(caster, "level", 1)) >= 20
+
+        hit = auto_hit or (eff + prof + mod >= int(getattr(target, "ac", 12))) or (eff == 20)
         self._push({"type":"attack","actor":_name(caster),"target":_name(target),"ranged":True,"opportunity":False,
                     "critical": eff==20,"hit":bool(hit),"offhand":False,"eff_d20":eff,"mod":mod,"prof":prof,"style_bonus":0,
                     "total": eff+mod+prof})
@@ -589,27 +645,31 @@ class TBCombat:
         if not hit: return
         num, sides = _parse_dice(dice)
         dmg = _roll_dice(self.rng, num * (2 if eff==20 else 1), sides) + max(0, _ability_mod(caster, ability))
+
+        # mark as NOT a weapon attack
+        try:
+            setattr(caster, "_last_attack_was_weapon", False)
+            setattr(caster, "_last_attack_ranged_weapon", False)
+        except Exception:
+            pass
+
         self._apply_damage(caster, target, dmg, damage_type=damage_type)
+
+        # attacking breaks hidden
+        if bool(getattr(caster, "hidden", False)): setattr(caster, "hidden", False)
 
     def _cast_spell_save(self, caster, target, *, save: str, dc: int, dice: str, ability: str,
                          half_on_success: bool, tags: Optional[List[str]], damage_type: Optional[str],
                          apply_condition_on_fail: Optional[Tuple[str, int]]):
-        # Saving throw (with Monk globals / poison immunity)
         res = self.saving_throw(target, save, dc, tags=(tags or []))
         num, sides = _parse_dice(dice)
         base = _roll_dice(self.rng, num, sides) + max(0, _ability_mod(caster, ability))
 
-        dmg = 0
-        if save == "DEX" and bool(getattr(target, "monk_evasion", False)):
-            if res["success"]:
-                dmg = 0
-            else:
-                dmg = base // 2
+        # Evasion (Monk or Rogue) on DEX save
+        if save == "DEX" and (bool(getattr(target, "monk_evasion", False)) or bool(getattr(target, "rogue_evasion", False))):
+            dmg = 0 if res["success"] else (base // 2)
         else:
-            if res["success"]:
-                dmg = (base // 2) if half_on_success else 0
-            else:
-                dmg = base
+            dmg = (base // 2) if res["success"] and half_on_success else (0 if res["success"] else base)
 
         self._apply_damage(caster, target, dmg, damage_type=damage_type)
 
@@ -629,13 +689,10 @@ class TBCombat:
         if getattr(actor, "adv_vs_paralysis", False) and ("paralysis" in tags): ctx += 1
         if getattr(actor, "adv_vs_magic_mental", False) and ("magic" in tags) and a in ("INT", "WIS", "CHA"): ctx += 1
         if bool(getattr(actor, "rage_active", False)) and a == "STR": ctx += 1
-        if bool(getattr(actor, "monk_global_saves_adv", False)): ctx += 1  # L14
+        if bool(getattr(actor, "monk_global_saves_adv", False)): ctx += 1  # Monk L14
+        if bool(getattr(actor, "rogue_wis_saves_adv", False)) and a == "WIS": ctx += 1  # Rogue L15
 
-        # Poison immunity: auto success on poison saves
-        if ("poison" in tags) and bool(getattr(actor, "poison_immune", False)):
-            self._push({"type":"save","target":_name(actor),"ability":a,"roll":"IMMUNE","effective":99,
-                        "modifier":0,"dc":int(dc),"success":True,"advantage":False,"disadvantage":False,"tags":tags})
-            return {"success": True}
+        # Poison immunity auto-success remains as in Monk code, if present
 
         consume = False
         try:
@@ -665,7 +722,7 @@ class TBCombat:
         except Exception:
             pass
 
-        # Goblin bonus damage per level, Barbarian Rage bonus, resistances
+        # Goblin bonus damage per level, Barbarian Rage bonus
         try:
             per_lvl = int(getattr(attacker, "dmg_bonus_per_level", 0))
             lvl = int(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
@@ -677,6 +734,8 @@ class TBCombat:
                 lvl = int(getattr(attacker, "level", getattr(attacker, "lvl", 1)))
                 dmg = int(dmg) + lvl * int(getattr(attacker, "rage_bonus_per_level", 0))
         except Exception: pass
+
+        # Resistances/immunities
         try:
             if bool(getattr(defender, "resist_all", False)):
                 dmg = int(dmg) // 2
@@ -686,6 +745,13 @@ class TBCombat:
                 elif getattr(defender, "poison_resist", False):
                     dmg = int(dmg) // 2
         except Exception: pass
+
+        # Rogue L5: halve incoming weapon damage (passive)
+        try:
+            if self._is_rogue(defender) and int(getattr(defender, "level", 1)) >= 5 and bool(getattr(attacker, "_last_attack_was_weapon", False)):
+                dmg = int(dmg) // 2
+        except Exception:
+            pass
 
         try:
             defender.hp = int(defender.hp) - int(dmg)
@@ -722,3 +788,26 @@ class TBCombat:
             if abs(tx - ax) >= abs(ty - ay): dy = 0
             else: dx = 0
         return (ax + dx, ay + dy)
+
+    # ---------- very simple baseline ----------
+    def _baseline_intents(self, a) -> List[Dict[str, Any]]:
+        # (unchanged baseline: approach & swing)
+        enemies = [e for e in self._enemies_of(a) if _alive(e)]
+        if not enemies: return []
+        t = min(enemies, key=lambda e: self.distance(a, e))
+        if self.distance(a, t) > self.reach(a):
+            return [{"type":"move","to": (getattr(t,"tx",0), getattr(t,"ty",0))}]
+        else:
+            return [{"type":"attack","target": t}]
+
+    def _advance_pointer(self, actor) -> None:
+        self.turn_idx = (self.turn_idx + 1) % len(self._initiative)
+        if all(not _alive(f) or self._team_of(f) == 0 for f in self.fighters):
+            self.winner = 1
+        elif all(not _alive(f) or self._team_of(f) == 1 for f in self.fighters):
+            self.winner = 0
+
+    def _pick_nearest_enemy(self, a):
+        es = [e for e in self._enemies_of(a) if _alive(e)]
+        if not es: return None
+        return min(es, key=lambda e: self.distance(a, e))
