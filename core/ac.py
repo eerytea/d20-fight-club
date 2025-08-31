@@ -2,42 +2,49 @@
 from __future__ import annotations
 from typing import Any, Dict
 
-def _mod(x: int) -> int:
-    return (int(x) - 10) // 2
+def _mod(v: int) -> int:
+    return (int(v) - 10) // 2
 
 def calc_ac(f: Dict[str, Any]) -> int:
     """
-    Best applicable AC (shield stacks with all unless explicitly noted):
-      - Normal: 10 + DEX mod + armor_bonus + shield_bonus
-      - Lizardkin: 13 + DEX mod + shield_bonus (ignores armor_bonus)
-      - Monk/Druid in Wildshape etc handled elsewhere if needed
+    Centralized AC math, updated for WIS->INT world and new class names.
+    - Monk unarmored AC: 10 + DEX + INT (no armor, no shield)
+    - Crusader: +1 AC at level 2+
+    - Stalker:  +1 AC at level 2+
+    - Defender style: +1 AC (fighter_defense_ac_bonus)
     """
-    dex = int(f.get("DEX", 10))
-    dex_mod = _mod(dex)
+    armor_bonus = int(f.get("armor_bonus", 0))
+    shield_bonus = int(f.get("shield_bonus", 0))
+    dex_mod = _mod(int(f.get("DEX", f.get("dex", 10))))
+    int_mod = _mod(int(f.get("INT", f.get("int", f.get("WIS", 10)))))  # legacy WIS fallback
+    con_mod = _mod(int(f.get("CON", f.get("con", 10))))
 
-    # Race-based natural armor (lizardkin)
-    race = str(f.get("race", "")).lower()
-    if race == "lizardkin":
-        ac = 13 + dex_mod
-        # Shields still stack
-        ac += int(f.get("shield_bonus", 0))
-        return ac
+    eq = f.get("equipped", {}) or {}
+    has_armor = bool(eq.get("armor_id"))
+    has_shield = bool(eq.get("shield_id"))
 
-    # Baseline
-    ac = 10 + dex_mod
+    # Monk unarmored AC
+    if bool(f.get("monk_unarmored_ac")) and not has_armor and not has_shield:
+        ac = 10 + dex_mod + int_mod
+    # Berserker (barbarian-style) unarmored defense if you use it
+    elif bool(f.get("barb_unarmored_ac")) and not has_armor:
+        ac = 10 + dex_mod + con_mod + (shield_bonus if has_shield else 0)
+    else:
+        ac = 10 + armor_bonus + shield_bonus + dex_mod
 
-    # Armor and shield
-    ac += int(f.get("armor_bonus", 0))
-    ac += int(f.get("shield_bonus", 0))
-
-    # Fighter Defense style: +1 AC when wearing armor (already included via fighter_defense_ac_bonus)
+    # Fighter style: Defender +1 AC
     ac += int(f.get("fighter_defense_ac_bonus", 0))
 
-    # Ranger L2: +1 AC always-on (no flags needed)
-    try:
-        if str(f.get("class", "")).capitalize() == "Ranger" and int(f.get("level", f.get("lvl", 1))) >= 2:
-            ac += 1
-    except Exception:
-        pass
+    # Crusader +1 AC at level 2+
+    if str(f.get("class", "")).strip().lower() == "crusader" and int(f.get("level", 1)) >= 2:
+        ac += 1
 
-    return ac
+    # Stalker +1 AC at level 2+
+    if str(f.get("class", "")).strip().lower() == "stalker" and int(f.get("level", 1)) >= 2:
+        ac += 1
+
+    # Misc
+    ac += int(f.get("ac_misc_bonus", 0))
+
+    f["ac"] = int(ac)
+    return int(ac)
