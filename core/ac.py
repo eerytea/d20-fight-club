@@ -7,16 +7,17 @@ def _mod(v: int) -> int:
 
 def calc_ac(f: Dict[str, Any]) -> int:
     """
-    Centralized AC math, updated for WIS->INT world and new class names.
-    - Monk unarmored AC: 10 + DEX + INT (no armor, no shield)
-    - Crusader: +1 AC at level 2+
-    - Stalker:  +1 AC at level 2+
-    - Defender style: +1 AC (fighter_defense_ac_bonus)
+    Centralized AC math in the INT (no-WIS) world.
+      - Monk unarmored AC: 10 + DEX + INT (no armor, no shield)
+      - Berserker unarmored defense (if used): 10 + DEX + CON (+ shield if equipped)
+      - Crusader: +1 AC at level 2+
+      - Stalker:  +1 AC at level 2+
+      - Fighter style Defender: +1 AC
     """
     armor_bonus = int(f.get("armor_bonus", 0))
     shield_bonus = int(f.get("shield_bonus", 0))
     dex_mod = _mod(int(f.get("DEX", f.get("dex", 10))))
-    int_mod = _mod(int(f.get("INT", f.get("int", f.get("WIS", 10)))))  # legacy WIS fallback
+    int_mod = _mod(int(f.get("INT", f.get("int", 10))))   # legacy WIS is removed; keep INT only
     con_mod = _mod(int(f.get("CON", f.get("con", 10))))
 
     eq = f.get("equipped", {}) or {}
@@ -26,7 +27,7 @@ def calc_ac(f: Dict[str, Any]) -> int:
     # Monk unarmored AC
     if bool(f.get("monk_unarmored_ac")) and not has_armor and not has_shield:
         ac = 10 + dex_mod + int_mod
-    # Berserker (barbarian-style) unarmored defense if you use it
+    # Berserker-style unarmored defense (if flagged) with optional shield
     elif bool(f.get("barb_unarmored_ac")) and not has_armor:
         ac = 10 + dex_mod + con_mod + (shield_bonus if has_shield else 0)
     else:
