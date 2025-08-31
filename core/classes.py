@@ -58,6 +58,7 @@ UNARMED_ITEM = weapon("Unarmed", "1d1", finesse=True, versatile=True, unarmed_fl
 
 # ---------- Class starting kits ----------
 CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
+    # Berserker (Barbarian)
     "Berserker": {
         "weapons": [
             weapon("Greataxe", "1d12", ability="STR", two_handed=True),
@@ -67,6 +68,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [],
         "shields": [],
     },
+    # Skald (Bard)
     "Skald": {
         "weapons": [
             weapon("Rapier", "1d8", finesse=True),
@@ -76,6 +78,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Leather Armor", 1)],
         "shields": [],
     },
+    # War Priest (Cleric)
     "War Priest": {
         "weapons": [
             weapon("Mace", "1d6", ability="STR"),
@@ -96,7 +99,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "armors": [armor("Leather Armor", 1)],
         "shields": [shield("Shield", 2)],
     },
-    # Fighter styles as distinct "classes"
+    # Fighter styles as distinct selection names (unchanged)
     "Archer": {
         "weapons": [weapon("Longbow", "1d8", ability="DEX", ranged=True, range_tuple=(2, 4), two_handed=True)],
         "armors": [armor("Chain Mail", 3)],
@@ -119,6 +122,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
     },
     "Monk": {"weapons": [], "armors": [], "shields": []},
 
+    # Stalker (Ranger)
     "Stalker": {
         "weapons": [
             weapon("Longbow", "1d8", ability="DEX", ranged=True, range_tuple=(2, 4), two_handed=True),
@@ -138,6 +142,7 @@ CLASS_STARTING_KIT: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         "shields": [],
     },
 
+    # Crusader (Paladin)
     "Crusader": {
         "weapons": [weapon("Warhammer", "1d8", ability="STR", versatile=True, two_handed_dice="1d10")],
         "armors": [armor("Chain Mail", 3)],
@@ -153,17 +158,17 @@ def proficiency_for_level(level: int) -> int:
     return min(6, 2 + (L - 1) // 4)
 
 # ---------- ASI schedules ----------
-_BERSERKER_ASI   = {4, 8, 12, 16, 19}
-_SKALD_ASI       = {4, 8, 12, 16, 19}
-_WARPRIEST_ASI   = {4, 8, 12, 16, 19}
-_DRUID_ASI       = {4, 8, 12, 16, 19}
-_FIGHTER_ASI     = {4, 6, 8, 12, 14, 16, 19}
-_MONK_ASI        = {4, 8, 12, 16, 19}
-_STALKER_ASI     = {4, 8, 12, 16, 19}
-_WIZARD_ASI      = {4, 8, 12, 16, 19}
-_CRUSADER_ASI    = {4, 8, 12, 16, 19}
+_BERSERKER_ASI = {4, 8, 12, 16, 19}
+_SKALD_ASI     = {4, 8, 12, 16, 19}
+_WARPRIEST_ASI = {4, 8, 12, 16, 19}
+_DRUID_ASI     = {4, 8, 12, 16, 19}
+_FIGHTER_ASI   = {4, 6, 8, 12, 14, 16, 19}
+_MONK_ASI      = {4, 8, 12, 16, 19}
+_STALKER_ASI   = {4, 8, 12, 16, 19}
+_WIZARD_ASI    = {4, 8, 12, 16, 19}
+_CRUSADER_ASI  = {4, 8, 12, 16, 19}
 
-# ---------- HP retrocompute for all classes ----------
+# ---------- HP retrocompute ----------
 def _mod(x: int) -> int:
     return (int(x) - 10) // 2
 
@@ -228,7 +233,7 @@ def _skald_needs_asi(L: int) -> bool:
 
 # ---------- WAR PRIEST (Cleric) ----------
 def _apply_warpriest_init(f: Dict[str, Any]) -> None:
-    f["spell_ability"] = "INT"  # WIS -> INT (global change)
+    f["spell_ability"] = "INT"  # WIS -> INT
     f["cantrips_known"] = 0; f["spells_known"] = 0
     f["known_cantrips"] = []; f["known_spells"] = []
     f["spell_slots_total"] = [0]*10; f["spell_slots_current"] = [0]*10
@@ -269,7 +274,7 @@ def _druid_allowed_cr(L: int) -> List[float]:
     return out
 
 def _apply_druid_init(f: Dict[str, Any]) -> None:
-    f["spell_ability"] = "INT"  # WIS -> INT (global change)
+    f["spell_ability"] = "INT"  # WIS -> INT
     f["cantrips_known"] = 0; f["spells_known"] = 0
     f["known_cantrips"] = []; f["known_spells"] = []
     f["spell_slots_total"] = [0]*10; f["spell_slots_current"] = [0]*10
@@ -445,7 +450,7 @@ def _apply_crusader_init(f: Dict[str, Any]) -> None:
     f.setdefault("cru_lay_on_hands_total", total)
     f.setdefault("cru_lay_on_hands_current", total)
 
-    f["cru_twohand_damage_adv"] = (L >= 2)   # two-handed (or versatile used 2H): roll damage twice, take higher
+    f["cru_twohand_damage_adv"] = (L >= 2)   # 2H (or versatile used 2H): roll damage twice, take higher
     f["poison_immune"] = (L >= 3)
     f["cru_extra_attacks"] = 1 if L >= 5 else 0
 
@@ -459,7 +464,7 @@ def _apply_crusader_init(f: Dict[str, Any]) -> None:
     f["cru_smite_chance"] = _cru_smite_chance(L)
     f["cru_smite_nd6"] = _cru_smite_nd6(L)
 
-    f["ac"] = calc_ac(f)  # includes +1 AC at L2 via calc_ac
+    f["ac"] = calc_ac(f)  # includes +1 AC at L2 via ac.py
 
 def _apply_crusader_level(f: Dict[str, Any], L: int) -> None:
     _apply_crusader_init(f)
@@ -473,7 +478,6 @@ def _allocate_asi_via_training(f: Dict[str, Any], points: int, *, hard_caps: Dic
     # Drop WIS, fold its weight into INT by default
     default_weights = {"STR": 0.20, "DEX": 0.20, "CON": 0.20, "INT": 0.25, "CHA": 0.15}
     if not weights: weights = default_weights
-    # On-the-fly migrate legacy "WIS" weight to INT
     if "WIS" in weights:
         weights["INT"] = weights.get("INT", 0.0) + weights.pop("WIS", 0.0)
     order = sorted(weights.items(), key=lambda kv: (-kv[1], kv[0]))
@@ -491,8 +495,7 @@ def ensure_class_features(f: Dict[str, Any]) -> None:
     cls = _norm_class(f.get("class", ""))
     f["class"] = cls  # normalize
     if cls == "Berserker":
-        # flags used by AC calc (barbarian unarmored, etc.) if you support them
-        f["barb_unarmored_ac"] = True
+        f["barb_unarmored_ac"] = True   # if you use it in ac.py
         f["ac"] = calc_ac(f)
     elif cls == "Skald":
         _apply_skald_init(f)
@@ -507,7 +510,6 @@ def ensure_class_features(f: Dict[str, Any]) -> None:
     elif cls == "Wizard":
         _apply_wizard_init(f)
     elif cls == "Stalker":
-        # Stalker perks mostly live in combat/AC; AC gives +1 at L2
         f["ac"] = calc_ac(f)
     elif cls == "Crusader":
         _apply_crusader_init(f)
@@ -568,8 +570,8 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     """
     Adds class kit; sets up equipment model:
       - f['equipped']: main_hand_id, off_hand_id, armor_id, shield_id
-      - Always injects the synthetic 'Unarmed' weapon.
-      - Lizardkin: cannot equip body armor; shield still allowed. (Consider race_tags in future.)
+      - Always injects synthetic 'Unarmed' weapon.
+      - Lizardkin rule remains name-based for now (can move to race_tags later).
       - Two-handed main-hand clears off-hand and shield.
     """
     cls = _norm_class(f.get("class", ""))
@@ -593,7 +595,7 @@ def grant_starting_kit(f: Dict[str, Any]) -> None:
     if not any(w.get("unarmed") for w in weapons):
         weapons.insert(0, {**UNARMED_ITEM, "id": "unarmed"})
 
-    # Armor allowance (name-based for now; consider race_tags later)
+    # Armor allowance (name-based for now)
     race = str(f.get("race", "")).lower()
     armor_allowed = (race != "lizardkin") and not bool(f.get("armor_prohibited", False))
 
