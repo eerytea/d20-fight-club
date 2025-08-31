@@ -34,10 +34,34 @@ def _roll_d20(rng: random.Random, adv_ctx: int = 0) -> Tuple[Tuple[int,int,int],
 
 class TBCombat:
     """
-    Turn-based combat loop. Updated for:
-    - WIS -> INT (perception, detection, aura saves target)
-    - Class renames: Stalker, Crusader
-    - Public-facing logs say "player" (non-breaking)
+    Turn-based combat loop.
+
+    Updated for:
+    - WIS -> INT across the board (perception/detection, save targeting).
+    - Class renames:
+        Ranger   -> Stalker
+        Paladin  -> Crusader
+        (others handled in core; Rogue stays as-is)
+    - Stalker features:
+        L2: +2 ranged attacks, +1 AC (AC handled in core/ac), off-hand proficiency when dual-wielding
+        L10: Hide as bonus action, +10 to Hide
+        L18: Unlimited ranged weapon range; +1 melee reach
+        L20: Add INT mod to attack rolls
+    - Crusader features:
+        L2: +1 AC (in ac.py) and damage advantage when attacking with two-handed melee (including versatile used 2H)
+        L3: Poison immunity
+        L5: Extra attack
+        L6: Aura grants allies +CHA mod to INT saves within radius
+        L10: Allies in aura immune to frightened
+        L11: Smite-like proc chance jumps to 50% (2d6..5d6 by level; not doubled on crit)
+        L18: Aura radius increases to 6
+    - Wizard features:
+        Cantrip scaling tiers (5/11/17)
+        L7: Advantage on saves vs blinded/deafened
+        L3/10/17: AOE ally exemptions: 1/2/3 closest allies auto-exempted
+    - Global:
+        Proficiency bonus is added to weapon damage.
+        Start-of-turn automatic detection checks vs hidden enemies use INT (not WIS).
     """
     def __init__(self, team_a, team_b, actors: List[Any], width: int, height: int, *, seed: int = 1):
         self.team_a = team_a
@@ -52,6 +76,7 @@ class TBCombat:
 
     # ---------------------- Identity helpers ----------------------
     def _cls(self, f) -> str:
+        # class name already normalized in core.classes.ensure_class_features
         return str(getattr(f, "class", getattr(f, "Class", ""))).strip().capitalize()
 
     def _is_class(self, f, cls_name: str) -> bool:
@@ -212,10 +237,12 @@ class TBCombat:
         prof_to_hit = prof
         if offhand:
             prof_to_hit = 0
+            # Fighter Duelist offhand proficiency
             if getattr(attacker, "fighter_duelist_offhand_prof", False):
                 prof_to_hit = prof
+            # Stalker L2 grants offhand proficiency when dual wielding
             if self._is_stalker(attacker) and int(getattr(attacker, "level", 1)) >= 2:
-                prof_to_hit = prof  # Stalker L2 off-hand proficiency
+                prof_to_hit = prof
 
         # class/style bonuses
         style_bonus = 0
@@ -248,6 +275,7 @@ class TBCombat:
     def _is_two_handed_in_use(self, attacker, item: Dict[str, Any]) -> bool:
         if not item: return False
         if item.get("two_handed", False): return True
+        # Versatile used in two hands = no shield and no offhand weapon
         if item.get("versatile", False) and (not self._has_shield_equipped(attacker)) and (self._equipped_off(attacker) is None):
             return True
         return False
@@ -276,11 +304,13 @@ class TBCombat:
 
     def _weapon_damage_roll(self, attacker, item: Dict[str, Any], *, is_ranged: bool, crit: bool) -> int:
         versatile_two_handed = self._is_two_handed_in_use(attacker, item)
-        # Crusader L2: damage-advantage with 2H melee
+
+        # Crusader L2: damage-advantage with 2H melee (including versatile used 2H)
         if self._is_crusader(attacker) and int(getattr(attacker, "level", 1)) >= 2 and versatile_two_handed and not is_ranged:
             d1 = self._roll_damage_once(attacker, item, is_ranged=is_ranged, crit=crit, versatile_two_handed=True)
             d2 = self._roll_damage_once(attacker, item, is_ranged=is_ranged, crit=crit, versatile_two_handed=True)
             return max(d1, d2)
+
         return self._roll_damage_once(attacker, item, is_ranged=is_ranged, crit=crit, versatile_two_handed=versatile_two_handed)
 
     # ---------------------- Spell/AOE helpers (Wizard) ----------------------
@@ -343,7 +373,7 @@ class TBCombat:
         # Start-of-turn: enemy detection of hidden players
         self.events.extend(self._start_of_turn_detect_hidden(player))
 
-        # Decide intents
+        # Decide intents via controller
         intents = []
         ctrl = self.controllers.get(getattr(player, "team_id", 0))
         if ctrl and hasattr(ctrl, "decide"):
@@ -382,10 +412,7 @@ class TBCombat:
                 main = self._equipped_main(player)
                 dice, ability, is_ranged, reach, finesse, versatile, two_handed_dice = self._weapon_profile_from_item(main)
 
-                # Range check for ranged (Stalker overrides in ranged_limits)
-                if is_ranged:
-                    nr, lr = self.ranged_limits(player, main)
-                    dist = self._dist(player, target)
+                # Range checks would go here if you enforce them (Stalker overrides in ranged_limits)
 
                 hit, crit, _ = self._attack_roll(player, target, item=main, adv_ctx=0, is_ranged=is_ranged, offhand=False)
                 if hit:
@@ -403,7 +430,7 @@ class TBCombat:
                     dealt = self._apply_damage(target, dmg, dtype="physical")
                     self.events.append({"type":"damage","attacker":_pname(player),"defender":_pname(target),"amount":int(dealt),"crit":bool(crit)})
 
-                    # Crusader Extra Attack L5: auto-queue a conservative second swing
+                    # Crusader Extra Attack L5: conservative auto-queue
                     if self._is_crusader(player) and int(getattr(player, "level", 1)) >= 5 and _alive(target):
                         hit2, crit2, _ = self._attack_roll(player, target, item=main, adv_ctx=0, is_ranged=is_ranged, offhand=False)
                         if hit2:
@@ -425,7 +452,7 @@ class TBCombat:
                 name = spell.get("name", "Spell")
                 level = int(spell.get("level", 0))
 
-                # Spend a slot (1..9 only)
+                # Spend a slot (1..9 only) — long-rest/full refresh handled outside combat
                 if level >= 1:
                     slots = getattr(player, "spell_slots_current", None)
                     if slots is not None and len(slots) > level and slots[level] > 0:
@@ -436,9 +463,10 @@ class TBCombat:
                     if hit and _alive(target):
                         tier = int(getattr(player, "wiz_cantrip_tier", 1))
                         dmg = self.rng.randint(1, 10) * tier
-                        dealt = self._apply_damage(target, dmg, dtype="fire")
+                        dealt = self._apply_damage(target, dmg, dtype=spell.get("dtype", "fire"))
                         self.events.append({"type":"spell_hit","name":name,"attacker":_pname(player),"defender":_pname(target),"dmg":int(dealt),"tier":tier})
                 elif spell.get("center"):
+                    # Simple AOE: exempt closest allies per Wizard feature
                     cx, cy = spell["center"]
                     candidates = [t for t in self.actors if _alive(t)]
                     targets = self._apply_aoe_ally_exemptions(player, candidates, (cx, cy))
@@ -449,10 +477,11 @@ class TBCombat:
                         saved = self._saving_throw(t, "DEX", dc, vs_condition=None)
                         dmg = self.rng.randint(1, 6) * (2 if level >= 3 else 1)
                         if saved: dmg //= 2
-                        dealt = self._apply_damage(t, dmg, dtype="fire")
+                        dealt = self._apply_damage(t, dmg, dtype=spell.get("dtype", "fire"))
                         self.events.append({"type":"spell_aoe","name":name,"attacker":_pname(player),"defender":_pname(t),"dmg":int(dealt),"saved":bool(saved)})
                 else:
                     if target:
+                        # Generic save vs INT (concentration removed globally)
                         dc = int(spell.get("dc_override", getattr(player, "spell_save_dc", 10)))
                         saved = self._saving_throw(target, "INT", dc, vs_condition=spell.get("vs_condition"))
                         if not saved:
@@ -460,6 +489,7 @@ class TBCombat:
                             self.events.append({"type":"spell_control","name":name,"attacker":_pname(player),"defender":_pname(target),"applied":True})
 
             else:
+                # wait / move / other intents processed by controllers elsewhere
                 pass
 
         self.turn_idx = (self.turn_idx + 1) % len(self.actors)
