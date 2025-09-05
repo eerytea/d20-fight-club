@@ -1,0 +1,41 @@
+class,slot_type,proposed_slots
+Druid,0,3
+Druid,1,4
+Druid,2,5
+Druid,3,4
+Druid,4,5
+Druid,5,4
+Druid,6,2
+Druid,7,2
+Druid,8,3
+Druid,9,1
+Skald,0,2
+Skald,1,7
+Skald,2,6
+Skald,3,3
+Skald,4,1
+Skald,5,4
+Skald,6,2
+Skald,7,2
+Skald,8,1
+Skald,9,1
+War Priest,0,2
+War Priest,1,7
+War Priest,2,6
+War Priest,3,5
+War Priest,4,4
+War Priest,5,7
+War Priest,6,2
+War Priest,7,3
+War Priest,8,1
+War Priest,9,1
+Wizard,0,5
+Wizard,1,4
+Wizard,2,5
+Wizard,3,10
+Wizard,4,8
+Wizard,5,4
+Wizard,6,6
+Wizard,7,4
+Wizard,8,3
+Wizard,9,2
