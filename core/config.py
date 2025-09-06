@@ -16,8 +16,6 @@ POINTS_LOSS: int = 0
 TIEBREAKERS = ("KILL_DIFF", "HEAD_TO_HEAD")
 
 # -------- Match / Grid --------
-GRID_W: int = 11
-GRID_H: int = 11
 TURN_LIMIT: int = 100
 
 # -------- RNG / Seeds --------
