@@ -84,3 +84,21 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+# inside tools/batch_balance.py main(), replace aggregation/prints with:
+
+    # aggregate global
+    wins = sum(1 for r in results if r["winner"] == 0)
+    losses = sum(1 for r in results if r["winner"] == 1)
+    draws = len(results) - wins - losses
+    avg_k = statistics.mean((r["k_home"] + r["k_away"]) / 2 for r in results)
+    avg_turns = statistics.mean(r["turns"] for r in results)
+    print(f"[batch] seeds={args.seeds}  W/L/D={wins}/{losses}/{draws}  avg_kills={avg_k:.2f}  avg_turns={avg_turns:.1f}")
+
+    # optional: breakdown by class presence (very coarse)
+    def class_counts(team):
+        from collections import Counter
+        return Counter(f.class_ if hasattr(f, 'class_') else getattr(f, 'class', None) for f in team.fighters)
+
+    # If you want richer per-tag/damage-type analysis, we’ll need to
+    # sample spell usage from events (once events include spell metadata).
+    # For now the global line is the main actionable output.
