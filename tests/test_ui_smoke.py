@@ -1,44 +1,41 @@
 # tests/test_ui_smoke.py
-from __future__ import annotations
-import pygame, pytest
+import pygame
+from ui.app import App
+from ui.state_menu import MenuState
+from ui.state_team_select import TeamSelect
+from ui.state_schedule import ScheduleState
+from ui.state_table import TableState
 
-MenuState = pytest.importorskip("ui.state_menu").MenuState
-SeasonHubState = pytest.importorskip("ui.state_season_hub").SeasonHubState
-TableState = pytest.importorskip("ui.state_table").TableState
-RosterState = pytest.importorskip("ui.state_roster").RosterState
-Career = pytest.importorskip("core.career").Career
-
-def _init_pygame_headless():
-    pygame.init(); pygame.display.init(); pygame.font.init()
-
-class _AppStub:
-    def __init__(self, screen, career):
-        self.screen = screen
-        self.career = career
-        self.stack = []
-    def push_state(self, s): self.stack.append(s)
-    def pop_state(self): 
-        if self.stack: self.stack.pop()
-    def set_toast(self, *a, **k): pass
-
-def _run_state_frames(state, screen, frames=2):
+def _tick(state, frames=2):
     for _ in range(frames):
         state.update(0.016)
-        state.draw(screen)
+        state.draw(state.app.screen)
+        pygame.display.flip()
 
-def test_ui_menu_hub_table_roster_smoke():
-    _init_pygame_headless()
+def test_main_menu_smoke():
+    pygame.init()
     try:
-        screen = pygame.display.set_mode((900, 620))
-        career = Career.new(seed=1, n_teams=6, team_size=3, user_team_id=0)
-        app = _AppStub(screen, career)
+        app = App(width=640, height=360, title="smoke")
+        st = MenuState(app)
+        _tick(st, 2)
+    finally:
+        pygame.quit()
 
-        menu = MenuState(app); app.push_state(menu); _run_state_frames(menu, screen)
-        hub = SeasonHubState(app, career); app.push_state(hub); _run_state_frames(hub, screen)
-        table = TableState(app, career); app.push_state(table); _run_state_frames(table, screen)
-        app.pop_state()
-        roster = RosterState(app, career, tid=getattr(career, "user_tid", 0))
-        app.push_state(roster); _run_state_frames(roster, screen)
-        assert True
+def test_team_select_smoke():
+    pygame.init()
+    try:
+        app = App(width=640, height=360, title="smoke")
+        st = TeamSelect(app)
+        _tick(st, 2)
+    finally:
+        pygame.quit()
+
+def test_schedule_table_smoke():
+    pygame.init()
+    try:
+        app = App(width=640, height=360, title="smoke")
+        sch = ScheduleState(app)
+        tbl = TableState(app)
+        _tick(sch, 1); _tick(tbl, 1)
     finally:
         pygame.quit()
