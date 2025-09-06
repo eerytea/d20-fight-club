@@ -1,191 +1,202 @@
-
-"""
-tools/build_spells.py
-Reads data/Spells.xlsx and emits:
-  - core/spell_catalog.py  (SLOT_CAPS + SPELLS with fields from the sheet)
-  - artifacts/spells_normalized.json
-  - artifacts/spell_slots_adjusted.csv
-  - artifacts/training_order.csv
-
-Columns expected (fuzzy, case-insensitive):
-  'Spell Name', 'Class', 'Level Obtained' (or 'Level obtaining'), 'Slot type',
-  optional: 'Tags', 'Die', 'Damage type', 'Save type', 'Range', 'AOE Shape', 'Conditions', 'Training block'
-"""
+# tools/build_spells.py
 from __future__ import annotations
-import json, re
+import json, re, sys
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, List, Tuple
+
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "data" / "Spells.xlsx"
-ART = ROOT / "artifacts"
-CORE = ROOT / "core"
-ART.mkdir(exist_ok=True)
-CORE.mkdir(exist_ok=True)
+# ---- Canonical paths (edit here only if you move files) ----
+SRC_XLSX = Path("data/Spells.xlsx")
+OUT_JSON = Path("artifacts/spells_normalized.json")
+OUT_PY   = Path("core/spell_catalog.py")
 
-CLASS_ALIASES = {
-    "Barbarian": "Berserker",
-    "Bard": "Skald",
-    "Cleric": "War Priest",
-    "Ranger": "Stalker",
-    "Paladin": "Crusader",
+# Columns we want in the final normalized schema
+TARGET_SCHEMA = [
+    "name",                 # str
+    "class",                # str  (Classes that can use this)
+    "learn_at_level",       # int  (The level that this spell)
+    "slot_type",            # int  (0=at-will/whatever you defined; adapt to your meaning)
+    "tags",                 # str
+    "die",                  # str  (e.g., "1d6, 5th (2d6), 11th (3d6), 17th (4d6)")
+    "damage_type",          # str
+    "has_save",             # bool
+    "save_attr",            # str  (e.g., "DEX SAVE")
+    "save_success_multiplier",  # float (e.g., 0.5 means half on save)
+    "range_tiles",          # float
+    "aoe_shape",            # str  (just shape/size words; visuals live in conditions_text)
+    "conditions_text",      # str  (freeform: shape details, sizes, extra notes)
+]
+
+# Common column-name variants -> canonical names
+COLUMN_ALIASES = {
+    # name
+    "spell name": "name",
+    "spell": "name",
+    "name": "name",
+
+    # class
+    "class": "class",
+    "classes": "class",
+    "classes that can use this": "class",
+
+    # level obtained
+    "level obtained": "learn_at_level",
+    "learn level": "learn_at_level",
+    "learn_at_level": "learn_at_level",
+    "level": "learn_at_level",
+
+    # slot type
+    "slot type": "slot_type",
+    "slot": "slot_type",
+    "slot_type": "slot_type",
+
+    # misc metadata
+    "tags": "tags",
+    "die": "die",
+    "damage type": "damage_type",
+    "damage_type": "damage_type",
+    "has save": "has_save",
+    "has_save": "has_save",
+    "save attr": "save_attr",
+    "save_attr": "save_attr",
+    "save success multiplier": "save_success_multiplier",
+    "save_success_multiplier": "save_success_multiplier",
+    "range (tiles)": "range_tiles",
+    "range_tiles": "range_tiles",
+    "aoe shape": "aoe_shape",
+    "aoe_shape": "aoe_shape",
+    "conditions": "conditions_text",
+    "conditions_text": "conditions_text",
 }
-def norm_class(name: str) -> str:
-    nm = (name or "").strip()
-    if not nm: return ""
-    cap = nm[:1].upper() + nm[1:]
-    return CLASS_ALIASES.get(cap, cap)
 
-def find_col_by_keywords(cols, keywords):
-    for c in cols:
-        nm = str(c).strip().lower()
-        if all(k in nm for k in keywords):
-            return c
-    return None
+BOOL_TRUES = {"y", "yes", "true", "t", "1", 1, True}
+BOOL_FALSES = {"n", "no", "false", "f", "0", 0, False, None, ""}
 
-def split_classes(val):
-    if pd.isna(val): return []
-    parts = re.split(r'[,/;]+', str(val))
-    return [p.strip() for p in parts if p.strip()]
+def _snake(s: str) -> str:
+    s = s.strip().lower()
+    s = s.replace("\n"," ").replace("\r"," ")
+    s = re.sub(r"\s+", " ", s)
+    return s
 
-def parse_training_block(val):
-    out = []
-    if pd.isna(val): return out
-    for part in str(val).split(","):
-        chunk = part.strip()
-        if not chunk: continue
-        if ":" in chunk:
-            pos, role = chunk.split(":", 1)
-            out.append({"position": pos.strip(), "role": role.strip()})
-        else:
-            out.append({"position": "", "role": chunk.strip()})
+def _canon_col(col: str) -> str:
+    k = _snake(col)
+    return COLUMN_ALIASES.get(k, k)
+
+def _to_int(x: Any, default: int = 0) -> int:
+    if pd.isna(x): return default
+    try: return int(str(x).strip())
+    except: return default
+
+def _to_float(x: Any, default: float = 0.0) -> float:
+    if pd.isna(x): return default
+    try: return float(str(x).strip())
+    except: return default
+
+def _to_bool(x: Any, default: bool = False) -> bool:
+    if pd.isna(x): return default
+    s = str(x).strip().lower()
+    if s in {str(v).lower() for v in BOOL_TRUES}: return True
+    if s in {str(v).lower() for v in BOOL_FALSES}: return False
+    return default
+
+def _normalize_row(d: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {k: None for k in TARGET_SCHEMA}
+
+    # Direct mappings with type coercion
+    out["name"] = str(d.get("name","")).strip()
+    out["class"] = str(d.get("class","")).strip()
+    out["learn_at_level"] = _to_int(d.get("learn_at_level"), 1)
+    out["slot_type"] = _to_int(d.get("slot_type"), 0)
+    out["tags"] = str(d.get("tags","")).strip()
+    out["die"] = str(d.get("die","")).strip()
+    out["damage_type"] = str(d.get("damage_type","")).strip()
+    out["has_save"] = _to_bool(d.get("has_save"), False)
+    out["save_attr"] = str(d.get("save_attr","")).strip()
+    out["save_success_multiplier"] = _to_float(d.get("save_success_multiplier"), 0.0)
+    out["range_tiles"] = _to_float(d.get("range_tiles"), 0.0)
+    out["aoe_shape"] = str(d.get("aoe_shape","")).strip()
+
+    # Conditions: only shape/size visuals should live here per your rule
+    out["conditions_text"] = str(d.get("conditions_text","")).strip()
+
+    # Minimal validation
+    if not out["name"]:
+        raise ValueError("Encountered a spell with empty name.")
+    if not out["class"]:
+        # You can choose to allow empty classes; I’ll warn here.
+        pass
+
     return out
 
-COMMON_CONDS = [
-    "paralyzed","blinded","frightened","stunned","restrained","prone",
-    "poisoned","grappled","incapacitated","charmed","deafened","invisible",
-    "poison","fear"
-]
-def extract_conditions(txt):
-    found = set()
-    if not isinstance(txt, str):
-        return []
-    low = txt.lower()
-    for token in COMMON_CONDS:
-        if token in low:
-            if token == "poison": found.add("poisoned")
-            elif token == "fear": found.add("frightened")
-            else: found.add(token)
-    return sorted(found)
+def load_sheet(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing Excel: {path}")
+    # Use first sheet or a sheet literally named "Spells"
+    try:
+        df = pd.read_excel(path, sheet_name="Spells")
+    except Exception:
+        df = pd.read_excel(path)  # first sheet fallback
+    # Canonicalize columns
+    df = df.rename(columns={c: _canon_col(c) for c in df.columns})
+    return df
 
-def parse_tiles(val):
-    if pd.isna(val): return None
-    m = re.search(r'\d+', str(val).strip())
-    return int(m.group()) if m else None
-
-def main():
-    assert SRC.exists(), f"Missing {SRC}"
-    sheets = pd.read_excel(SRC, sheet_name=None)
-    df = list(sheets.values())[0].copy()
-    cols = list(df.columns)
-
-    C_SPELL = find_col_by_keywords(cols, ["spell","name"]) or find_col_by_keywords(cols, ["spell"])
-    C_CLASS = find_col_by_keywords(cols, ["class"])
-    C_LVL_OBT = (find_col_by_keywords(cols, ["level","obtain"]) 
-                 or find_col_by_keywords(cols, ["level","gained"])
-                 or find_col_by_keywords(cols, ["level","obtaining"]))
-    C_SLOT = find_col_by_keywords(cols, ["slot","type"]) or find_col_by_keywords(cols, ["slot"])
-    C_TAGS = find_col_by_keywords(cols, ["tag"])
-    C_DIE = find_col_by_keywords(cols, ["die"])
-    C_DMG = find_col_by_keywords(cols, ["damage","type"]) or find_col_by_keywords(cols, ["damage"])
-    C_SAVE = find_col_by_keywords(cols, ["save","type"]) or find_col_by_keywords(cols, ["save"])
-    C_RANGE = find_col_by_keywords(cols, ["range"])
-    C_AOE = find_col_by_keywords(cols, ["aoe"]) or find_col_by_keywords(cols, ["area"])
-    C_COND = find_col_by_keywords(cols, ["condition"])
-    C_TRAIN = find_col_by_keywords(cols, ["training","block"]) or find_col_by_keywords(cols, ["training"])
-
-    assert C_SPELL and C_CLASS and C_LVL_OBT and C_SLOT, "Missing core columns"
-
+def normalize(df: pd.DataFrame) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for _, r in df.iterrows():
-        name = str(r[C_SPELL]).strip() if not pd.isna(r[C_SPELL]) else ""
-        classes = split_classes(r[C_CLASS])
-        lvl_raw = pd.to_numeric(r[C_LVL_OBT], errors='coerce')
-        slot_raw = pd.to_numeric(r[C_SLOT], errors='coerce')
-        lvl_char = int(lvl_raw) if not pd.isna(lvl_raw) else 0
-        slot_type = int(slot_raw) if not pd.isna(slot_raw) else 0
+        d = {k: r.get(k) for k in df.columns}
+        rows.append(_normalize_row(d))
+    return rows
 
-        tags = "" if (C_TAGS is None or pd.isna(r.get(C_TAGS, None))) else str(r[C_TAGS]).strip()
-        die  = "" if (C_DIE  is None or pd.isna(r.get(C_DIE,  None))) else str(r[C_DIE]).strip()
-        dmg  = "" if (C_DMG  is None or pd.isna(r.get(C_DMG,  None))) else str(r[C_DMG]).strip()
-        save = "" if (C_SAVE is None or pd.isna(r.get(C_SAVE, None))) else str(r[C_SAVE]).strip()
-        rng  = r.get(C_RANGE, None) if C_RANGE else None
-        aoe  = "" if (C_AOE  is None or pd.isna(r.get(C_AOE,  None))) else str(r[C_AOE]).strip()
-        cond = "" if (C_COND is None or pd.isna(r.get(C_COND, None))) else str(r[C_COND]).strip()
-        train= r.get(C_TRAIN, "") if C_TRAIN else ""
+def write_json(path: Path, rows: List[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(rows, f, indent=2, ensure_ascii=False)
 
-        has_save = bool(save and save.lower() not in ("none","n/a","na","-","—"))
-        save_success_multiplier = 0.0 if (has_save and slot_type == 0) else (0.5 if has_save else 1.0)
+HEADER = """# AUTO-GENERATED from artifacts/spells_normalized.json
+# Do not edit by hand. Regenerate via:  python -m tools.build_spells
+from __future__ import annotations
+from typing import Any, Dict, List
 
-        parsed_range_tiles = parse_tiles(rng) if C_RANGE else None
-        cond_tokens = extract_conditions(cond)
-        training_pairs = parse_training_block(train)
+# Minimal access layer to keep imports stable across the codebase.
+# SPELLS: List[Dict[str, Any]] with keys:
+#   name, class, learn_at_level, slot_type, tags, die, damage_type,
+#   has_save, save_attr, save_success_multiplier, range_tiles, aoe_shape, conditions_text
+"""
 
-        for cls in classes or [""]:
-            cls_norm = norm_class(cls)
-            rows.append({
-                "spell": name,
-                "class": cls_norm,
-                "learn_at_level": lvl_char,
-                "slot_type": slot_type,
-                "tags": tags,
-                "die": die,
-                "damage_type": dmg,
-                "has_save": has_save,
-                "save_attr": save.upper() if has_save else "",
-                "save_success_multiplier": save_success_multiplier,
-                "range_tiles": parsed_range_tiles,
-                "aoe_shape": aoe,
-                "conditions_text": cond,
-                "conditions": cond_tokens,
-                "training_pairs": training_pairs,
-            })
+def write_catalog_py(path: Path, rows: List[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    norm = pd.DataFrame(rows)
-    # SLOT_CAPS
-    caps = (norm.groupby(["class","slot_type"])["spell"].nunique().reset_index(name="proposed_slots"))
-    # JSON
-    ART.joinpath("spells_normalized.json").write_text(json.dumps(norm.to_dict(orient="records"), indent=2), encoding="utf-8")
-    caps.to_csv(ART / "spell_slots_adjusted.csv", index=False)
+    # Index by lowercase name for quick lookup
+    by_name = {str(r["name"]).lower(): r for r in rows}
 
-    # Training order preview
-    def first_pair(tp):
-        if not isinstance(tp, list) or not tp: return {"position":"", "role":""}
-        return tp[0] if isinstance(tp[0], dict) else {"position":"", "role":""}
+    # Keep Python file size reasonable by dumping JSON-ish repr
+    body = []
+    body.append(HEADER)
+    body.append(f"SPELLS: List[Dict[str, Any]] = {json.dumps(rows, indent=2, ensure_ascii=False)}\n")
+    body.append(f"_SPELL_BY_NAME: Dict[str, Dict[str, Any]] = {{\n")
+    for k in sorted(by_name.keys()):
+        body.append(f"  {json.dumps(k)}: SPELLS[[s['name'].lower() for s in SPELLS].index({json.dumps(k)})],\n")
+    body.append("}\n\n")
+    body.append("def all_spells() -> List[Dict[str, Any]]:\n    return SPELLS\n\n")
+    body.append("def get_spell(name: str) -> Dict[str, Any]:\n")
+    body.append("    return _SPELL_BY_NAME.get(name.lower())\n\n")
+    body.append("__all__ = ['SPELLS','all_spells','get_spell']\n")
+    path.write_text("".join(body), encoding="utf-8")
 
-    norm["_pos"] = norm["training_pairs"].apply(lambda tp: first_pair(tp)["position"])
-    norm["_role"]= norm["training_pairs"].apply(lambda tp: first_pair(tp)["role"])
-    norm.sort_values(by=["_pos","_role","class","slot_type","learn_at_level","spell"]) \
-        .drop(columns=["_pos","_role"]).to_csv(ART / "training_order.csv", index=False)
+def main(argv: List[str] | None = None) -> int:
+    print(f"[build_spells] reading {SRC_XLSX}")
+    df = load_sheet(SRC_XLSX)
+    rows = normalize(df)
 
-    # Emit core/spell_catalog.py
-    # Count distinct spells per class/slot
-    seen = {}
-    for row in norm.to_dict(orient="records"):
-        key = (row["class"], int(row["slot_type"]), row["spell"])
-        seen[key] = True
-    slot_caps = {}
-    for (cls, lvl, _), _ in seen.items():
-        slot_caps.setdefault(cls, {}).setdefault(int(lvl), 0)
-        slot_caps[cls][int(lvl)] += 1
+    print(f"[build_spells] writing {OUT_JSON}")
+    write_json(OUT_JSON, rows)
 
-    CORE.joinpath("spell_catalog.py").write_text(
-        "from __future__ import annotations\n"
-        f"SLOT_CAPS = {json.dumps(slot_caps, indent=2, sort_keys=True)}\n\n"
-        f"SPELLS = {json.dumps(norm.to_dict(orient='records'), indent=2)}\n",
-        encoding="utf-8"
-    )
+    print(f"[build_spells] writing {OUT_PY}")
+    write_catalog_py(OUT_PY, rows)
+
+    print("[build_spells] done.")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(sys.argv[1:]))
